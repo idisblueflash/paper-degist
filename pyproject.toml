@@ -8,12 +8,14 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "httpx>=0.28.1",
     "typer>=0.26.8",
 ]
 
 [project.scripts]
 paper-degist = "paper_degist:main"
 parse-url = "paper_degist.parse_url:main"
+fetch-one = "paper_degist.fetch_one:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

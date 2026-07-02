@@ -11,6 +11,7 @@ from paper_degist._cli import invoke
 
 _STEPS = [
     ("parse-url", "Extract http(s) URLs from a text blob (US1 AC1)."),
+    ("fetch-one", "Fetch one paper file from a URL, save under files/ (US2 AC2)."),
 ]
 
 app = typer.Typer(

@@ -23,6 +23,20 @@ location, the case not yet handled, and the trigger that should make us fix it.
   path (`.../a.`) is still treated as sentence punctuation and stripped — an
   accepted policy, documented by `test_strips_trailing_prose_punctuation_*`.
 
+## fetch_one — redirect hop cap (US2 AC5) not explicitly bounded
+
+- **Where:** `src/paper_degist/fetch_one.py::_default_fetch`.
+- **Case not handled:** AC5 says "follow it (cap the hops)". `_default_fetch`
+  passes `follow_redirects=True` to `httpx.get`, which follows up to httpx's
+  own default `max_redirects` (20) — the hop cap is implicit, not a stated
+  policy of ours, and the re-classify-final-response behavior is untested
+  (tests inject a fake fetch, so no redirect chain is exercised).
+- **Trigger to fix:** when a real input redirects (or loops) and we want a
+  tighter/explicit cap, or when adding an integration test that exercises a
+  live redirect. Set an explicit `httpx.Client(max_redirects=...)` and add a
+  scenario then.
+- **Status:** OPEN.
+
 ## parse_url CLI — console entry point (`main`) is not unit-tested
 
 - **Where:** `src/paper_degist/parse_url.py::main`, `src/tests/test_parse_url.py`.

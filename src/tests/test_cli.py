@@ -13,12 +13,21 @@ import typer
 from typer.testing import CliRunner
 
 import paper_degist
+import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
+from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
 
 runner = CliRunner()
+
+
+class _FakeResponse:
+    def __init__(self, *, status_code=200, content_type="", content=b""):
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+        self.content = content
 
 
 def test_parse_url_reads_file_argument(tmp_path: Path):
@@ -58,11 +67,72 @@ def test_parse_url_missing_file_exits_two_without_traceback(tmp_path: Path):
     assert "Traceback" not in result.output
 
 
+def _fetch_one_save(tmp_path, monkeypatch):
+    """Arrange a patched fetch + files dir and run `fetch-one` on a PDF URL."""
+    resp = _FakeResponse(content_type="application/pdf", content=b"%PDF- data")
+    monkeypatch.setattr(fetch_one_mod, "_default_fetch", lambda url: resp)
+    files = tmp_path / "files"
+    result = runner.invoke(
+        fetch_one_app, ["https://example.com/a.pdf", "--files-dir", str(files)]
+    )
+    return result, files
+
+
+def test_fetch_one_cli_exits_zero_on_save(tmp_path: Path, monkeypatch):
+    result, _ = _fetch_one_save(tmp_path, monkeypatch)
+    assert result.exit_code == 0
+
+
+def test_fetch_one_cli_prints_saved_path(tmp_path: Path, monkeypatch):
+    result, files = _fetch_one_save(tmp_path, monkeypatch)
+    assert result.stdout.strip() == str(files / "a.pdf")
+
+
+def _fetch_one_quarantine(tmp_path, monkeypatch):
+    """Run `fetch-one` on a 403 URL; return (result, files, manifest)."""
+    resp = _FakeResponse(status_code=403, content_type="text/html", content=b"no")
+    monkeypatch.setattr(fetch_one_mod, "_default_fetch", lambda url: resp)
+    files = tmp_path / "files"
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        fetch_one_app,
+        ["https://example.com/x", "--files-dir", str(files), "--manifest", str(manifest)],
+    )
+    return result, files, manifest
+
+
+def test_fetch_one_cli_quarantine_exits_zero(tmp_path: Path, monkeypatch):
+    # quarantine is an expected outcome, not a crash
+    result, _, _ = _fetch_one_quarantine(tmp_path, monkeypatch)
+    assert result.exit_code == 0
+
+
+def test_fetch_one_cli_quarantine_saves_no_file(tmp_path: Path, monkeypatch):
+    _, files, _ = _fetch_one_quarantine(tmp_path, monkeypatch)
+    assert not files.exists()
+
+
+def test_fetch_one_cli_quarantine_writes_manifest(tmp_path: Path, monkeypatch):
+    _, _, manifest = _fetch_one_quarantine(tmp_path, monkeypatch)
+    assert manifest.exists()
+
+
+def test_fetch_one_cli_quarantine_notes_url_on_stderr(tmp_path: Path, monkeypatch):
+    # err=True output, which CliRunner folds into result.output
+    result, _, _ = _fetch_one_quarantine(tmp_path, monkeypatch)
+    assert "https://example.com/x" in result.output
+
+
 def test_root_signpost_lists_steps():
     result = runner.invoke(root_app, [])
 
     assert result.exit_code == 0
     assert "parse-url" in result.stdout
+
+
+def test_root_signpost_lists_fetch_one():
+    result = runner.invoke(root_app, [])
+    assert "fetch-one" in result.stdout
 
 
 # --- main(argv) -> int wrappers: the exit codes the shell actually sees ---
