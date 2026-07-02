@@ -18,7 +18,7 @@ LLM wiki. See `user-stories.md` for the spec.
   pass with the smallest change, then refactor. No production code without a
   failing test driving it.
 
-## Design principle (from US 1)
+## Design principle (from US 2)
 
 Consolidate case-handling knowledge **into the script**, not into per-run LLM
 calls. The script classifies and dispatches deterministically; genuinely novel
