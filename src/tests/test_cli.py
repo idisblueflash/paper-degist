@@ -15,11 +15,13 @@ from typer.testing import CliRunner
 import paper_degist
 import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
+import paper_degist.resolve_oa as resolve_oa_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
 from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
+from paper_degist.resolve_oa import app as resolve_oa_app
 
 runner = CliRunner()
 
@@ -166,6 +168,44 @@ def test_convert_html_cli_quarantine_notes_path_on_stderr(tmp_path: Path):
 def test_convert_html_cli_missing_file_exits_two(tmp_path: Path):
     result = runner.invoke(convert_html_app, [str(tmp_path / "nope.html")])
     assert result.exit_code == 2
+
+
+def _resolve_oa_run(tmp_path, monkeypatch, *, verdict):
+    """Patch the Unpaywall lookup to `verdict` and run `resolve-oa` on a DOI URL."""
+    monkeypatch.setattr(resolve_oa_mod, "_unpaywall_lookup", lambda email: (lambda doi: verdict))
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        resolve_oa_app,
+        ["https://doi.org/10.1191/x", "--email", "me@example.com", "--manifest", str(manifest)],
+    )
+    return result, manifest
+
+
+def test_resolve_oa_cli_prints_oa_pdf_url(tmp_path: Path, monkeypatch):
+    result, _ = _resolve_oa_run(tmp_path, monkeypatch, verdict="https://oa.org/p.pdf")
+    assert result.stdout.strip() == "https://oa.org/p.pdf"
+
+
+def test_resolve_oa_cli_quarantine_exits_zero(tmp_path: Path, monkeypatch):
+    # closed access is an expected outcome, not a crash
+    result, _ = _resolve_oa_run(tmp_path, monkeypatch, verdict=None)
+    assert result.exit_code == 0
+
+
+def test_resolve_oa_cli_quarantine_notes_url_on_stderr(tmp_path: Path, monkeypatch):
+    result, _ = _resolve_oa_run(tmp_path, monkeypatch, verdict=None)
+    assert "https://doi.org/10.1191/x" in result.output
+
+
+def test_resolve_oa_cli_missing_email_exits_two(tmp_path: Path):
+    # Unpaywall needs a contact email; the option is required.
+    result = runner.invoke(resolve_oa_app, ["https://doi.org/10.1191/x"])
+    assert result.exit_code == 2
+
+
+def test_root_signpost_lists_resolve_oa():
+    result = runner.invoke(root_app, [])
+    assert "resolve-oa" in result.stdout
 
 
 def test_root_signpost_lists_convert_html():

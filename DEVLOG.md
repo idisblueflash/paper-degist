@@ -157,3 +157,90 @@ location, the case not yet handled, and the trigger that should make us fix it.
   output) and normalizes the raised `SystemExit` into an int (`None`→0,
   non-int payload→1). Apply the same shape to `fetch`/`convert`/`import` as
   they land.
+
+## fetch_one — bare `http 403` was a dead end (now: resolve-oa)
+
+- **Where:** `src/paper_degist/fetch_one.py` (the `status_code >= 400` branch)
+  and the new `src/paper_degist/resolve_oa.py`.
+- **Case not handled:** a 403 from a Cloudflare-gated host (ResearchGate,
+  Academia.edu) told us nothing about whether the paper is reachable for free
+  elsewhere; the manifest carried only `"http 403"`.
+- **Status:** ADDRESSED by US9. `resolve-oa` takes a failed URL/DOI, recovers a
+  DOI, and asks Unpaywall for an open-access PDF URL — printing it (pipe into
+  `fetch-one`) or quarantining `"no OA copy (closed access)"`. The real E2E run
+  confirmed both: the ResearchGate paper's DOI `10.1191/1362168805lr151oa` came
+  back closed, while `10.1371/journal.pone.0000308` resolved to a PLOS PDF that
+  `fetch-one` then downloaded (91 KB, 5-page `%PDF-1.4`).
+
+## resolve_oa — title→DOI (Crossref) resolution not built (US9 AC5)
+
+- **Where:** `src/paper_degist/resolve_oa.py::resolve_oa` (the `doi is None`
+  branch) and `doi_from`.
+- **Case not handled:** a slug-only URL with no embedded DOI (the original
+  ResearchGate publication link) is quarantined `"no DOI in input; title→DOI
+  lookup not built (route to human/browser)"`. In this session the DOI was
+  recovered manually via Crossref's `query.bibliographic` from the URL's title
+  slug — that lookup is not yet code, so slug URLs cannot be resolved
+  automatically.
+- **Trigger to fix:** the first time we want a slug URL resolved without a hand
+  lookup. Add a `title_from(url)` slug extractor + a Crossref `title→DOI`
+  lookup (mirroring `_unpaywall_lookup`'s injected shape), driven by a failing
+  test; feed its DOI into the existing OA dispatch.
+- **Status:** OPEN.
+
+## resolve_oa — human / browser-devtools rescue lane not built (US9)
+
+- **Where:** the `resolve-oa` quarantine reasons (`closed access`, `no DOI`).
+- **Case not handled:** closed-access and Cloudflare-gated papers are named in
+  the manifest but there is no downstream lane that hands them to a person or an
+  authenticated Chrome dev-mode session to fetch with real cookies. The manifest
+  reason is the routing signal; nothing consumes it yet.
+- **Trigger to fix:** when we build the manual/browser rescue step. Read the
+  `resolve-oa` manifest records and present them as a work queue (or drive a
+  logged-in browser context), quarantining anything still unreachable.
+- **Status:** OPEN.
+
+## resolve_oa — single OA source (Unpaywall); OpenAlex/CORE not cross-checked
+
+- **Where:** `src/paper_degist/resolve_oa.py::_unpaywall_lookup`.
+- **Case not handled:** the OA verdict comes from Unpaywall alone. A paper Unpaywall
+  marks closed but OpenAlex/CORE hosts (repository copies, author self-archives)
+  would be a false "closed access". Unpaywall also requires a contact email
+  (`--email`/`UNPAYWALL_EMAIL`); a missing/invalid email raises inside the
+  lookup and is quarantined as an `"OA lookup error"` (AC6), not a real verdict.
+- **Trigger to fix:** the first paper wrongly reported closed that has an OA copy
+  elsewhere. Add an OpenAlex/CORE fallback lookup (same injected shape) and take
+  the union of OA locations, driven by a failing test.
+- **Status:** OPEN.
+
+## resolve_oa — "OA but no PDF link" shares the "closed access" reason
+
+- **Where:** `src/paper_degist/resolve_oa.py::_pdf_url_from_unpaywall` (returns
+  `None`) → `resolve_oa` quarantines `"no OA copy (closed access)"`.
+- **Case not handled:** a paper Unpaywall marks `is_oa: true` but with no
+  `url_for_pdf` in any location (only a landing-page `url`) is now correctly
+  *not* returned (Codex review finding 1 — we never print a landing page as if
+  it were a PDF). But it quarantines with the same `"closed access"` reason as a
+  truly closed paper, which is slightly imprecise: the paper *is* open, it just
+  has no direct PDF link (an HTML-only OA landing page).
+- **Trigger to fix:** the first OA-but-no-PDF paper we want distinguished (e.g.
+  to route it to the HTML convert path via its landing page). Widen the injected
+  `oa_lookup` contract to report the sub-case (closed vs OA-no-PDF) and emit a
+  distinct reason, driven by a failing test.
+- **Status:** OPEN (surfaced + partially addressed by Codex review of US9: the
+  landing-page-as-PDF bug is fixed; only the reason precision is deferred).
+
+## fetch_one — URL-basename filename loses query-string names
+
+- **Where:** `src/paper_degist/fetch_one.py::_target_path`.
+- **Case not handled:** the filename is the URL *path* basename. The PLOS OA URL
+  `.../article/file?id=10.1371/journal.pone.0000308&type=printable` has path
+  basename `file`, so the paper saved as `files/file.pdf` — the real identifier
+  lives in the `?id=` query, which is dropped. Surfaced by the US9 real E2E run
+  (`resolve-oa | fetch-one`). Harmless for a single fetch, but two such URLs
+  would collide on `file.pdf`.
+- **Trigger to fix:** the first real collision, or the first paper we want named
+  by its DOI/query id. Fall back to a query-param (`id`) or the DOI when the
+  path basename is generic (`file`, `download`, `pdf`), driven by a failing
+  `_target_path` test.
+- **Status:** OPEN.
