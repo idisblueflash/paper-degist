@@ -13,7 +13,7 @@ offline (US2 design principle).
 import json
 from pathlib import Path
 
-from paper_degist.resolve_oa import doi_from, resolve_oa
+from paper_degist.resolve_oa import _pdf_url_from_unpaywall, doi_from, resolve_oa
 
 _DOI_URL = "https://doi.org/10.1191/1362168805lr151oa"
 _SLUG_URL = "https://www.researchgate.net/publication/249870239_An_investigation"
@@ -53,6 +53,45 @@ def test_doi_from_doi_org_url():
 def test_doi_from_slug_url_without_doi_is_none():
     # A ResearchGate publication slug carries no DOI — the AC5 quarantine case.
     assert doi_from("https://www.researchgate.net/publication/249870239_An_investigation") is None
+
+
+def test_doi_from_strips_trailing_sentence_punctuation():
+    # A DOI pasted at the end of a sentence must not carry the period into the lookup.
+    assert doi_from("see 10.1191/1362168805lr151oa.") == "10.1191/1362168805lr151oa"
+
+
+def test_doi_from_strips_unbalanced_wrapper_paren():
+    # A DOI wrapped in prose parens keeps a balanced one but drops the wrapper.
+    assert doi_from("(10.1191/1362168805lr151oa)") == "10.1191/1362168805lr151oa"
+
+
+# --- _pdf_url_from_unpaywall: only a real PDF URL counts, never a landing page ---
+
+
+def test_unpaywall_closed_paper_is_none():
+    assert _pdf_url_from_unpaywall({"is_oa": False}) is None
+
+
+def test_unpaywall_best_location_pdf_is_returned():
+    data = {"is_oa": True, "best_oa_location": {"url_for_pdf": "https://oa.org/p.pdf"}}
+    assert _pdf_url_from_unpaywall(data) == "https://oa.org/p.pdf"
+
+
+def test_unpaywall_landing_page_without_pdf_is_none():
+    # is_oa but only a landing-page url (no url_for_pdf) must NOT be returned:
+    # fetch-one cannot download an HTML landing page as the paper.
+    data = {"is_oa": True, "best_oa_location": {"url": "https://oa.org/landing", "url_for_pdf": None}}
+    assert _pdf_url_from_unpaywall(data) is None
+
+
+def test_unpaywall_falls_back_to_a_later_location_pdf():
+    # best_oa_location lacks a PDF, but another oa_locations entry has one.
+    data = {
+        "is_oa": True,
+        "best_oa_location": {"url": "https://oa.org/landing", "url_for_pdf": None},
+        "oa_locations": [{"url_for_pdf": "https://repo.org/p.pdf"}],
+    }
+    assert _pdf_url_from_unpaywall(data) == "https://repo.org/p.pdf"
 
 
 # --- AC1/AC3: an open-access paper resolves to its PDF URL ---

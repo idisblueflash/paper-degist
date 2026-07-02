@@ -44,7 +44,22 @@ def doi_from(text: str) -> str | None:
     ResearchGate slug URL) so the caller can quarantine that case.
     """
     match = _DOI_RE.search(text or "")
-    return match.group(0) if match else None
+    return _trim_doi(match.group(0)) if match else None
+
+
+def _trim_doi(doi: str) -> str:
+    """Strip prose punctuation the DOI regex over-captured from surrounding text.
+
+    A DOI ending a sentence (``…oa.``) or wrapped in parens (``(…oa)``) picks up
+    a trailing ``.``/``;``/``)`` that is not part of the DOI. Drop trailing
+    sentence punctuation and a single *unbalanced* closing bracket, so a DOI that
+    legitimately contains balanced parens (``10.1002/(SICI)…``) survives.
+    """
+    doi = doi.rstrip(".,;:")
+    for opener, closer in (("(", ")"), ("[", "]")):
+        if doi.endswith(closer) and doi.count(opener) < doi.count(closer):
+            doi = doi[:-1]
+    return doi
 
 
 def resolve_oa(
@@ -95,12 +110,32 @@ def _quarantine(manifest_path: Path, *, url: str, doi: Optional[str], reason: st
     )
 
 
+def _pdf_url_from_unpaywall(data: dict) -> Optional[str]:
+    """Return the first open-access *PDF* URL in an Unpaywall response, or None.
+
+    Only ``url_for_pdf`` counts: a bare ``url`` is a landing page, not a file
+    ``fetch-one`` can download, so we never return it (else a non-PDF would be
+    printed as if it were the paper). Scans ``best_oa_location`` first, then
+    every ``oa_locations`` entry. Returns None when the paper is closed *or*
+    open with no direct PDF link.
+    """
+    if not data.get("is_oa"):
+        return None
+    locations = [data.get("best_oa_location") or {}, *(data.get("oa_locations") or [])]
+    for loc in locations:
+        pdf = (loc or {}).get("url_for_pdf")
+        if pdf:
+            return pdf
+    return None
+
+
 def _unpaywall_lookup(email: str) -> OALookup:
     """Build the real OA lookup: ask Unpaywall for a DOI's open-access PDF URL.
 
-    Returns the best open-access PDF URL, or ``None`` when Unpaywall reports the
-    paper closed. Raises on a network/API error so ``resolve_oa`` quarantines it
-    (AC6) rather than crashing. Unpaywall requires a contact email per request.
+    Returns the open-access PDF URL, or ``None`` when Unpaywall reports the paper
+    closed (or open with no direct PDF link). Raises on a network/API error so
+    ``resolve_oa`` quarantines it (AC6) rather than crashing. Unpaywall requires
+    a contact email per request.
     """
 
     def lookup(doi: str) -> Optional[str]:
@@ -112,11 +147,7 @@ def _unpaywall_lookup(email: str) -> OALookup:
             timeout=30.0,
         )
         resp.raise_for_status()
-        data = resp.json()
-        if not data.get("is_oa"):
-            return None
-        best = data.get("best_oa_location") or {}
-        return best.get("url_for_pdf") or best.get("url")
+        return _pdf_url_from_unpaywall(resp.json())
 
     return lookup
 

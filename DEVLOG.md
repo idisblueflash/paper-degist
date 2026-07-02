@@ -213,6 +213,23 @@ location, the case not yet handled, and the trigger that should make us fix it.
   the union of OA locations, driven by a failing test.
 - **Status:** OPEN.
 
+## resolve_oa — "OA but no PDF link" shares the "closed access" reason
+
+- **Where:** `src/paper_degist/resolve_oa.py::_pdf_url_from_unpaywall` (returns
+  `None`) → `resolve_oa` quarantines `"no OA copy (closed access)"`.
+- **Case not handled:** a paper Unpaywall marks `is_oa: true` but with no
+  `url_for_pdf` in any location (only a landing-page `url`) is now correctly
+  *not* returned (Codex review finding 1 — we never print a landing page as if
+  it were a PDF). But it quarantines with the same `"closed access"` reason as a
+  truly closed paper, which is slightly imprecise: the paper *is* open, it just
+  has no direct PDF link (an HTML-only OA landing page).
+- **Trigger to fix:** the first OA-but-no-PDF paper we want distinguished (e.g.
+  to route it to the HTML convert path via its landing page). Widen the injected
+  `oa_lookup` contract to report the sub-case (closed vs OA-no-PDF) and emit a
+  distinct reason, driven by a failing test.
+- **Status:** OPEN (surfaced + partially addressed by Codex review of US9: the
+  landing-page-as-PDF bug is fixed; only the reason precision is deferred).
+
 ## fetch_one — URL-basename filename loses query-string names
 
 - **Where:** `src/paper_degist/fetch_one.py::_target_path`.
