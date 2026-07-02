@@ -1,9 +1,9 @@
 # Rule 06 — Feature workflow (per user story)
 
 **Every user story is processed through the same phased loop: spec →
-sample-measured constants → strict red/green → CLI → BDD → DEVLOG → self-review
-→ chunked commits → second-opinion review → PR.** Each phase ends at a natural
-checkpoint; do not skip ahead.
+sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
+end-to-end run → self-review → chunked commits → second-opinion review → PR.**
+Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
 order to apply the test-first loop (rule 01/05), the classify-then-dispatch
@@ -53,20 +53,38 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
   **new** deferred cases with location + trigger (rule 02's deferred flags).
 - Run both gates before moving on: `uv run pytest -q` **and** `uv run behave`.
 
-### 7. Self-review — `/code-review`
+### 7. Run it for real — end-to-end on real input
+Green fixtures are not proof the step works on the messy real thing. Run the
+console script from the shell against a **real** input in `files/` and eyeball
+the result before review:
+- **Happy path** — run the step (`uv run convert-html files/<real>.html`) and
+  read the actual output file, not just its exit code. Confirm the real
+  structure survived (headings, tables, links), not just a toy fixture's.
+- **Idempotency** — run it a second time; confirm it skips and does not
+  overwrite (rule: re-runs stay safe).
+- **A quarantine branch** — point it at an input it should reject (e.g. the
+  fetched `.pdf`) and confirm it lands in `manifest.jsonl` with the right
+  `stage`/`reason` and exits cleanly — never crashes.
+
+This is the step that caught nothing new for US5 only because the sample was
+already a fixture; for a story whose real input differs from its fixtures, this
+is where the next `DEVLOG` deferred flag (or bug) surfaces. Note that `files/`
+is untracked — clean up or keep the generated artifacts deliberately.
+
+### 8. Self-review — `/code-review`
 - Fan out finder angles → verify each survivor against the code → fix the real
   findings **test-first**. Anchor any `file:line` finding per rule 04.
 
-### 8. Commit in logical, each-green chunks
+### 9. Commit in logical, each-green chunks
 - Feature branch off `master` (never commit to `master` directly). Separate a
   self-contained refactor from the feature so each commit passes on its own.
   Sign commits.
 
-### 9. Second-opinion review — Codex
+### 10. Second-opinion review — Codex
 - Hand the branch diff to Codex; fix its findings **test-first**; re-run both
   suites.
 
-### 10. Ship
+### 11. Ship
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups.
 
