@@ -15,17 +15,47 @@ import argparse
 import re
 import sys
 
-# http(s) URL up to the first whitespace or markdown-link closing paren.
-_URL_RE = re.compile(r"https?://[^\s)]+")
+# http(s) URL grabbed generously up to whitespace/angle-bracket. The left
+# lookbehind rejects a scheme embedded in a larger token (``abchttps://``);
+# IGNORECASE accepts mixed-case schemes while ``findall`` preserves the
+# original matched text. Wrapper/prose punctuation is trimmed afterwards so a
+# legitimate ``)`` inside the path (``paper_(v2).pdf``) survives.
+_URL_RE = re.compile(r"(?<![A-Za-z0-9+.\-])https?://[^\s<>]+", re.IGNORECASE)
+
+# Prose punctuation that is never part of a URL when it sits at the very end.
+_TRAILING_PUNCT = ".,;:!?\"'"
+
+
+def _trim_trailing(url: str) -> str:
+    """Strip trailing prose punctuation and *unbalanced* wrapper parens.
+
+    A ``)`` is only stripped when the match holds more ``)`` than ``(`` — i.e.
+    it closes a wrapper the match never opened (Markdown ``[t](url)``), never a
+    balanced pair that belongs to the URL (Wikipedia ``paper_(v2)``).
+    """
+    while url:
+        last = url[-1]
+        if last in _TRAILING_PUNCT:
+            url = url[:-1]
+        elif last == ")" and url.count(")") > url.count("("):
+            url = url[:-1]
+        else:
+            break
+    return url
 
 
 def parse_url(text: str) -> list[str]:
-    """Return the http(s) URLs found in ``text``, de-duplicated, in order."""
+    """Return the http(s) URLs found in ``text``, de-duplicated, in order.
+
+    De-duplication is by exact post-cleanup string with no normalization, so
+    scheme case, a trailing slash, query strings, and fragments are all treated
+    as distinct URLs.
+    """
     seen: set[str] = set()
     urls: list[str] = []
     for match in _URL_RE.findall(text):
-        url = match.rstrip(".,;")  # strip trailing sentence punctuation
-        if url not in seen:
+        url = _trim_trailing(match)
+        if url and url not in seen:
             seen.add(url)
             urls.append(url)
     return urls

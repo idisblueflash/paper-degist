@@ -14,4 +14,23 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the first time a real input URL ends in one of these chars,
   or a `manifest.jsonl` entry shows a mangled URL. Add a failing scenario/unit
   test with that URL, then tighten the regex.
-- **Status:** open. Fine for the current sample blob (9 URLs, all clean).
+- **Status:** RESOLVED (PR #1 review). `_URL_RE` now matches generously
+  (angle-brackets excluded, `re.IGNORECASE`, left-boundary lookbehind against
+  embedded schemes) and `_trim_trailing` strips prose punctuation plus only
+  *unbalanced* wrapper parens, so `paper_(v2).pdf` survives while `[t](url)`
+  loses its wrapper. Balanced-paren, mixed-case, and embedded-scheme cases are
+  pinned by unit tests. One residual heuristic remains: a trailing `.` after a
+  path (`.../a.`) is still treated as sentence punctuation and stripped — an
+  accepted policy, documented by `test_strips_trailing_prose_punctuation_*`.
+
+## parse_url CLI — console entry point (`main`) is not unit-tested
+
+- **Where:** `src/paper_degist/parse_url.py::main`, `src/tests/test_parse_url.py`.
+- **Case not handled:** tests exercise `parse_url()` directly; `main([...])`,
+  stdin input, one-URL-per-line stdout formatting, and error exit codes are
+  unguarded. Deferred by the writer in PR #1 review ("let's not touch this from
+  now, consider later").
+- **Trigger to fix:** when CLI error handling lands (see the open discussion on
+  a file-handling package below), or the first CLI-behavior regression. Add
+  `main`/stdin tests via `capsys`/`monkeypatch` plus a missing-file case then.
+- **Status:** open (deferred, by request).

@@ -43,3 +43,69 @@ def test_sample_blob_has_nine_unique_urls():
     assert len(urls) == 9
     assert len(urls) == len(set(urls))
     assert "https://arxiv.org/pdf/2602.00762" in urls
+
+
+# --- [MAJOR] URLs containing parentheses are not truncated (PR thread 3509869118) ---
+
+
+def test_keeps_balanced_parentheses_inside_url():
+    assert parse_url("see https://example.org/paper_(v2).pdf here") == [
+        "https://example.org/paper_(v2).pdf"
+    ]
+
+
+def test_strips_unbalanced_markdown_wrapper_paren():
+    assert parse_url("[paper](https://example.com/a.pdf)") == [
+        "https://example.com/a.pdf"
+    ]
+
+
+# --- [MAJOR] trailing-punctuation cleanup is delimiter-aware (PR thread 3509869214) ---
+
+
+def test_strips_trailing_prose_punctuation_but_keeps_balanced_parens():
+    assert parse_url("(ref: https://example.org/a_(b).pdf).") == [
+        "https://example.org/a_(b).pdf"
+    ]
+
+
+def test_strips_trailing_comma_and_semicolon():
+    assert parse_url("a https://example.com/x, b https://example.com/y;") == [
+        "https://example.com/x",
+        "https://example.com/y",
+    ]
+
+
+# --- [MINOR] mixed-case schemes are extracted, original text preserved (PR thread 3509869403) ---
+
+
+def test_extracts_mixed_case_scheme_preserving_original_text():
+    assert parse_url("HTTP://example.com and Https://example.org") == [
+        "HTTP://example.com",
+        "Https://example.org",
+    ]
+
+
+# --- [MINOR] embedded schemes are not false positives (PR thread 3509869497) ---
+
+
+def test_embedded_scheme_is_not_matched():
+    assert parse_url("abchttps://example.com") == []
+
+
+def test_scheme_after_punctuation_is_matched():
+    assert parse_url("(https://example.com)") == ["https://example.com"]
+
+
+# --- [MINOR] dedup policy pinned: exact post-cleanup string, no normalization (PR thread 3509869664) ---
+
+
+def test_dedup_treats_scheme_case_slash_query_and_fragment_as_distinct():
+    text = "http://x HTTP://x http://x/ http://x?a=1 http://x#frag http://x"
+    assert parse_url(text) == [
+        "http://x",
+        "HTTP://x",
+        "http://x/",
+        "http://x?a=1",
+        "http://x#frag",
+    ]
