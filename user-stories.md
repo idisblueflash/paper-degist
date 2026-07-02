@@ -1,6 +1,6 @@
 # User Stories
 
-## US 1 Parsing the links
+## US 1 Parsing the links — ✅ Done
 
 As a *researcher*, i want to *parse the paper links out of a text*, so that i
 can *fetch them* later.
@@ -11,7 +11,7 @@ can *fetch them* later.
    - when parse-url process the text
      - then we got a list of URLs
 
-## US 2 Fetching the paper file
+## US 2 Fetching the paper file — ✅ Done
 
 As a *researcher*, i want to *fetch the paper*, so that i can *handle it* later.
 
@@ -65,7 +65,7 @@ As a *researcher*, i want to *convert PDF paper into text file*, so that i can *
 
 As a *researcher*, i want to *convert text file into MD file*, so that i can *process it with LLM* later.
 
-## US 5 Converting HTML
+## US 5 Converting HTML — ✅ Done
 
 As a *researcher*, i want to *convert an HTML paper into an MD file*, so that i
 can *process it with LLM* later.
@@ -108,7 +108,7 @@ As a *Karpathy-wiki Skill*, i want to *compile the new files under src/*, so tha
 
 As a *Karpathy-wiki Skill*, i want to *rate each paper's depth need (skim / study / reimplement)*, so that *I don't flatten every topic into the same report*.
 
-## US 9 Resolving open access for a failed fetch
+## US 9 Resolving open access for a failed fetch — ✅ Done
 
 As a *researcher*, i want to *verify whether a fetch that failed (403 / paywall)
 has an open-access copy*, so that i can *download it from a free source — or

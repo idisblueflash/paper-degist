@@ -4,6 +4,7 @@ A Python script pipeline that converts papers (PDF/HTML) into Markdown for an
 LLM wiki. See `user-stories.md` for the spec.
 
 - Spec: [`user-stories.md`](user-stories.md)
+- CLI manual (run any step by hand, no AI): [`doc/cli-manual.md`](doc/cli-manual.md)
 - Deferred issues to revisit: [`DEVLOG.md`](DEVLOG.md)
 - Project rules: [`.claude/rules/`](.claude/rules/)
 
