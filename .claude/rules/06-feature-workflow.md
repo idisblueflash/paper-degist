@@ -14,9 +14,10 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
 ## The phases
 
 ### 1. Orient — read before writing
-- Read the US in [`user-stories.md`](../../user-stories.md); its acceptance
+- Find the US in the index [`user-stories.md`](../../user-stories.md), then open
+  **only** its own file under `user-stories/` (rule 07) — its acceptance
   criteria *are* the test list, and its "Case handling" section names the
-  classify-then-dispatch branches.
+  classify-then-dispatch branches. Don't read the other stories.
 - Read [`DEVLOG.md`](../../DEVLOG.md) for deferred flags this US is the trigger
   to fix, plus [`CLAUDE.md`](../../CLAUDE.md) and the other rules.
 - Read the nearest **sibling step** and copy its conventions (module shape,
@@ -98,9 +99,10 @@ is untracked — clean up or keep the generated artifacts deliberately.
   **review trail** and the deferred follow-ups.
 
 ### 13. Mark done — only after merge
-- A US earns its `— ✅ Done` marker on the header in
-  [`user-stories.md`](../../user-stories.md) **only once its PR is merged to
-  `master`** — never while the PR is still open. An open PR can be revised,
+- A US earns `✅ Done` in the **Status column of the index**
+  [`user-stories.md`](../../user-stories.md) (rule 07 — status lives only there)
+  **only once its PR is merged to `master`** — never while the PR is still open.
+  An open PR can be revised,
   rejected, or abandoned; the spec must not claim a story is done until the code
   is actually on `master`. Verify with `gh pr list`/`git log master` before
   marking, and mark all merged stories consistently (backfill any that predate
