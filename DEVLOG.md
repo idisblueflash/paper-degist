@@ -37,6 +37,82 @@ location, the case not yet handled, and the trigger that should make us fix it.
   scenario then.
 - **Status:** OPEN.
 
+## fetch_one — JS-rendered HTML may be saved as a thin/empty shell
+
+- **Where:** `src/paper_degist/fetch_one.py::classify` (the `text/html` branch)
+  and `_default_fetch`.
+- **Case not handled:** `_default_fetch` does a plain `httpx.get` with no JS
+  execution. For a client-rendered SPA (Next.js/React/etc.), the response can be
+  a near-empty shell whose real content only appears after client-side
+  hydration. `classify` sees a valid `text/html` body and saves it as a
+  legitimate `.html`, so a content-thin page passes as success rather than being
+  quarantined. Observed live on `https://keymagine.app/keyword-method` — a
+  Next.js app (`_next/static/...`); that particular page did carry its content
+  inline, so it was fine, but the shape is the risk.
+- **Trigger to fix:** the first time the convert step yields near-empty Markdown
+  from a saved `.html`, or a real input SPA returns a hollow shell. Add an
+  "HTML too thin" signal (e.g. text-density / body-length threshold, or a
+  `<div id="__next"></div>`-empty check) that quarantines to `manifest.jsonl`
+  with that reason, driven by a failing test on a captured hollow-shell fixture.
+  Now specified as US 5 AC2 in `user-stories.md`.
+- **Status:** ADDRESSED at the convert stage (US 5). `convert_html` measures the
+  extracted Markdown's non-whitespace character count and quarantines anything
+  below `_MIN_CONTENT_CHARS` (200) to `manifest.jsonl` with reason
+  `"HTML too thin"` — a hollow `<div id="__next"></div>` yields 0 non-ws chars,
+  a real paper thousands (the captured `keyword-method.html` sample: 7623).
+  `fetch_one` still *saves* the shell (it cannot tell inline-rendered from
+  hollow without converting); the thin-shell judgment now lives one stage later
+  where the Markdown makes it cheap and deterministic.
+
+## convert_html — density threshold is a fixed char count, not a ratio
+
+- **Where:** `src/paper_degist/convert_html.py` (`_MIN_CONTENT_CHARS`,
+  `_content_chars`).
+- **Case not handled:** the "too thin" signal is an absolute non-whitespace
+  character count (200). A genuinely short-but-real note under 200 chars would
+  be quarantined as a false positive, and a hollow shell that happens to inline
+  200+ chars of boilerplate nav/footer would pass. A text-density *ratio*
+  (content chars / raw HTML bytes) or a boilerplate strip would be more robust.
+- **Trigger to fix:** the first real paper wrongly quarantined as thin, or a
+  hollow shell wrongly saved. Add the offending fixture as a failing test, then
+  switch to a ratio or add a boilerplate-strip pass.
+- **Status:** OPEN.
+
+## convert_html — non-UTF-8 HTML is quarantined, not transcoded
+
+- **Where:** `src/paper_degist/convert_html.py::convert_html` (the
+  `read_text(encoding="utf-8")` guard).
+- **Case not handled:** a file whose bytes are not valid UTF-8 (e.g. a page
+  served as `charset=iso-8859-1`) would have crashed with `UnicodeDecodeError`;
+  it is now caught and quarantined with reason `"undecodable HTML (not UTF-8)"`
+  so the batch finishes (rule 02: never crash). We do **not** yet sniff the
+  declared charset or transcode — a real Latin-1 paper is quarantined rather
+  than converted.
+- **Trigger to fix:** the first real input quarantined for this reason. Add a
+  branch that reads the `<meta charset>` / HTTP charset and decodes with it
+  (falling back to `errors="replace"`), driven by a failing test on a captured
+  non-UTF-8 fixture.
+- **Status:** OPEN.
+
+## convert stage — extension dispatcher (.pdf vs .html) not built yet
+
+- **Where:** the convert stage as a whole; only `convert_html` (the `.html`
+  branch) exists.
+- **Case not handled:** US 5's case handling says the convert stage dispatches
+  by file extension — `.pdf` → the PDF path (US 3 + US 4), `.html` →
+  `convert_html` — both converging on `files/<name>.md`. Only the `.html` branch
+  is built; there is no top-level `convert` entry point that classifies by
+  extension and dispatches, because the PDF path (US 3/US 4) does not exist yet.
+- **Trigger to fix:** when US 3/US 4 land. Add a `convert` step that classifies
+  by suffix and dispatches to `convert_html` or the PDF path, mirroring
+  `fetch_one`'s Content-Type dispatch; quarantine unknown extensions.
+- **Status:** OPEN (top-level dispatcher). Mitigated: `convert_html` now
+  classifies its *own* input first — a non-`.html`/`.htm` file is quarantined
+  (reason `"not an HTML file (unexpected extension …)"`) instead of being
+  markdownified into a garbage `.md` (Codex review). So the `.html` handler is
+  safe to invoke directly today; the deferred work is only the shared front
+  door that routes `.pdf` vs `.html`.
+
 ## parse_url CLI — console entry point (`main`) is not unit-tested
 
 - **Where:** `src/paper_degist/parse_url.py::main`, `src/tests/test_parse_url.py`.

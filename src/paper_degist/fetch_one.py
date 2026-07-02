@@ -13,13 +13,13 @@ Runnable from the command line (rule 03):
     uv run fetch-one <url> --files-dir out/
 """
 
-import json
 from pathlib import Path
 from typing import Annotated, Callable, Optional, Protocol
 from urllib.parse import urlsplit
 
 import typer
 
+from paper_degist import _manifest
 from paper_degist._cli import invoke
 
 
@@ -75,15 +75,14 @@ def _quarantine(
     reason: str,
 ) -> None:
     """Append one unhandled-case record to the manifest, so the batch finishes."""
-    record = {
-        "url": url,
-        "status": status,
-        "content_type": content_type,
-        "reason": reason,
-    }
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    with manifest_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    _manifest.append(
+        manifest_path,
+        stage="fetch-one",
+        url=url,
+        status=status,
+        content_type=content_type,
+        reason=reason,
+    )
 
 
 def fetch_one(
@@ -97,7 +96,7 @@ def fetch_one(
 
     Returns the saved (or already-present) path on success, or ``None`` when the
     response is quarantined. A pre-existing target is left untouched so re-runs
-    are idempotent (US 6 can detect what is genuinely new).
+    are idempotent (US 7 can detect what is genuinely new).
     """
     files_dir = Path(files_dir)
     manifest_path = Path(manifest_path)

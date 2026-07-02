@@ -17,6 +17,7 @@ import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
+from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
 
@@ -121,6 +122,55 @@ def test_fetch_one_cli_quarantine_notes_url_on_stderr(tmp_path: Path, monkeypatc
     # err=True output, which CliRunner folds into result.output
     result, _, _ = _fetch_one_quarantine(tmp_path, monkeypatch)
     assert "https://example.com/x" in result.output
+
+
+def _convert_html_save(tmp_path):
+    """Write a content-rich .html and run `convert-html` on it."""
+    html = tmp_path / "paper.html"
+    body = "<h1>Title</h1><p>" + "lorem ipsum dolor sit amet " * 40 + "</p>"
+    html.write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+    result = runner.invoke(convert_html_app, [str(html)])
+    return result, html
+
+
+def test_convert_html_cli_exits_zero_on_save(tmp_path: Path):
+    result, _ = _convert_html_save(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_convert_html_cli_prints_saved_md_path(tmp_path: Path):
+    result, html = _convert_html_save(tmp_path)
+    assert result.stdout.strip() == str(html.with_suffix(".md"))
+
+
+def _convert_html_quarantine(tmp_path):
+    """Run `convert-html` on a hollow SPA shell; return (result, manifest)."""
+    html = tmp_path / "spa.html"
+    html.write_text('<html><body><div id="__next"></div></body></html>', encoding="utf-8")
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(convert_html_app, [str(html), "--manifest", str(manifest)])
+    return result, manifest
+
+
+def test_convert_html_cli_quarantine_exits_zero(tmp_path: Path):
+    # too-thin quarantine is an expected outcome, not a crash
+    result, _ = _convert_html_quarantine(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_convert_html_cli_quarantine_notes_path_on_stderr(tmp_path: Path):
+    result, _ = _convert_html_quarantine(tmp_path)
+    assert "spa.html" in result.output
+
+
+def test_convert_html_cli_missing_file_exits_two(tmp_path: Path):
+    result = runner.invoke(convert_html_app, [str(tmp_path / "nope.html")])
+    assert result.exit_code == 2
+
+
+def test_root_signpost_lists_convert_html():
+    result = runner.invoke(root_app, [])
+    assert "convert-html" in result.stdout
 
 
 def test_root_signpost_lists_steps():
