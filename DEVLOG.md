@@ -30,7 +30,25 @@ location, the case not yet handled, and the trigger that should make us fix it.
   stdin input, one-URL-per-line stdout formatting, and error exit codes are
   unguarded. Deferred by the writer in PR #1 review ("let's not touch this from
   now, consider later").
-- **Trigger to fix:** when CLI error handling lands (see the open discussion on
-  a file-handling package below), or the first CLI-behavior regression. Add
-  `main`/stdin tests via `capsys`/`monkeypatch` plus a missing-file case then.
+- **Trigger to fix:** when CLI error handling lands (see the CLI-framework
+  decision below), or the first CLI-behavior regression. Add `main`/stdin tests
+  via `capsys`/`monkeypatch` plus a missing-file case then.
 - **Status:** open (deferred, by request).
+
+## CLI framework — adopt Typer project-wide (deferred to next PR)
+
+- **Where:** every step's CLI surface, starting with
+  `src/paper_degist/parse_url.py::main` (raw `open(args.file)` emits tracebacks
+  for missing/unreadable files — PR #1 finding r3509869286).
+- **Decision:** standardize the pipeline's CLI steps on **Typer** (Click under
+  the hood) instead of hand-rolling `argparse` + per-step `try/except`. Typer's
+  `Path(exists=True, readable=True)` gives early file validation, clean stderr
+  messages, and POSIX exit codes for free, and its `CliRunner` makes `main`
+  testable — closing both this finding and the untested-`main` item above with
+  one convention. Chosen over a stdlib guard because paper-degist is many
+  independent CLI steps that all need identical file-in/stdout-out/clean-error
+  behavior.
+- **Trigger to fix:** the **next PR** (writer's call — keep PR #1 scoped to
+  URL-parsing). Add `typer` via `uv add typer`, refactor `parse-url` onto it as
+  the pattern the other steps follow, then apply to `fetch`/`convert`/`import`.
+- **Status:** open (deferred to next PR, by request).
