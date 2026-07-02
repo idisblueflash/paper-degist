@@ -62,6 +62,8 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `invoke_without_command` callback). The convention for the remaining steps:
   a module-level `app = typer.Typer(add_completion=False)`, commands using
   `Annotated[..., typer.Argument(...)]` for validation, and a rule-03
-  `main(argv=None) -> int` that runs `app(args=argv)` in standalone mode and
-  translates the raised `SystemExit` into the return code. Apply the same shape
-  to `fetch`/`convert`/`import` as they land.
+  `main(argv=None) -> int` that delegates to `paper_degist._cli.invoke(app,
+  argv)` — the single place that runs the app in standalone mode (clean error
+  output) and normalizes the raised `SystemExit` into an int (`None`→0,
+  non-int payload→1). Apply the same shape to `fetch`/`convert`/`import` as
+  they land.

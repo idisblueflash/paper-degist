@@ -18,6 +18,8 @@ from typing import Annotated, Optional
 
 import typer
 
+from paper_degist._cli import invoke
+
 # http(s) URL grabbed generously up to whitespace/angle-bracket. The left
 # lookbehind rejects a scheme embedded in a larger token (``abchttps://``);
 # IGNORECASE accepts mixed-case schemes while ``findall`` preserves the
@@ -92,17 +94,8 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point (rule 03): ``uv run parse-url`` and ``__main__``.
-
-    Runs the Typer app in standalone mode so usage/validation errors (e.g. a
-    missing file) print a clean stderr message rather than a traceback, then
-    translates the ``SystemExit`` it raises into the return code.
-    """
-    try:
-        app(args=argv)
-    except SystemExit as exc:
-        return int(exc.code or 0)
-    return 0
+    """CLI entry point (rule 03): ``uv run parse-url`` and ``__main__``."""
+    return invoke(app, argv)
 
 
 if __name__ == "__main__":

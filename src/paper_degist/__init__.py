@@ -7,6 +7,8 @@ step at a time via each step's own console script (see ``[project.scripts]``).
 
 import typer
 
+from paper_degist._cli import invoke
+
 _STEPS = [
     ("parse-url", "Extract http(s) URLs from a text blob (US1 AC1)."),
 ]
@@ -27,16 +29,8 @@ def signpost() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point (rule 03): ``uv run paper-degist`` and ``__main__``.
-
-    Standalone mode keeps error output clean; the raised ``SystemExit`` is
-    translated into the return code (see ``parse_url.main``).
-    """
-    try:
-        app(args=argv)
-    except SystemExit as exc:
-        return int(exc.code or 0)
-    return 0
+    """CLI entry point (rule 03): ``uv run paper-degist`` and ``__main__``."""
+    return invoke(app, argv)
 
 
 if __name__ == "__main__":
