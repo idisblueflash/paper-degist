@@ -33,7 +33,11 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when CLI error handling lands (see the CLI-framework
   decision below), or the first CLI-behavior regression. Add `main`/stdin tests
   via `capsys`/`monkeypatch` plus a missing-file case then.
-- **Status:** open (deferred, by request).
+- **Status:** RESOLVED (Typer adoption PR). `src/tests/test_cli.py` drives the
+  step's Typer `app` through `typer.testing.CliRunner`: file argument, stdin
+  fallback, one-URL-per-line stdout, and the missing-file path (non-zero exit,
+  no traceback). The `capsys`/`monkeypatch` plan is moot — `CliRunner` captures
+  stdout and exit codes directly.
 
 ## CLI framework — adopt Typer project-wide (deferred to next PR)
 
@@ -51,4 +55,13 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the **next PR** (writer's call — keep PR #1 scoped to
   URL-parsing). Add `typer` via `uv add typer`, refactor `parse-url` onto it as
   the pattern the other steps follow, then apply to `fetch`/`convert`/`import`.
-- **Status:** open (deferred to next PR, by request).
+- **Status:** RESOLVED (this PR). `typer` added via `uv add`; both existing CLI
+  surfaces refactored onto it — `parse_url` (an `@app.command()` with a
+  `typer.Argument(exists=True, dir_okay=False, readable=True)` that validates
+  the file up front) and the root `paper_degist` signpost (an
+  `invoke_without_command` callback). The convention for the remaining steps:
+  a module-level `app = typer.Typer(add_completion=False)`, commands using
+  `Annotated[..., typer.Argument(...)]` for validation, and a rule-03
+  `main(argv=None) -> int` that runs `app(args=argv)` in standalone mode and
+  translates the raised `SystemExit` into the return code. Apply the same shape
+  to `fetch`/`convert`/`import` as they land.
