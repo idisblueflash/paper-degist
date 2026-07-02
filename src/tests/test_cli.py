@@ -101,6 +101,10 @@ def test_fetch_one_quarantine_exits_zero_with_stderr_note(tmp_path: Path, monkey
     assert result.exit_code == 0  # quarantine is expected, not a crash
     assert not files.exists()
     assert manifest.exists()
+    # the note names the quarantined URL and points at the manifest (err=True,
+    # which CliRunner folds into result.output)
+    assert "quarantined" in result.output
+    assert "https://example.com/x" in result.output
 
 
 def test_root_signpost_lists_steps():
