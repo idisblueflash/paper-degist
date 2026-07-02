@@ -13,12 +13,21 @@ import typer
 from typer.testing import CliRunner
 
 import paper_degist
+import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
+from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
 
 runner = CliRunner()
+
+
+class _FakeResponse:
+    def __init__(self, *, status_code=200, content_type="", content=b""):
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+        self.content = content
 
 
 def test_parse_url_reads_file_argument(tmp_path: Path):
@@ -58,11 +67,48 @@ def test_parse_url_missing_file_exits_two_without_traceback(tmp_path: Path):
     assert "Traceback" not in result.output
 
 
+def test_fetch_one_saves_file_and_prints_path(tmp_path: Path, monkeypatch):
+    resp = _FakeResponse(content_type="application/pdf", content=b"%PDF- data")
+    monkeypatch.setattr(fetch_one_mod, "_default_fetch", lambda url: resp)
+    files = tmp_path / "files"
+
+    result = runner.invoke(
+        fetch_one_app, ["https://example.com/a.pdf", "--files-dir", str(files)]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(files / "a.pdf")
+    assert (files / "a.pdf").read_bytes() == b"%PDF- data"
+
+
+def test_fetch_one_quarantine_exits_zero_with_stderr_note(tmp_path: Path, monkeypatch):
+    resp = _FakeResponse(status_code=403, content_type="text/html", content=b"no")
+    monkeypatch.setattr(fetch_one_mod, "_default_fetch", lambda url: resp)
+    files = tmp_path / "files"
+    manifest = tmp_path / "manifest.jsonl"
+
+    result = runner.invoke(
+        fetch_one_app,
+        [
+            "https://example.com/x",
+            "--files-dir",
+            str(files),
+            "--manifest",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 0  # quarantine is expected, not a crash
+    assert not files.exists()
+    assert manifest.exists()
+
+
 def test_root_signpost_lists_steps():
     result = runner.invoke(root_app, [])
 
     assert result.exit_code == 0
     assert "parse-url" in result.stdout
+    assert "fetch-one" in result.stdout
 
 
 # --- main(argv) -> int wrappers: the exit codes the shell actually sees ---
