@@ -106,7 +106,12 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when US 3/US 4 land. Add a `convert` step that classifies
   by suffix and dispatches to `convert_html` or the PDF path, mirroring
   `fetch_one`'s Content-Type dispatch; quarantine unknown extensions.
-- **Status:** OPEN.
+- **Status:** OPEN (top-level dispatcher). Mitigated: `convert_html` now
+  classifies its *own* input first — a non-`.html`/`.htm` file is quarantined
+  (reason `"not an HTML file (unexpected extension …)"`) instead of being
+  markdownified into a garbage `.md` (Codex review). So the `.html` handler is
+  safe to invoke directly today; the deferred work is only the shared front
+  door that routes `.pdf` vs `.html`.
 
 ## parse_url CLI — console entry point (`main`) is not unit-tested
 

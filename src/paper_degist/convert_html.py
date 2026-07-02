@@ -25,6 +25,11 @@ from paper_degist._cli import invoke
 # paper yields thousands of non-ws chars; a `<div id="__next"></div>` yields 0.
 _MIN_CONTENT_CHARS = 200
 
+# The convert stage dispatches by file extension; this is the `.html` handler,
+# so it classifies its own input first (rule 02) and quarantines anything else
+# rather than markdownifying, e.g., PDF bytes into a garbage `.md`.
+_HTML_SUFFIXES = {".html", ".htm"}
+
 
 def html_to_markdown(html: str) -> str:
     """Convert an HTML document to Markdown, preserving structure."""
@@ -50,12 +55,22 @@ def convert_html(
     """Convert ``files/<name>.html`` to ``files/<name>.md``; return its path.
 
     Returns the saved (or already-present) ``.md`` path on success, or ``None``
-    when the extracted Markdown is below the content-density threshold and the
-    file is quarantined (AC2). A pre-existing ``.md`` is left untouched so
-    re-runs are idempotent.
+    when the input is quarantined — a non-``.html`` extension, an undecodable
+    (non-UTF-8) file, or Markdown below the content-density threshold (AC2). A
+    pre-existing ``.md`` is left untouched so re-runs are idempotent.
     """
     path = Path(path)
     manifest_path = Path(manifest_path)
+
+    if path.suffix.lower() not in _HTML_SUFFIXES:
+        # Not this handler's input type — quarantine rather than convert (the
+        # `.pdf` path is US3+US4; the top-level dispatcher lands with it).
+        _quarantine(
+            manifest_path,
+            path=str(path),
+            reason=f"not an HTML file (unexpected extension {path.suffix!r})",
+        )
+        return None
 
     try:
         html = path.read_text(encoding="utf-8")

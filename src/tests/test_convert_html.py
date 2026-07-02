@@ -122,6 +122,32 @@ def test_too_thin_manifest_records_convert_html_stage(tmp_path: Path):
     assert _only_record(manifest)["stage"] == "convert-html"
 
 
+# --- classify the input by extension: a non-.html file is quarantined (rule 02) ---
+
+
+def _run_other_ext(tmp_path: Path, name: str):
+    """Run convert_html on a readable, content-rich file that is not .html."""
+    other = tmp_path / name
+    other.write_bytes(b"%PDF-1.7 " + b"x" * 500)
+    manifest = tmp_path / "manifest.jsonl"
+    return convert_html(other, manifest_path=manifest), other, manifest
+
+
+def test_non_html_extension_returns_none(tmp_path: Path):
+    result, _, _ = _run_other_ext(tmp_path, "paper.pdf")
+    assert result is None
+
+
+def test_non_html_extension_writes_no_md(tmp_path: Path):
+    _, other, _ = _run_other_ext(tmp_path, "paper.pdf")
+    assert not other.with_suffix(".md").exists()
+
+
+def test_non_html_extension_manifest_reason_names_the_extension(tmp_path: Path):
+    _, _, manifest = _run_other_ext(tmp_path, "paper.pdf")
+    assert ".pdf" in _only_record(manifest)["reason"]
+
+
 # --- quarantine an undecodable (non-UTF-8) HTML file — never crash (rule 02) ---
 
 
