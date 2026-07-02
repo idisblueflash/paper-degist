@@ -165,6 +165,12 @@ def test_unknown_type_manifest_records_a_reason(tmp_path: Path):
     assert _only_record(manifest)["reason"]
 
 
+def test_unknown_type_manifest_records_fetch_one_stage(tmp_path: Path):
+    # shared manifest: the stage discriminator marks who wrote this record.
+    _, _, manifest = _run(tmp_path, url="https://example.com/thing", response=UNKNOWN)
+    assert _only_record(manifest)["stage"] == "fetch-one"
+
+
 # --- quarantine an HTTP error status (AC6) ---
 
 
