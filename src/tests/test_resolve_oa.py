@@ -13,16 +13,24 @@ offline (US2 design principle).
 import json
 from pathlib import Path
 
-from paper_degist.resolve_oa import _pdf_url_from_unpaywall, doi_from, resolve_oa
+from paper_degist.resolve_oa import (
+    _doi_from_crossref,
+    _pdf_url_from_unpaywall,
+    doi_from,
+    resolve_oa,
+    title_from,
+)
 
 _DOI_URL = "https://doi.org/10.1191/1362168805lr151oa"
 _SLUG_URL = "https://www.researchgate.net/publication/249870239_An_investigation"
 
 
-def _run(tmp_path, *, url=_DOI_URL, oa_lookup):
+def _run(tmp_path, *, url=_DOI_URL, oa_lookup, title_lookup=None):
     """Arrange a fresh manifest and run resolve_oa; return (result, manifest)."""
     manifest = tmp_path / "manifest.jsonl"
-    result = resolve_oa(url, manifest_path=manifest, oa_lookup=oa_lookup)
+    result = resolve_oa(
+        url, manifest_path=manifest, oa_lookup=oa_lookup, title_lookup=title_lookup
+    )
     return result, manifest
 
 
@@ -63,6 +71,44 @@ def test_doi_from_strips_trailing_sentence_punctuation():
 def test_doi_from_strips_unbalanced_wrapper_paren():
     # A DOI wrapped in prose parens keeps a balanced one but drops the wrapper.
     assert doi_from("(10.1191/1362168805lr151oa)") == "10.1191/1362168805lr151oa"
+
+
+# --- title_from: recover a title slug from a slug-only URL (US10) ---
+
+
+def test_title_from_researchgate_slug_strips_id_and_underscores():
+    url = "https://www.researchgate.net/publication/249870239_An_investigation_of_the_keyword_method"
+    assert title_from(url) == "An investigation of the keyword method"
+
+
+def test_title_from_bare_domain_without_a_slug_is_none():
+    # No last-segment title to query Crossref with — the AC3 quarantine case.
+    assert title_from("https://example.com/") is None
+
+
+# --- _doi_from_crossref: trust the top DOI only on a confident title match (US10) ---
+
+
+def _crossref(doi, title):
+    """Shape one Crossref /works response with a single top item."""
+    return {"message": {"items": [{"DOI": doi, "title": [title]}]}}
+
+
+def test_crossref_confident_title_match_returns_the_doi():
+    # The returned title equals the query (all content tokens overlap) — trusted.
+    data = _crossref("10.1191/1362168805lr151oa", "An investigation of the keyword method")
+    assert _doi_from_crossref(data, "An investigation of the keyword method") == "10.1191/1362168805lr151oa"
+
+
+def test_crossref_weak_title_match_is_rejected():
+    # A truncated 2-word slug returns an unrelated best-effort paper (real case:
+    # "An investigation" → "Managing Covert Investigation", 0.33 overlap).
+    data = _crossref("10.1093/law/9780198828532.003.0005", "Managing Covert Investigation")
+    assert _doi_from_crossref(data, "An investigation") is None
+
+
+def test_crossref_empty_result_set_is_none():
+    assert _doi_from_crossref({"message": {"items": []}}, "whatever title") is None
 
 
 # --- _pdf_url_from_unpaywall: only a real PDF URL counts, never a landing page ---
@@ -163,4 +209,78 @@ def test_lookup_error_returns_none(tmp_path: Path):
 
 def test_lookup_error_manifest_reason_mentions_the_error(tmp_path: Path):
     _, manifest = _run(tmp_path, oa_lookup=_boom)
+    assert "unpaywall 422" in _only_record(manifest)["reason"]
+
+
+# --- US10 AC1: a title-recovered DOI feeds the OA dispatch ---
+
+
+def _title_doi(doi):
+    """A title_lookup fake that recovers ``doi`` from any title."""
+    return lambda title: doi
+
+
+def test_title_recovered_doi_resolves_to_the_oa_pdf(tmp_path: Path):
+    # Slug URL (no embedded DOI) → title→DOI recovers one → OA lookup finds a PDF.
+    result, _ = _run(
+        tmp_path,
+        url=_SLUG_URL,
+        oa_lookup=_found("https://oa.example.org/paper.pdf"),
+        title_lookup=_title_doi("10.1191/1362168805lr151oa"),
+    )
+    assert result == "https://oa.example.org/paper.pdf"
+
+
+def test_title_recovered_doi_closed_access_records_the_doi(tmp_path: Path):
+    # The recovered DOI rejoins the OA dispatch, so a closed verdict records it.
+    _, manifest = _run(
+        tmp_path,
+        url=_SLUG_URL,
+        oa_lookup=_closed,
+        title_lookup=_title_doi("10.1191/1362168805lr151oa"),
+    )
+    assert _only_record(manifest)["doi"] == "10.1191/1362168805lr151oa"
+
+
+# --- US10 AC2: a weak/no Crossref match is quarantined, not trusted ---
+
+
+def test_title_no_confident_match_returns_none(tmp_path: Path):
+    result, _ = _run(
+        tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=lambda t: None
+    )
+    assert result is None
+
+
+def test_title_no_confident_match_reason_routes_to_human(tmp_path: Path):
+    _, manifest = _run(
+        tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=lambda t: None
+    )
+    assert _only_record(manifest)["reason"] == (
+        "title→DOI: no confident Crossref match (route to human/browser)"
+    )
+
+
+# --- US10 AC3: a URL with no extractable title is quarantined ---
+
+
+def test_no_title_slug_reason_names_the_missing_title(tmp_path: Path):
+    _, manifest = _run(
+        tmp_path, url="https://example.com/", oa_lookup=_must_not_call, title_lookup=_boom
+    )
+    assert _only_record(manifest)["reason"] == (
+        "no DOI and no title to resolve (route to human/browser)"
+    )
+
+
+# --- US10 AC4: a title→DOI lookup error is quarantined, never raised ---
+
+
+def test_title_lookup_error_returns_none(tmp_path: Path):
+    result, _ = _run(tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=_boom)
+    assert result is None
+
+
+def test_title_lookup_error_reason_mentions_the_error(tmp_path: Path):
+    _, manifest = _run(tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=_boom)
     assert "unpaywall 422" in _only_record(manifest)["reason"]

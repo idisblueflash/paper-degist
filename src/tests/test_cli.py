@@ -197,6 +197,24 @@ def test_resolve_oa_cli_quarantine_notes_url_on_stderr(tmp_path: Path, monkeypat
     assert "https://doi.org/10.1191/x" in result.output
 
 
+def test_resolve_oa_cli_slug_url_resolves_via_title_lookup(tmp_path: Path, monkeypatch):
+    # A slug URL (no embedded DOI) must reach the Crossref title→DOI path the CLI
+    # wires in, then flow the recovered DOI into the OA lookup (US10 AC1).
+    monkeypatch.setattr(resolve_oa_mod, "_crossref_title_lookup", lambda email: (lambda t: "10.1/x"))
+    monkeypatch.setattr(resolve_oa_mod, "_unpaywall_lookup", lambda email: (lambda doi: "https://oa.org/p.pdf"))
+    result = runner.invoke(
+        resolve_oa_app,
+        [
+            "https://www.researchgate.net/publication/249870239_An_investigation",
+            "--email",
+            "me@example.com",
+            "--manifest",
+            str(tmp_path / "manifest.jsonl"),
+        ],
+    )
+    assert result.stdout.strip() == "https://oa.org/p.pdf"
+
+
 def test_resolve_oa_cli_missing_email_exits_two(tmp_path: Path):
     # Unpaywall needs a contact email; the option is required.
     result = runner.invoke(resolve_oa_app, ["https://doi.org/10.1191/x"])
