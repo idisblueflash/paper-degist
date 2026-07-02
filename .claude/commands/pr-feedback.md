@@ -52,23 +52,35 @@ HANDLED. Post the reply to the thread root id shown as `reply-to id for posting`
 
 ```
 gh api repos/<owner>/<repo>/pulls/<pr>/comments/<root_id>/replies \
-  -f body="<one-line summary of what you did><newline><newline><!-- claude-code:handled --> "
+  -f body="🤖 **Claude Code** — <one-line summary of what you did><newline><newline><!-- claude-code:handled --> "
 ```
+
+**Sign every reply with the agent name.** Because you post through `gh` as the
+repo owner, GitHub shows my account as the author of *both* my findings and your
+answers — so the thread reads as one person talking to themselves and I can't
+tell who asked from who answered. Every reply you post **must** begin with the
+signature line `🤖 **Claude Code** — ` so the answer is visibly yours, not mine.
 
 Every reply you post **must** end with exactly one marker, on its own line:
 
 - Resolved (FIX, DEFER) → `<!-- claude-code:handled -->`
 - Answered-but-open (DISCUSS) → `<!-- claude-code:awaiting-reply -->`
 
-The fetch script flags a thread `NEEDS ACTION` only when its last comment has
-**no** marker — i.e. the last word is mine. So marking your DISCUSS answer with
+**A thread I resolved on GitHub is terminal.** If I clicked *Resolve
+conversation*, the fetch script reports it `RESOLVED (by you on GitHub)` and
+never as `NEEDS ACTION` — resolution outranks every marker and even an unmarked
+last reply. Do not reply on, reopen, or act on a resolved thread; that decision
+is final. Only unresolved threads whose last word is mine are actionable.
+
+The fetch script flags a thread `NEEDS ACTION` only when it is unresolved and
+its last comment has **no** marker — i.e. the last word is mine. So marking your DISCUSS answer with
 the *awaiting* marker keeps it from being re-answered on the next run, yet the
 thread reopens automatically the moment I reply (my reply has no marker).
 Suggested bodies:
 
-- FIX:      `Fixed in this branch: <what changed> (test: <test name>).` + handled marker
-- DISCUSS:  `<your recommendation / answer, ending in a question to me>.` + awaiting marker
-- DEFER:    `Noted as deferred in DEVLOG per your call; will revisit when <trigger>.` + handled marker
+- FIX:      `🤖 **Claude Code** — Fixed in this branch: <what changed> (test: <test name>).` + handled marker
+- DISCUSS:  `🤖 **Claude Code** — <your recommendation / answer, ending in a question to me>.` + awaiting marker
+- DEFER:    `🤖 **Claude Code** — Noted as deferred in DEVLOG per your call; will revisit when <trigger>.` + handled marker
 
 ## Order of work
 

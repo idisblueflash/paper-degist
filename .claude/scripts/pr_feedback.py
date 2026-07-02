@@ -45,6 +45,51 @@ def _gh(args: list[str]) -> tuple[int, str, str]:
         return 124, "", "gh timed out"
 
 
+def _resolved_roots(owner: str, name: str, number: int) -> set[int]:
+    """Return the set of thread-root comment ids you resolved on GitHub.
+
+    "Resolve conversation" sets ``reviewThreads.isResolved`` — a definitive
+    "done" from you that the REST /comments endpoint does not expose, so we ask
+    GraphQL. The first comment's databaseId is the thread root (it matches the
+    REST comment id we group threads by). A resolved thread outranks any marker.
+    """
+    query = (
+        "query($owner:String!,$name:String!,$number:Int!){"
+        "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+        "reviewThreads(first:100){nodes{isResolved "
+        "comments(first:1){nodes{databaseId}}}}}}}"
+    )
+    code, out, _ = _gh(
+        [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+        ]
+    )
+    if code != 0:
+        return set()  # degrade gracefully to marker-only behavior
+    try:
+        data = json.loads(out)
+        nodes = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return set()
+    resolved: set[int] = set()
+    for t in nodes:
+        if not t.get("isResolved"):
+            continue
+        c = (t.get("comments") or {}).get("nodes") or []
+        if c and c[0].get("databaseId") is not None:
+            resolved.add(int(c[0]["databaseId"]))
+    return resolved
+
+
 def _repo_and_pr() -> tuple[str, str, int] | None:
     code, out, err = _gh(
         ["pr", "view", "--json", "number,headRepositoryOwner,headRepository"]
@@ -92,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Could not parse review comments from gh.")
         return 0
 
+    resolved_roots = _resolved_roots(owner, name, number)
+
     by_id = {c["id"]: c for c in comments}
 
     # Group into threads: a reply's root is its in_reply_to_id; a finding is its
@@ -114,8 +161,11 @@ def main(argv: list[str] | None = None) -> int:
             continue  # a finding with no human decision yet — skip
 
         last_marker = _claude_marker(chain[-1].get("body") or "")
-        needs = last_marker is None
-        if needs:
+        # You resolving the conversation on GitHub is the strongest "done"
+        # signal — it outranks any marker and even an unmarked last reply.
+        if root_id in resolved_roots:
+            status = "RESOLVED (by you on GitHub)"
+        elif last_marker is None:
             status = "NEEDS ACTION"
             actionable += 1
         elif last_marker == MARKER_AWAITING:
