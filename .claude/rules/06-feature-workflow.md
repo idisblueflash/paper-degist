@@ -3,7 +3,7 @@
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
 end-to-end run → self-review → chunked commits → second-opinion review → CLI
-manual → flip status to Done → PR → merge.**
+manual → flip status to Done → PR → merge → clean up.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -112,6 +112,32 @@ is untracked — clean up or keep the generated artifacts deliberately.
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups. Merging this PR lands both the
   story and its `✅ Done` flip on `master` in one merge.
+
+### 14. Clean up — after the merge
+Once the PR merges on the remote, sync local and prune the branch in this
+**exact order** — the order is a safety interlock, not a preference:
+
+0. **Start from a clean working tree.** Commit or move any unrelated WIP to its
+   own branch *first*. Do **not** stash-hop a dirty file across the fast-forward:
+   if the stashed file also changed on `master`, the `stash pop` conflicts and
+   can silently mangle the file (drop rows/lines) without clean markers.
+1. **`git switch master`** — you cannot delete the branch you are standing on.
+2. **`git pull --ff-only`** — fast-forward local `master` to the merged state.
+   `--ff-only` refuses (loudly) rather than inventing a merge commit if history
+   diverged (equivalently: `git fetch --prune` then `git merge --ff-only
+   origin/master`; `--prune` also clears stale remote-tracking refs).
+3. **`git branch -d <branch>`** — the *safe* delete, and it must come **after**
+   step 2: `-d` only removes a branch already contained in the current `HEAD`,
+   so pulling first lets `-d` confirm the merge landed. Deleting before the pull
+   forces you onto `-D` (force), which discards genuinely-unmerged commits too.
+   (Squash-merge repos are the exception: the squashed commit has a new SHA, so
+   `-d` refuses and `-D` is expected — this repo uses merge commits, so `-d`
+   works.)
+4. **`git push origin --delete <branch>`** — only if GitHub's "delete branch on
+   merge" did not already remove the remote branch.
+
+The branch list stays scoped to live work and local `master` never lags the
+remote, so the next story branches off the real tip instead of a stale one.
 
 ## Why
 
