@@ -9,3 +9,10 @@ __pycache__/
 # Project output
 files/
 manifest.jsonl
+
+# US18 browser lane: the dev-mode Chrome profile holds live authenticated
+# sessions (secrets-at-rest) — never commit it.
+.browser-profile/
+
+# bureau: rendered gazette (build artifact)
+/gazette/

@@ -13,11 +13,13 @@ import typer
 from typer.testing import CliRunner
 
 import paper_degist
+import paper_degist.browser_up as browser_up_mod
 import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
 import paper_degist.resolve_oa as resolve_oa_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
+from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
@@ -219,6 +221,58 @@ def test_resolve_oa_cli_missing_email_exits_two(tmp_path: Path):
     # Unpaywall needs a contact email; the option is required.
     result = runner.invoke(resolve_oa_app, ["https://doi.org/10.1191/x"])
     assert result.exit_code == 2
+
+
+def test_browser_up_cli_prints_endpoint_on_reuse(monkeypatch):
+    # A reachable dev-mode Chrome is reused; the CLI prints its endpoint.
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: True)
+    result = runner.invoke(browser_up_app, ["--cdp", "http://localhost:9222"])
+    assert result.stdout.strip() == "http://localhost:9222"
+
+
+def test_browser_up_cli_reuse_exits_zero(monkeypatch):
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: True)
+    result = runner.invoke(browser_up_app, [])
+    assert result.exit_code == 0
+
+
+def test_browser_up_cli_loud_failure_exits_non_zero(monkeypatch):
+    # A launch it cannot complete is a loud non-zero exit, not a quarantine.
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: False)
+    monkeypatch.setattr(browser_up_mod, "_default_port_in_use", lambda h, p: False)
+    monkeypatch.setattr(browser_up_mod, "_default_find_chrome", lambda: None)
+    result = runner.invoke(browser_up_app, [])
+    assert result.exit_code == 1
+
+
+def test_browser_up_cli_loud_failure_names_the_reason_on_stderr(monkeypatch):
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: False)
+    monkeypatch.setattr(browser_up_mod, "_default_port_in_use", lambda h, p: False)
+    monkeypatch.setattr(browser_up_mod, "_default_find_chrome", lambda: None)
+    result = runner.invoke(browser_up_app, [])
+    assert "browser-up failed" in result.output
+
+
+def test_browser_up_cli_loud_failure_is_not_a_stack_trace(monkeypatch):
+    # AC4/AC5: never a stack-trace crash.
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: False)
+    monkeypatch.setattr(browser_up_mod, "_default_port_in_use", lambda h, p: False)
+    monkeypatch.setattr(browser_up_mod, "_default_find_chrome", lambda: None)
+    result = runner.invoke(browser_up_app, [])
+    assert "Traceback" not in result.output
+
+
+def test_browser_up_main_returns_one_on_loud_failure(monkeypatch, capsys):
+    # The exit code the shell actually sees for a loud failure.
+    monkeypatch.setattr(browser_up_mod, "_default_probe_cdp", lambda url: False)
+    monkeypatch.setattr(browser_up_mod, "_default_port_in_use", lambda h, p: False)
+    monkeypatch.setattr(browser_up_mod, "_default_find_chrome", lambda: None)
+    assert browser_up_mod.main([]) == 1
+
+
+def test_root_signpost_lists_browser_up():
+    result = runner.invoke(root_app, [])
+    assert "browser-up" in result.stdout
 
 
 def test_root_signpost_lists_resolve_oa():
