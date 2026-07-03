@@ -26,3 +26,7 @@ calls. The script classifies and dispatches deterministically; genuinely novel
 cases are quarantined to a manifest (never crash, never call an LLM in the
 loop) and become new code branches once. Goal: the workflow stays runnable
 offline and cheap.
+
+<!-- bureau:start -->
+@BUREAU.md
+<!-- bureau:end -->
