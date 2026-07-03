@@ -118,7 +118,7 @@ Once the PR merges on the remote, sync local and prune the branch in this
 **exact order** — the order is a safety interlock, not a preference:
 
 0. **Start from a clean working tree.** Commit or move any unrelated WIP to its
-   own branch *first_. Do **not** stash-hop a dirty file across the fast-forward:
+   own branch *first*. Do **not** stash-hop a dirty file across the fast-forward:
    if the stashed file also changed on `master`, the `stash pop` conflicts and
    can silently mangle the file (drop rows/lines) without clean markers.
 1. **`git switch master`** — you cannot delete the branch you are standing on.
