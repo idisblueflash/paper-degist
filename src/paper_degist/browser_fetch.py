@@ -99,10 +99,18 @@ def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) 
     never launches or kills a browser), opens a fresh tab in the existing logged-in
     context so the researcher's session cookies apply, navigates and waits for
     ``networkidle`` so a client-rendered page is captured (not the initial shell),
-    then reads the rendered DOM. The tab is closed and the CDP connection detached
-    on the way out; the real Chrome is left running for the next fetch. Any failure
-    (connect refused, nav timeout, load error) propagates so the caller quarantines
-    with the distinct nav-failed reason — this step never crashes the batch itself.
+    then reads the rendered DOM. Any failure (connect refused, nav timeout, load
+    error) propagates so the caller quarantines with the distinct nav-failed
+    reason — this step never crashes the batch itself.
+
+    **Teardown closes only what we opened.** We never call ``browser.close()``:
+    Playwright's own docs say that for a CDP *attach* it is "similar to
+    force-quitting the browser" and clears the browser's contexts — which would
+    disturb the researcher's live logged-in session (spec: this step never kills
+    Chrome, and the profile must carry the login forward). Instead we close just
+    the tab we opened (and a context only if we had to create one), then let
+    ``sync_playwright()`` exit disconnect the driver, leaving the real Chrome and
+    the researcher's tabs untouched.
 
     ``_no_proxy_for`` wraps the whole session so the loopback CDP connection
     bypasses any ``HTTP_PROXY`` (see its docstring — a US15 E2E finding).
@@ -112,16 +120,16 @@ def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) 
     host = urlsplit(cdp_url).hostname or "localhost"
     with _no_proxy_for(host), sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(cdp_url)
+        reuse_context = bool(browser.contexts)  # the researcher's existing session
+        context = browser.contexts[0] if reuse_context else browser.new_context()
+        page = context.new_page()
         try:
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = context.new_page()
-            try:
-                page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-                return page.content()
-            finally:
-                page.close()
+            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            return page.content()
         finally:
-            browser.close()  # detaches the CDP connection; the real Chrome keeps running
+            page.close()  # close only the tab we opened — never the whole browser
+            if not reuse_context:
+                context.close()  # and a context only if we created it
 
 
 def browser_fetch(
