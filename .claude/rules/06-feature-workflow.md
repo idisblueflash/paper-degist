@@ -3,7 +3,7 @@
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
 end-to-end run → self-review → chunked commits → second-opinion review → CLI
-manual → PR → mark done after merge.**
+manual → flip status to Done → PR → merge.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -94,19 +94,24 @@ is untracked — clean up or keep the generated artifacts deliberately.
   sessions drives the pipeline from this manual alone. If the story added or
   renamed a flag on an existing step, fix that step's section too.
 
-### 12. Ship
-- Final DEVLOG touch-up, commit, push, open the PR with a body that states the
-  **review trail** and the deferred follow-ups.
-
-### 13. Mark done — only after merge
-- A US earns `✅ Done` in the **Status column of the index**
+### 12. Flip status to Done — in the PR branch, before merge
+- Flip the US to `✅ Done` in the **Status column of the index**
   [`user-stories.md`](../../user-stories.md) (rule 07 — status lives only there)
-  **only once its PR is merged to `master`** — never while the PR is still open.
-  An open PR can be revised,
-  rejected, or abandoned; the spec must not claim a story is done until the code
-  is actually on `master`. Verify with `gh pr list`/`git log master` before
-  marking, and mark all merged stories consistently (backfill any that predate
-  this rule).
+  as the **last commit on the feature branch**, so the flip rides this PR and
+  merges atomically with the story. **Never a dedicated PR for the status flip,
+  and never a direct commit to `master`.**
+- This stays honest because the flag lives on the branch: `master` never claims
+  a story is Done until the PR actually merges. An open PR can still be revised,
+  rejected, or abandoned — and if it is, the Done flip dies with the branch and
+  never reaches `master`. So the invariant "`master` only says Done once the code
+  is on `master`" holds without a separate post-merge PR.
+- Backfill any already-merged story that predates this rule with its own small
+  change folded into the next branch that opens — not a dedicated PR.
+
+### 13. Ship
+- Final DEVLOG touch-up, commit, push, open the PR with a body that states the
+  **review trail** and the deferred follow-ups. Merging this PR lands both the
+  story and its `✅ Done` flip on `master` in one merge.
 
 ## Why
 
