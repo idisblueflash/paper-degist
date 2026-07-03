@@ -78,7 +78,7 @@ the *awaiting* marker keeps it from being re-answered on the next run, yet the
 thread reopens automatically the moment I reply (my reply has no marker).
 Suggested bodies:
 
-- FIX:      `🤖 **Claude Code** — Fixed and pushed to this branch: <what changed> (test: <test name>).` + handled marker
+- FIX:      `🤖 **Claude Code** — Fixed in <commit-link>: <what changed> (test: <test name>).` + handled marker
 - DISCUSS:  `🤖 **Claude Code** — <your recommendation / answer, ending in a question to me>.` + awaiting marker
 - DEFER:    `🤖 **Claude Code** — Noted as deferred in DEVLOG per your call; will revisit when <trigger>.` + handled marker
 
@@ -94,7 +94,13 @@ Suggested bodies:
    branch" is true when I read it — the reply must never claim a fix that isn't
    pushed. A DISCUSS-only run (no code change) has nothing to commit — skip
    straight to the replies.
-4. Post the DISCUSS answers and DEFER notes.
+4. Post the DISCUSS answers and DEFER notes. **Each FIX reply must link the
+   commit that fixed it** so I can jump straight to the diff while reading the
+   thread. Capture the SHA of the commit for each thread (`git rev-parse HEAD`
+   after that chunk, or `git log` for the matching commit), and put a markdown
+   link `[<short-sha>](https://github.com/<owner>/<repo>/commit/<full-sha>)` in
+   the FIX reply body. When one commit fixes several threads, link that same
+   commit on each; when a thread's fix spans several commits, link the last one.
 5. Summarize for me: what you fixed and pushed (with the commit SHAs), what
    you're waiting on my decision for, and what you deferred — with the DEVLOG
    entries you added.
