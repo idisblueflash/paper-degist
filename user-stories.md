@@ -5,9 +5,11 @@ a reader (or Claude Code) opens **only** the story in play instead of scrolling
 the whole spec. This file is the index: it maps each US to its file, its
 pipeline step, and its status. Navigate from here — don't read the others.
 
-**Status** is tracked here (the single scannable source). A US is marked
-`✅ Done` only once its PR is merged to master — never while the PR is still
-open. The per-US files hold the timeless spec and carry no status marker.
+**Status** is tracked here (the single scannable source). Flip a US to
+`✅ Done` as the last commit on its feature branch, so it merges with the story
+(rule 06 phase 12) — never a dedicated PR, never a direct commit to master.
+master never claims Done before the PR merges. The per-US files hold the
+timeless spec and carry no status marker.
 
 | US                                                      | Story                                    | Step / script   | Status         |
 | ------------------------------------------------------- | ---------------------------------------- | --------------- | -------------- |
