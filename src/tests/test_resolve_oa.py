@@ -284,3 +284,19 @@ def test_title_lookup_error_returns_none(tmp_path: Path):
 def test_title_lookup_error_reason_mentions_the_error(tmp_path: Path):
     _, manifest = _run(tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=_boom)
     assert "unpaywall 422" in _only_record(manifest)["reason"]
+
+
+# --- US11 AC1/AC2: a resolve-oa quarantine carries a clickable doi.org link ---
+
+
+def test_closed_access_manifest_adds_clickable_doi_url(tmp_path: Path):
+    # AC1: a quarantine that recovered a DOI also carries https://doi.org/<doi>,
+    # so a manifest reader can click straight through instead of copy-pasting.
+    _, manifest = _run(tmp_path, oa_lookup=_closed)
+    assert _only_record(manifest)["doi_url"] == "https://doi.org/10.1191/1362168805lr151oa"
+
+
+def test_no_doi_manifest_adds_no_doi_url(tmp_path: Path):
+    # AC2: no DOI recovered (title dead-ends) → no doi_url; nothing to link.
+    _, manifest = _run(tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call)
+    assert "doi_url" not in _only_record(manifest)
