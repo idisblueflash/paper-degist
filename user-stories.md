@@ -20,7 +20,7 @@ open. The per-US files hold the timeless spec and carry no status marker.
 | [US 7](user-stories/us-07-compiling-paper.md)           | Compiling Paper                          | *(wiki skill)*  | —              |
 | [US 8](user-stories/us-08-rating-paper.md)              | Rating Paper                             | *(wiki skill)*  | —              |
 | [US 9](user-stories/us-09-resolving-open-access.md)     | Resolving open access for a failed fetch | `resolve-oa`    | ✅ Done         |
-| [US 10](user-stories/us-10-resolving-doi-from-title.md) | Resolving a DOI from a title (Crossref)  | `resolve-oa`    | — (PR #7 open) |
+| [US 10](user-stories/us-10-resolving-doi-from-title.md) | Resolving a DOI from a title (Crossref)  | `resolve-oa`    | ✅ Done         |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
