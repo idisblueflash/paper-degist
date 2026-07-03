@@ -88,6 +88,17 @@ uv run fetch-one <url> --files-dir out/ --manifest manifest.jsonl
   a `4xx`/`5xx`/timeout, or an unrecognized content type. A `403` from a
   Cloudflare-gated host (ResearchGate, Academia.edu) lands here — that is the
   cue to try `resolve-oa`.
+- **Filename verification** (US13): after a successful save, `fetch-one` compares
+  the saved file's real title (HTML `<title>`, PDF `/Title` metadata) to its
+  basename. This never changes stdout, the saved path, or the exit code — it only
+  *notes* generic, collision-prone names in the manifest for a human to rename:
+  - a **mismatch** (`10.pdf`, `viewcontent.cgi.pdf`) appends a `fetch-one` record
+    carrying the `file`, the extracted `title`, and a `reason: mismatch: …`;
+  - an **unverifiable** title (no `<title>`, no PDF metadata title) appends a
+    `reason: title-unverifiable: …` record — absence of a title is not a wrong
+    name, so it is not a mismatch;
+  - a basename whose slug tokens are a subset of the title's writes **nothing**.
+  Re-runs skip the already-saved file, so no duplicate note is written.
 
 ### Examples
 
@@ -98,6 +109,13 @@ uv run fetch-one https://arxiv.org/pdf/1706.03762
 # A 403 quarantines cleanly; then try the OA lane
 uv run fetch-one https://www.researchgate.net/publication/249870239_An_investigation
 #   -> stderr: quarantined (see manifest.jsonl): https://www.researchgate.net/...
+
+# US13 — a saved but generically-named PDF is flagged for rename (still exits 0)
+uv run fetch-one "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"
+#   -> stdout: files/viewcontent.cgi.pdf
+#   -> manifest: {"stage":"fetch-one","file":"files/viewcontent.cgi.pdf",
+#                 "title":"The keyword method: a study of vocabulary acquisition …",
+#                 "reason":"mismatch: filename does not reflect the paper's title …"}
 ```
 
 ---

@@ -390,3 +390,48 @@ location, the case not yet handled, and the trigger that should make us fix it.
   re-run rows become noise. Build a read-only reporting tool over the manifest
   (never collapsing the append-only write path), driven by a failing test.
 - **Status:** OPEN (US11 shipped the clickable link; the rollup + dedup deferred).
+
+## fetch_one — filename↔title verification only flags; PDF title is metadata-only (US13)
+
+- **Where:** `src/paper_degist/fetch_one.py::_verify_save` / `_extract_title`
+  (`_pdf_title`, `_html_title`, `filename_reflects_title`).
+- **Case not handled (two, both deliberate):** (1) **Auto-rename.** US13 only
+  *flags* a mismatch (a `mismatch` manifest note naming file + title); deriving a
+  canonical title-based filename is a larger change that collides with the US2
+  idempotent-skip rule (what "already exists" means once names are title-derived),
+  so it stays a hand-off for a human. (2) **PDF title depth.** `_pdf_title` reads
+  the document `/Title` metadata only; a PDF whose metadata title is empty takes
+  the `title-unverifiable` branch rather than falling back to first-page body
+  text — that deeper extraction overlaps the not-yet-built PDF stage (US3/US4).
+- **Trigger to fix:** (1) when a human tires of renaming and wants the pipeline to
+  propose the title-derived name — build it against the US2 skip rule, test-first.
+  (2) when the PDF stage lands and body-text extraction exists to reuse.
+- **Status:** OPEN (US13 shipped the flag; auto-rename + PDF-body fallback deferred).
+
+## fetch_one — mismatch vs title-unverifiable share stage="fetch-one" (US13)
+
+- **Where:** `src/paper_degist/fetch_one.py::_verify_save` and the append-only
+  `manifest.jsonl`.
+- **Case not handled:** the two US13 verification records and the existing
+  fetch-error quarantines all carry `stage="fetch-one"`; a reader tells them apart
+  only by fields (`title` present ⇒ mismatch) and the `reason` prefix
+  (`title-unverifiable: …`). There is no dedicated `kind`/`event` discriminator —
+  the same read-side concern as the deferred resolve-oa per-paper rollup.
+- **Trigger to fix:** when a consolidated manifest view needs to group records by
+  event type across stages. Add an explicit discriminator field then (shared with
+  the resolve-oa rollup), driven by a failing test.
+- **Status:** OPEN (deferred with the resolve-oa manifest-rollup work).
+
+## fetch_one — filename↔title match is ASCII-slug only (US13)
+
+- **Where:** `src/paper_degist/fetch_one.py::_slug_tokens` (`[a-z0-9]+`).
+- **Case not handled:** tokenization keeps only ASCII alphanumerics, so a title
+  with accented or non-Latin letters ("Café Culture") tokenizes to `{caf,
+  culture}` while a basename `cafe-culture` tokenizes to `{cafe, culture}` — a
+  *false* mismatch that would flag a name that actually reflects the title. The
+  common paper case (English ASCII slugs) is unaffected.
+- **Trigger to fix:** the first real non-ASCII title that lands a spurious
+  `mismatch` in `manifest.jsonl`. Fold Unicode-normalization/transliteration
+  into `_slug_tokens` (e.g. NFKD + strip combining marks) driven by a failing
+  test with that title.
+- **Status:** OPEN (low priority — ASCII slugs, the common case, are correct).
