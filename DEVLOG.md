@@ -298,3 +298,78 @@ location, the case not yet handled, and the trigger that should make us fix it.
   slug→DOI set, measure precision/recall across thresholds/metrics, and retune
   (or swap the metric), driven by tests over that captured set.
 - **Status:** OPEN.
+
+## browser_up — locked-profile launch failure is not its own branch yet
+
+- **Where:** `src/paper_degist/browser_up.py::browser_up` (the launch dispatch)
+  and `_default_launch`.
+- **Case not handled:** a fixed `--user-data-dir` is single-instance — Chrome
+  locks the profile dir, so launching a second Chrome against a profile another
+  (non-dev-mode) Chrome already holds fails to bring the CDP endpoint up. Today
+  that lands in the generic `launched Chrome but the CDP endpoint … did not come
+  up in time` failure, not a distinct "profile is locked by another Chrome"
+  diagnostic. The US18 background names the locked profile as one of the
+  launch-failure branches; only "binary not found" (AC4) and "port in use" (AC5)
+  got their own branch.
+- **Trigger to fix:** the first real run that fails because the profile is
+  locked. Detect the lock (a `SingletonLock` file in the profile, or Chrome's
+  stderr) and raise a distinct `BrowserUpError`, driven by a failing test.
+- **Status:** OPEN.
+
+## browser_up — no state file (PID + endpoint); deferred stale-Chrome health check
+
+- **Where:** `src/paper_degist/browser_up.py` (classifies on a live port probe,
+  prints the endpoint to stdout — no persisted state).
+- **Case not handled:** browser-up deliberately keeps **no** state file. The
+  classify signal is a live port-reachability probe (self-correcting), the CDP
+  endpoint is deterministic configured input (not discovered state), and the
+  only real uses of a stored PID — kill / health-check — are out of scope (AC6
+  leaves Chrome running; "detecting and relaunching a stale/crashed Chrome" is a
+  named deferral). So a state file would be a second, staleable source of truth
+  today. It earns its place only when the health check is built: a stored PID is
+  the natural discriminator for "the Chrome *we* launched" vs. one the researcher
+  started — i.e. "is it safe for us to recycle this."
+- **Trigger to fix:** when the deferred stale/crashed-Chrome health check gets
+  built (reuse a *reachable but wedged* endpoint → recycle it). Add a
+  `.browser-up.state` (PID + endpoint) then, as that branch's discriminator.
+- **Status:** OPEN (deliberate — decided in session 5a774313).
+
+## browser_up — Chrome finder is macOS/Linux only; no --chrome override
+
+- **Where:** `src/paper_degist/browser_up.py` (`_CHROME_CANDIDATES`,
+  `_CHROME_ON_PATH`, `_default_find_chrome`).
+- **Case not handled:** the fixed install locations cover macOS (`.app` bundles)
+  and Linux (`/usr/bin/...`) plus a `$PATH` fallback. Windows paths
+  (`C:\Program Files\Google\Chrome\...`) are absent, and there is no explicit
+  `--chrome <path>` flag to point at a non-standard install — an uninstallable
+  case today falls through to AC4's loud "binary not found".
+- **Trigger to fix:** the first machine whose Chrome is not found (Windows, a
+  custom install). Add the Windows candidates and/or a `--chrome` option
+  (mirroring `--cdp`/`--user-data-dir`), driven by a failing finder test.
+- **Status:** OPEN.
+
+## browser_up — proxy env broke the CDP probe (fixed in the US18 E2E)
+
+- **Where:** `src/paper_degist/browser_up.py::_default_probe_cdp`.
+- **Case:** `HTTP(S)_PROXY` in the environment made httpx route the *localhost*
+  CDP probe through the proxy, which 502s a loopback debug server. A perfectly
+  reachable dev-mode Chrome then read as "not up", so the launch path reported
+  `endpoint did not come up` and the reuse path misfired as `port held`.
+  Surfaced by the US18 real E2E run on a machine with a proxy set.
+- **Status:** RESOLVED. The probe now passes `trust_env=False` so it always hits
+  the loopback endpoint directly, bypassing any proxy. Pinned by
+  `test_default_probe_cdp_bypasses_proxy_env`.
+
+## browser_up — port probe is IPv4-only (matches Chrome's 127.0.0.1 default)
+
+- **Where:** `src/paper_degist/browser_up.py::_default_port_in_use`.
+- **Case not handled:** `localhost` is dual-stack (resolves `::1` before
+  `127.0.0.1`); the probe uses an `AF_INET` socket, so it checks IPv4 only. This
+  is deliberate — Chrome binds `--remote-debugging-port` to `127.0.0.1` (IPv4) —
+  so it matches what a launch would actually contend for. But a non-debug process
+  holding *only* the IPv6 `::1:port` would not be detected, and the launch would
+  then fail with the generic "endpoint did not come up" rather than the distinct
+  "port held" diagnostic.
+- **Trigger to fix:** the first real IPv6-only port collision. Resolve the host
+  via `getaddrinfo` and probe every address family, driven by a failing test.
+- **Status:** OPEN (low priority — IPv4 path matches Chrome's own binding).

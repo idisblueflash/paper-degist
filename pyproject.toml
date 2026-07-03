@@ -19,6 +19,7 @@ parse-url = "paper_degist.parse_url:main"
 fetch-one = "paper_degist.fetch_one:main"
 convert-html = "paper_degist.convert_html:main"
 resolve-oa = "paper_degist.resolve_oa:main"
+browser-up = "paper_degist.browser_up:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

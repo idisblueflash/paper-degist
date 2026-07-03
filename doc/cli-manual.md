@@ -176,6 +176,62 @@ pdf=$(uv run resolve-oa 10.1371/journal.pone.0000308) && uv run fetch-one "$pdf"
 
 ---
 
+## `browser-up` — launch (or reuse) a dev-mode Chrome for the browser lane (US18)
+
+The browser lane (`browser-fetch`, US15/16) attaches to an **already-running**
+dev-mode Chrome over the Chrome DevTools Protocol (CDP). `browser-up` is the
+setup command one layer before it: it locates the Chrome binary, launches it on
+the remote-debugging port against a **fixed persistent profile**, waits until the
+endpoint answers, and prints it — then detaches, leaving Chrome running for the
+researcher to log in once. Call it at the top of every browser-lane run: if a
+dev-mode Chrome is already reachable it **reuses** that one (idempotent — never a
+second Chrome) and prints the same endpoint.
+
+```
+uv run browser-up [--cdp http://localhost:9222] [--user-data-dir .browser-profile]
+```
+
+- **Options**: `--cdp` (CDP endpoint to reuse or bring up; default
+  `http://localhost:9222`), `--user-data-dir` (persistent Chrome profile;
+  default `.browser-profile`).
+- **Output**: the reachable CDP endpoint on stdout (feed it to `browser-fetch`).
+- **Profile is secrets-at-rest.** The fixed `--user-data-dir` holds the
+  researcher's live logged-in sessions, so it is **gitignored** and never
+  committed. Because the login lives in the profile, the manual confirmation is
+  amortized to the **first** run — until a session expires, when the researcher
+  re-logs-in by hand (browser-up cannot detect expiry).
+- **Loud failure, not a quarantine.** This step has no paper and no batch to keep
+  running, so a launch it cannot complete exits **non-zero** with a clear
+  diagnostic (never a stack trace, never a manifest line):
+  - `could not find a Google Chrome / Chromium binary …` — Chrome is not
+    installed / not on PATH.
+  - `the CDP port … is already held by a non-debug process …` — something else
+    holds the port; free it or pass another `--cdp` port.
+  - `launched Chrome but the CDP endpoint … did not come up in time`.
+
+### Examples
+
+```bash
+# Happy path — launches Chrome (or reuses a running one) and prints the endpoint
+uv run browser-up
+#   -> http://localhost:9222   (Chrome window opens; log in by hand once)
+
+# Idempotent — a second call reuses the same Chrome, prints the same endpoint
+uv run browser-up
+
+# A different port / profile is a flag, not a new command
+uv run browser-up --cdp http://localhost:9333 --user-data-dir .browser-profile
+
+# Compose with the browser lane: bring Chrome up, then fetch a bot-walled URL
+endpoint=$(uv run browser-up) && uv run browser-fetch <url> --cdp "$endpoint"
+```
+
+The researcher owns Chrome's shutdown — `browser-up` never kills a browser (a
+warm session survives for later runs). `browser-fetch` and `--cdp` (US15/16) are
+not built yet; the composition line shows the intended shape.
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash

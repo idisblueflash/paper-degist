@@ -14,6 +14,7 @@ _STEPS = [
     ("fetch-one", "Fetch one paper file from a URL, save under files/ (US2 AC2)."),
     ("convert-html", "Convert a saved HTML paper into files/<name>.md (US5)."),
     ("resolve-oa", "Check a failed URL/DOI for an open-access copy (US9)."),
+    ("browser-up", "Launch/reuse a dev-mode Chrome for the browser lane (US18)."),
 ]
 
 app = typer.Typer(
