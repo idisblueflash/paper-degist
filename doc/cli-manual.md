@@ -158,6 +158,10 @@ uv run resolve-oa <url-or-doi> --email you@example.com
     from (e.g. a bare domain).
   - `OA lookup error: …` / `title→DOI lookup error: …` — a network/API error;
     finishes cleanly.
+- **Manifest hand-off** (US11): every quarantine that recovered a DOI also
+  carries a `doi_url` of `https://doi.org/<doi>` — a clickable link straight to
+  the paper for a reader working `manifest.jsonl` by hand. A quarantine with no
+  DOI (`doi: null`) carries no `doi_url`.
 
 ### Examples
 
