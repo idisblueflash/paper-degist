@@ -78,7 +78,7 @@ the *awaiting* marker keeps it from being re-answered on the next run, yet the
 thread reopens automatically the moment I reply (my reply has no marker).
 Suggested bodies:
 
-- FIX:      `🤖 **Claude Code** — Fixed in <commit-link>: <what changed> (test: <test name>).` + handled marker
+- FIX:      `🤖 **Claude Code** — Fixed and pushed to this branch in <commit-link>: <what changed> (test: <test name>).` + handled marker
 - DISCUSS:  `🤖 **Claude Code** — <your recommendation / answer, ending in a question to me>.` + awaiting marker
 - DEFER:    `🤖 **Claude Code** — Noted as deferred in DEVLOG per your call; will revisit when <trigger>.` + handled marker
 
