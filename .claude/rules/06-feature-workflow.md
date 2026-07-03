@@ -2,7 +2,8 @@
 
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
-end-to-end run → self-review → chunked commits → second-opinion review → PR.**
+end-to-end run → self-review → chunked commits → second-opinion review → CLI
+manual → PR → mark done after merge.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -13,9 +14,10 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
 ## The phases
 
 ### 1. Orient — read before writing
-- Read the US in [`user-stories.md`](../../user-stories.md); its acceptance
+- Find the US in the index [`user-stories.md`](../../user-stories.md), then open
+  **only** its own file under `user-stories/` (rule 07) — its acceptance
   criteria *are* the test list, and its "Case handling" section names the
-  classify-then-dispatch branches.
+  classify-then-dispatch branches. Don't read the other stories.
 - Read [`DEVLOG.md`](../../DEVLOG.md) for deferred flags this US is the trigger
   to fix, plus [`CLAUDE.md`](../../CLAUDE.md) and the other rules.
 - Read the nearest **sibling step** and copy its conventions (module shape,
@@ -84,9 +86,27 @@ is untracked — clean up or keep the generated artifacts deliberately.
 - Hand the branch diff to Codex; fix its findings **test-first**; re-run both
   suites.
 
-### 11. Ship
+### 11. Document the CLI — before opening the PR
+- Update [`doc/cli-manual.md`](../../doc/cli-manual.md) so this story's console
+  script has a section: what it does, its argument/options, a **happy-path**
+  example, a **quarantine** example, and how it composes with the sibling steps.
+  Keep it runnable **with no AI in the loop** — a human or Claude Code between
+  sessions drives the pipeline from this manual alone. If the story added or
+  renamed a flag on an existing step, fix that step's section too.
+
+### 12. Ship
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups.
+
+### 13. Mark done — only after merge
+- A US earns `✅ Done` in the **Status column of the index**
+  [`user-stories.md`](../../user-stories.md) (rule 07 — status lives only there)
+  **only once its PR is merged to `master`** — never while the PR is still open.
+  An open PR can be revised,
+  rejected, or abandoned; the spec must not claim a story is done until the code
+  is actually on `master`. Verify with `gh pr list`/`git log master` before
+  marking, and mark all merged stories consistently (backfill any that predate
+  this rule).
 
 ## Why
 

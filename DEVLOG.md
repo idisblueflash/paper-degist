@@ -186,7 +186,16 @@ location, the case not yet handled, and the trigger that should make us fix it.
   lookup. Add a `title_from(url)` slug extractor + a Crossref `title→DOI`
   lookup (mirroring `_unpaywall_lookup`'s injected shape), driven by a failing
   test; feed its DOI into the existing OA dispatch.
-- **Status:** OPEN.
+- **Status:** RESOLVED by US10. `title_from` extracts the title from the URL
+  slug (strips the numeric publication id, `_`→space); `_crossref_title_lookup`
+  queries Crossref's `query.bibliographic` and gates the top result through
+  `_doi_from_crossref`; `resolve_oa` grew an injected `title_lookup` param whose
+  recovered DOI rejoins the existing OA dispatch. The real E2E confirmed it: the
+  ResearchGate keyword-method slug now recovers the correct DOI
+  `10.1191/1362168805lr151oa` (title overlap 1.0) and returns a precise
+  `no OA copy (closed access)` — no longer a bare `no DOI` dead end. Two new
+  boundaries surfaced by that run are logged below (same-title-different-record;
+  threshold calibration).
 
 ## resolve_oa — human / browser-devtools rescue lane not built (US9)
 
@@ -243,4 +252,49 @@ location, the case not yet handled, and the trigger that should make us fix it.
   by its DOI/query id. Fall back to a query-param (`id`) or the DOI when the
   path basename is generic (`file`, `download`, `pdf`), driven by a failing
   `_target_path` test.
+- **Status:** OPEN.
+
+## resolve_oa — title→DOI guard is title-overlap only (same-title ≠ same record)
+
+- **Where:** `src/paper_degist/resolve_oa.py::_doi_from_crossref` (takes only
+  `items[0]`, gated by `_title_overlap >= _MIN_TITLE_OVERLAP`).
+- **Case not handled:** the confidence guard rejects *low* title-overlap matches
+  (truncated slugs, unrelated papers, a conference abstract whose title diverges)
+  — its designed job. It does **not** distinguish a *different record that shares
+  the exact title*: Crossref's bibliographic query returns preprints, reprints,
+  conference abstracts, and F1000/ScienceOpen "peer-review" echo-records that
+  echo a paper's title under a different DOI, some even OA. The US10 E2E surfaced
+  this concretely — for `"Deep residual learning for image recognition"` the top
+  results were a `posted-content` preprint and a **wrong** MDPI `journal-article`
+  reprint (`10.3390/app12188972`), with the real CVPR DOI (`10.1109/cvpr.2016.90`)
+  only at rank #3; `"Array programming with NumPy"` topped with a `peer-review`
+  echo. Because those share the title, the overlap guard passes them — so a
+  slug can resolve to a wrong (occasionally OA) DOI. (The keyword-method slug was
+  clean: correct `journal-article` top-1, score 54.9 vs 38.5 — a wide margin.)
+- **Trigger to fix:** the first slug that resolves to a wrong DOI (or a wrong OA
+  PDF) in a real run. Widen `rows`, filter to primary work types (drop
+  `posted-content`, `peer-review`, `dataset`, `component`, `grant`), prefer the
+  best title-overlap among the survivors, and consider a Crossref `score`-margin
+  gate (a clear top-1 vs a score-clustered tie). Pairs with the US10-deferred
+  **multi-candidate scan** and **prefer-OA-edition** items. Driven by a failing
+  test on captured multi-record Crossref fixtures.
+- **Status:** OPEN (guard rejects low-overlap wrong matches today; same-title
+  wrong-record disambiguation deferred).
+
+## resolve_oa — title-overlap threshold is a fixed Jaccard on 3 samples
+
+- **Where:** `src/paper_degist/resolve_oa.py` (`_MIN_TITLE_OVERLAP = 0.6`,
+  `_title_overlap` symmetric content-token Jaccard).
+- **Case not handled:** the threshold was calibrated on three real Crossref
+  responses (a correct full-title match at 1.0; two best-effort wrong matches at
+  0.50 and 0.33), so 0.6 sits between them. It is precision-biased: a *correct*
+  published title carrying a subtitle the slug lacks (e.g. the PRISMA 2020 record
+  with `: development of and key changes …`) scores ~0.57 and is rejected — a
+  false negative, which safely routes to the human lane but forgoes an
+  automatable resolve. The fixed count is not tuned against a labelled corpus,
+  and a fuzzier string metric (token-set ratio, cosine) might separate better.
+- **Trigger to fix:** the first *correct* match wrongly rejected that we want
+  resolved, or a wrong match that slips through. Assemble a small labelled
+  slug→DOI set, measure precision/recall across thresholds/metrics, and retune
+  (or swap the metric), driven by tests over that captured set.
 - **Status:** OPEN.

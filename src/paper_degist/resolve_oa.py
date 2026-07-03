@@ -22,6 +22,7 @@ line (rule 03):
 import re
 from pathlib import Path
 from typing import Annotated, Callable, Optional
+from urllib.parse import unquote, urlsplit
 
 import typer
 
@@ -31,6 +32,10 @@ from paper_degist._cli import invoke
 # An OA lookup maps a DOI to its open-access PDF URL, or ``None`` for closed
 # access; it may raise to signal an API/network error (caller quarantines it).
 OALookup = Callable[[str], Optional[str]]
+
+# A title→DOI lookup (US10) maps a title to a confidently-matched DOI, or
+# ``None`` when no confident match exists; it may raise to signal an API error.
+TitleLookup = Callable[[str], Optional[str]]
 
 # Crossref's DOI pattern: ``10.<registrant>/<suffix>`` (suffix is liberal).
 _DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
@@ -62,11 +67,28 @@ def _trim_doi(doi: str) -> str:
     return doi
 
 
+def title_from(url: str) -> str | None:
+    """Recover a paper title from a slug-only URL (US10), or ``None``.
+
+    A ResearchGate/Academia publication link carries the title in its last path
+    segment as an underscore slug prefixed by a numeric id
+    (``/publication/249870239_An_investigation_…``). Strip the leading id and
+    turn ``_``/``+`` separators into spaces. Returns ``None`` when the slug has
+    no alphabetic content (a bare domain, a numeric-only path) so the caller
+    quarantines that case rather than querying Crossref with junk.
+    """
+    basename = unquote(urlsplit(url or "").path.rstrip("/").rsplit("/", 1)[-1])
+    slug = re.sub(r"^\d+[_-]", "", basename)  # drop a leading numeric publication id
+    title = re.sub(r"[_+]+", " ", slug).strip()
+    return title if re.search(r"[A-Za-z]", title) else None
+
+
 def resolve_oa(
     url: str,
     *,
     manifest_path: Path = Path("manifest.jsonl"),
     oa_lookup: OALookup,
+    title_lookup: Optional[TitleLookup] = None,
 ) -> Optional[str]:
     """Resolve an open-access PDF URL for ``url``, or quarantine and return None.
 
@@ -74,19 +96,18 @@ def resolve_oa(
     open-access verdict, and dispatch — an OA URL is returned; closed access, a
     missing DOI, and a lookup error each quarantine to ``manifest_path`` with a
     precise reason and return ``None`` so the batch finishes.
+
+    When no DOI is embedded and a ``title_lookup`` is supplied (US10), recover a
+    title from the URL slug and resolve it to a DOI via Crossref before the OA
+    dispatch; a recovered DOI rejoins the same OA path. Without a ``title_lookup``
+    the missing-DOI case quarantines to the human/browser lane (US9 AC5).
     """
     manifest_path = Path(manifest_path)
     doi = doi_from(url)
     if doi is None:
-        # No DOI to look up: route to the human / browser dev-mode lane.
-        # Title→DOI resolution (Crossref) is a deferred branch — see DEVLOG.
-        _quarantine(
-            manifest_path,
-            url=url,
-            doi=None,
-            reason="no DOI in input; title→DOI lookup not built (route to human/browser)",
-        )
-        return None
+        doi = _recover_doi_via_title(url, manifest_path, title_lookup)
+        if doi is None:
+            return None  # already quarantined with a precise reason
 
     try:
         pdf_url = oa_lookup(doi)
@@ -97,6 +118,53 @@ def resolve_oa(
         _quarantine(manifest_path, url=url, doi=doi, reason="no OA copy (closed access)")
         return None
     return pdf_url
+
+
+def _recover_doi_via_title(
+    url: str, manifest_path: Path, title_lookup: Optional[TitleLookup]
+) -> Optional[str]:
+    """Recover a DOI from the URL's title slug via ``title_lookup`` (US10).
+
+    Classify-then-dispatch the missing-DOI case: no ``title_lookup`` routes to
+    the human/browser lane (US9 AC5); with one, an unextractable title, a
+    lookup error, and no confident Crossref match each quarantine with a precise
+    reason and return ``None``. Returns the recovered DOI so ``resolve_oa`` can
+    rejoin the OA dispatch.
+    """
+    if title_lookup is None:
+        # Title→DOI resolution not wired in — route to the human/browser lane.
+        _quarantine(
+            manifest_path,
+            url=url,
+            doi=None,
+            reason="no DOI in input; title→DOI lookup not built (route to human/browser)",
+        )
+        return None
+
+    title = title_from(url)
+    if title is None:
+        _quarantine(
+            manifest_path,
+            url=url,
+            doi=None,
+            reason="no DOI and no title to resolve (route to human/browser)",
+        )
+        return None
+
+    try:
+        doi = title_lookup(title)
+    except Exception as exc:  # Crossref API/network error — quarantine, don't crash
+        _quarantine(manifest_path, url=url, doi=None, reason=f"title→DOI lookup error: {exc}")
+        return None
+    if doi is None:
+        _quarantine(
+            manifest_path,
+            url=url,
+            doi=None,
+            reason="title→DOI: no confident Crossref match (route to human/browser)",
+        )
+        return None
+    return doi
 
 
 def _quarantine(manifest_path: Path, *, url: str, doi: Optional[str], reason: str) -> None:
@@ -129,6 +197,80 @@ def _pdf_url_from_unpaywall(data: dict) -> Optional[str]:
     return None
 
 
+# Crossref's bibliographic query always returns a best-effort top match, even
+# for a wrong or truncated title. Trust its DOI only when the returned title
+# and the query share enough content tokens. The threshold is calibrated on
+# three real Crossref responses (see DEVLOG): a correct full-title match scored
+# 1.0 symmetric Jaccard, while two best-effort wrong matches scored 0.50 and
+# 0.33 — so 0.6 accepts the real match and rejects both wrong ones.
+_MIN_TITLE_OVERLAP = 0.6
+
+# Dropped before overlap so common function words don't inflate a weak match.
+_TITLE_STOPWORDS = frozenset("a an and for in of on the to".split())
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lower-cased alphanumeric word tokens of ``text``, minus stopwords."""
+    return {t for t in re.findall(r"[a-z0-9]+", text.lower())} - _TITLE_STOPWORDS
+
+
+def _title_overlap(a: str, b: str) -> float:
+    """Symmetric content-token overlap (Jaccard) of two titles, in ``[0, 1]``.
+
+    Symmetric on purpose: a short query trivially covers a long title's tokens
+    one-directionally (and vice versa), which is exactly how a truncated slug
+    scores a false 1.0. Jaccard penalizes tokens present on *either* side, so a
+    partial slug or an unrelated best-effort match falls below the threshold.
+    """
+    ta, tb = _content_tokens(a), _content_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _doi_from_crossref(data: dict, query: str) -> Optional[str]:
+    """Return the top Crossref item's DOI, but only on a confident title match.
+
+    Guards against Crossref's best-effort ranking (US10 AC2): the top item's
+    title must clear ``_MIN_TITLE_OVERLAP`` against ``query``, else return
+    ``None`` so a wrong/truncated match is quarantined rather than fed into the
+    OA lookup as if it were the paper. Returns ``None`` for an empty result set.
+    """
+    items = (data.get("message") or {}).get("items") or []
+    if not items:
+        return None
+    top = items[0] or {}
+    title = " ".join(top.get("title") or [])
+    if _title_overlap(query, title) < _MIN_TITLE_OVERLAP:
+        return None
+    return top.get("DOI") or None
+
+
+def _crossref_title_lookup(email: str) -> TitleLookup:
+    """Build the real title→DOI lookup: ask Crossref for a title's DOI (US10).
+
+    Queries Crossref's bibliographic endpoint for the single best match and
+    gates it through ``_doi_from_crossref`` — returning the DOI only on a
+    confident title match, else ``None``. Raises on a network/API error so
+    ``resolve_oa`` quarantines it (US10 AC4). The contact email joins the
+    ``User-Agent`` mailto so Crossref routes the request through its polite pool.
+    """
+
+    def lookup(title: str) -> Optional[str]:
+        import httpx
+
+        resp = httpx.get(
+            "https://api.crossref.org/works",
+            params={"query.bibliographic": title, "rows": 1},
+            headers={"User-Agent": f"paper-degist/0.1 (mailto:{email})"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return _doi_from_crossref(resp.json(), title)
+
+    return lookup
+
+
 def _unpaywall_lookup(email: str) -> OALookup:
     """Build the real OA lookup: ask Unpaywall for a DOI's open-access PDF URL.
 
@@ -154,7 +296,7 @@ def _unpaywall_lookup(email: str) -> OALookup:
 
 app = typer.Typer(
     add_completion=False,
-    help="Verify whether a failed fetch has an open-access copy (US9).",
+    help="Verify whether a failed fetch has an open-access copy (US9/US10).",
 )
 
 
@@ -171,7 +313,12 @@ def run(
     ] = Path("manifest.jsonl"),
 ) -> None:
     """Resolve the URL; print the OA PDF URL, or a quarantine note on stderr."""
-    pdf_url = resolve_oa(url, manifest_path=manifest, oa_lookup=_unpaywall_lookup(email))
+    pdf_url = resolve_oa(
+        url,
+        manifest_path=manifest,
+        oa_lookup=_unpaywall_lookup(email),
+        title_lookup=_crossref_title_lookup(email),
+    )
     if pdf_url is None:
         # Quarantine is an expected outcome, not a crash: the batch still
         # finishes. Note it on stderr and exit cleanly.
