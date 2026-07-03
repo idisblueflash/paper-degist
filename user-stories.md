@@ -28,7 +28,7 @@ open. The per-US files hold the timeless spec and carry no status marker.
 | [US 15](user-stories/us-15-browser-fetch-bot-walled.md) | Fetch a bot-walled page through a dev-mode browser | `browser-fetch` | —              |
 | [US 16](user-stories/us-16-warm-browser-across-batch.md) | Reuse one warm browser across a batch of URLs | `browser-fetch` | —              |
 | [US 17](user-stories/us-17-recover-blocked-to-browser.md) | Recover bot-walled records through the browser lane | `recover-blocked` | —              |
-| [US 18](user-stories/us-18-launch-dev-mode-browser.md) | Launch a dev-mode Chrome for the browser lane | `browser-up`    | —              |
+| [US 18](user-stories/us-18-launch-dev-mode-browser.md) | Launch a dev-mode Chrome for the browser lane | `browser-up`    | ✅ Done         |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
