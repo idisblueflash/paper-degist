@@ -373,3 +373,20 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the first real IPv6-only port collision. Resolve the host
   via `getaddrinfo` and probe every address family, driven by a failing test.
 - **Status:** OPEN (low priority — IPv4 path matches Chrome's own binding).
+
+## resolve_oa — doi_url is resolve-oa-only; no consolidated per-paper view (US11)
+
+- **Where:** `src/paper_degist/resolve_oa.py::_quarantine` (the `doi_url` field)
+  and the append-only `manifest.jsonl`.
+- **Case not handled:** US11 adds a clickable `doi_url` to each resolve-oa
+  quarantine that recovered a DOI, but two read-side follow-ups stay deferred:
+  (1) a *consolidated manifest view* that groups the append-only rows by
+  input/DOI to show "everything that happened to this paper" in one glance,
+  without collapsing the per-stage diagnostic rows; and (2) *dedup on re-run* —
+  re-running resolve-oa on the same input appends a duplicate quarantine row
+  (confirmed in the US11 E2E: two identical `example.com` records after a
+  re-run). Both are separate concerns from this link enhancement.
+- **Trigger to fix:** when a reader wants the per-paper rollup, or when duplicate
+  re-run rows become noise. Build a read-only reporting tool over the manifest
+  (never collapsing the append-only write path), driven by a failing test.
+- **Status:** OPEN (US11 shipped the clickable link; the rollup + dedup deferred).
