@@ -168,14 +168,18 @@ def _recover_doi_via_title(
 
 
 def _quarantine(manifest_path: Path, *, url: str, doi: Optional[str], reason: str) -> None:
-    """Append one unresolved-case record to the manifest, so the batch finishes."""
-    _manifest.append(
-        manifest_path,
-        stage="resolve-oa",
-        url=url,
-        doi=doi,
-        reason=reason,
-    )
+    """Append one unresolved-case record to the manifest, so the batch finishes.
+
+    Classify on whether a DOI was recovered (US11): a present DOI also emits a
+    clickable ``https://doi.org/<doi>`` link, so the manifest hand-off to the
+    human/browser lane is directly actionable; a ``None`` DOI adds nothing (there
+    is no DOI to link). Pure string transform — no extra network call.
+    """
+    fields: dict[str, object] = {"url": url, "doi": doi}
+    if doi is not None:
+        fields["doi_url"] = f"https://doi.org/{doi}"
+    fields["reason"] = reason
+    _manifest.append(manifest_path, stage="resolve-oa", **fields)
 
 
 def _pdf_url_from_unpaywall(data: dict) -> Optional[str]:
