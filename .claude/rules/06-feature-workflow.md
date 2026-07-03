@@ -3,7 +3,7 @@
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
 end-to-end run → self-review → chunked commits → second-opinion review → CLI
-manual → flip status to Done → PR → merge.**
+manual → flip status to Done → PR → merge → clean up.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -112,6 +112,16 @@ is untracked — clean up or keep the generated artifacts deliberately.
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups. Merging this PR lands both the
   story and its `✅ Done` flip on `master` in one merge.
+
+### 14. Clean up — after the merge
+- Once the PR merges, **delete the feature branch** on both ends (`git branch -d
+  <branch>` locally, `git push origin --delete <branch>`), and **fast-forward
+  local `master`** to the merged state (`git fetch origin` then `git merge
+  --ff-only origin/master`). The branch list stays scoped to live work and local
+  `master` never lags behind the remote, so the next story branches off the real
+  tip instead of a stale one.
+- Preserve any unrelated working-tree work across the switch (stash it, or branch
+  it) — the cleanup moves branches, it never discards uncommitted changes.
 
 ## Why
 
