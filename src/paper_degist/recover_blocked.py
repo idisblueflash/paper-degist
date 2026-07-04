@@ -13,11 +13,13 @@ deterministic, offline routing — it filters the manifest and delegates the
 actual fetching. It holds no browser logic and makes no judgement of its own, so
 there is no LLM in the loop (rule 02).
 
-Classify-then-dispatch over two cheap fields per record: does it carry a
-``blocked_by`` host, and has that URL already been recovered in a later record?
-**No ``blocked_by``** → skip (a generic quarantine, not this lane). **Present,
-not yet recovered** → add its URL to the retry set. **Present but already
-recovered** → skip (idempotent across runs). The retry set is dispatched
+Classify-then-dispatch over cheap fields per record: is it a ``fetch-one`` record
+carrying a ``blocked_by`` host (the routing key, fetch-one-only by US12's
+contract), and has that URL already been recovered in a later ``browser-fetch``
+record? **No fetch-one ``blocked_by``** → skip (a generic quarantine, or another
+stage's record — not this lane). **Present, not yet recovered** → add its URL to
+the retry set. **Present but already recovered** → skip (idempotent across runs).
+The retry set is dispatched
 wholesale to ``browser_fetch_batch`` (US16), which owns the connect / navigate /
 quarantine decisions — recover-blocked adds none of its own and writes no
 manifest record itself (the new recovery record is browser-fetch's ``saved``
@@ -43,8 +45,10 @@ def _read_records(manifest_path: Path) -> list[dict]:
     """Read the append-only manifest into a list of records; tolerate its absence.
 
     A missing manifest means nothing has been fetched yet — return no records
-    (never crash). Blank lines are skipped; a malformed line is skipped too, so a
-    hand-appended stray line never aborts the routing (rule 02: never crash).
+    (never crash). Blank lines are skipped; a malformed line is skipped too, and a
+    valid-JSON but non-object line (a bare array/string/number) is skipped as well
+    — so no stray hand-appended line ever reaches the classifier's ``.get`` and
+    aborts the routing (rule 02: never crash).
     """
     manifest_path = Path(manifest_path)
     if not manifest_path.exists():
@@ -55,33 +59,40 @@ def _read_records(manifest_path: Path) -> list[dict]:
         if not line:
             continue
         try:
-            records.append(json.loads(line))
+            record = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(record, dict):  # a record is a JSON object; skip arrays/scalars
+            records.append(record)
     return records
 
 
 def select_retry_urls(records: Iterable[dict]) -> list[str]:
     """The ``blocked_by`` URLs not yet recovered, in first-seen order.
 
-    Classify each record on two cheap fields (rule 02): a truthy ``blocked_by``
-    host marks a wall to route into the browser lane; a browser-fetch ``saved``
-    record marks a URL already recovered in a later run (AC5 idempotency). A URL
-    with a ``blocked_by`` tag but no later recovery is the retry set; everything
-    else — a generic quarantine (no ``blocked_by``, AC1) or an already-recovered
-    wall — is skipped. First-seen order so the dispatched batch is deterministic.
+    Classify each record on cheap fields (rule 02): a ``fetch-one`` record with a
+    truthy ``blocked_by`` host marks a wall to route into the browser lane; a
+    ``browser-fetch`` ``saved`` record marks a URL already recovered in a later run
+    (AC5 idempotency). A wall URL with no later recovery is the retry set;
+    everything else — a generic quarantine (no ``blocked_by``, AC1), a
+    ``blocked_by`` tag on some *other* stage's record (blocked_by is fetch-one-only
+    by US12's contract), or an already-recovered wall — is skipped. First-seen
+    order so the dispatched batch is deterministic. A record whose ``url`` is not a
+    string is ignored, so a stray hand-appended value never reaches the browser
+    lane (never crash).
     """
     blocked: list[str] = []  # blocked_by URLs, unique, first-seen order
     seen: set[str] = set()
     recovered: set[str] = set()  # URLs a later browser-fetch already saved
     for record in records:
         url = record.get("url")
-        if not url:
+        if not isinstance(url, str) or not url:
             continue
-        if record.get("blocked_by") and url not in seen:
+        stage = record.get("stage")
+        if stage == "fetch-one" and record.get("blocked_by") and url not in seen:
             seen.add(url)
             blocked.append(url)
-        if record.get("stage") == "browser-fetch" and record.get("result") == "saved":
+        if stage == "browser-fetch" and record.get("result") == "saved":
             recovered.add(url)
     return [url for url in blocked if url not in recovered]
 

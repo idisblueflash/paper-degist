@@ -437,9 +437,13 @@ def test_recover_blocked_cli_no_blocked_records_prints_nothing(tmp_path, monkeyp
     assert result.stdout == ""
 
 
-def test_recover_blocked_cli_missing_manifest_exits_two_without_traceback(tmp_path):
+def test_recover_blocked_cli_missing_manifest_exits_two(tmp_path):
     result = runner.invoke(recover_blocked_app, [str(tmp_path / "nope.jsonl")])
     assert result.exit_code == 2
+
+
+def test_recover_blocked_cli_missing_manifest_has_no_traceback(tmp_path):
+    result = runner.invoke(recover_blocked_app, [str(tmp_path / "nope.jsonl")])
     assert "Traceback" not in result.output
 
 

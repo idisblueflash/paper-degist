@@ -67,6 +67,26 @@ def test_skips_a_blocked_url_already_recovered_in_a_later_record():
     assert select_retry_urls(records) == [PUBMED_URL]
 
 
+def test_selects_only_fetch_one_blocked_records():
+    # blocked_by is fetch-one-only by US12's contract; a blocked_by tag on any
+    # other stage's record is not this lane's to route (defensive stage gate).
+    records = [
+        {"stage": "convert-html", "url": GENERIC_URL, "blocked_by": "researchgate.net"},
+        _blocked(RG_URL, "researchgate.net"),
+    ]
+    assert select_retry_urls(records) == [RG_URL]
+
+
+def test_ignores_a_record_whose_url_is_not_a_string():
+    # A malformed record whose url is a number/list must not be dispatched to the
+    # browser lane (urlsplit would crash) — gate on a real string (never crash).
+    records = [
+        {"stage": "fetch-one", "url": 12345, "blocked_by": "researchgate.net"},
+        _blocked(RG_URL, "researchgate.net"),
+    ]
+    assert select_retry_urls(records) == [RG_URL]
+
+
 def test_deduplicates_a_url_blocked_across_two_runs():
     records = [
         _blocked(RG_URL, "researchgate.net"),
@@ -159,6 +179,19 @@ def test_tolerates_a_malformed_manifest_line_without_crashing(tmp_path: Path):
     manifest = tmp_path / "manifest.jsonl"
     manifest.write_text(
         json.dumps(_blocked(RG_URL, "researchgate.net")) + "\n" + "{ not json\n",
+        encoding="utf-8",
+    )
+    batch = _recorder()
+    recover_blocked(manifest, fetch_batch=batch)
+    assert batch.calls[0]["urls"] == [RG_URL]
+
+
+def test_tolerates_a_non_dict_json_line_without_crashing(tmp_path: Path):
+    # A valid-JSON but non-object line (a bare array/string/number) must not reach
+    # the classifier's .get() and crash — never crash (rule 02).
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(
+        json.dumps(_blocked(RG_URL, "researchgate.net")) + "\n" + '["not", "a", "record"]\n',
         encoding="utf-8",
     )
     batch = _recorder()
