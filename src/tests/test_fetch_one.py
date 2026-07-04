@@ -15,6 +15,7 @@ from pathlib import Path
 
 from paper_degist.fetch_one import (
     _extract_title,
+    bot_wall_for,
     classify,
     fetch_one,
     filename_reflects_title,
@@ -89,6 +90,41 @@ def test_classify_html_by_content_type():
 
 def test_classify_unknown_returns_none():
     assert classify("application/json", b"{}") is None
+
+
+# --- US12: recognize a bot-walled host on the URL (pure core) ---
+
+
+def test_bot_wall_for_researchgate_subdomain_returns_registrable_host():
+    # AC1: www.researchgate.net is walled; blocked_by is the canonical host.
+    host, _reason = bot_wall_for(
+        "https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method"
+    )
+    assert host == "researchgate.net"
+
+
+def test_bot_wall_for_researchgate_reason_names_the_wall_and_the_lane():
+    _host, reason = bot_wall_for(
+        "https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method"
+    )
+    assert "bot-walled" in reason and "resolve-oa" in reason
+
+
+def test_bot_wall_for_pubmed_exact_host_returns_the_host():
+    # AC2: pubmed.ncbi.nlm.nih.gov matches the table key exactly.
+    host, _reason = bot_wall_for("https://pubmed.ncbi.nlm.nih.gov/2303742/")
+    assert host == "pubmed.ncbi.nlm.nih.gov"
+
+
+def test_bot_wall_for_pubmed_reason_flags_abstract_only():
+    # AC2: the reason steers to resolve-oa *and* warns the page is abstract-only.
+    _host, reason = bot_wall_for("https://pubmed.ncbi.nlm.nih.gov/2303742/")
+    assert "abstract" in reason
+
+
+def test_bot_wall_for_unknown_host_returns_none():
+    # AC3: a host not on the table is not a recognized wall.
+    assert bot_wall_for("https://example.edu/papers/some-closed-paper") is None
 
 
 # --- save a PDF under files/ (AC2, AC3) ---
@@ -187,6 +223,59 @@ def test_http_error_returns_none(tmp_path: Path):
 def test_http_error_manifest_records_status(tmp_path: Path):
     _, _, manifest = _run(tmp_path, url="https://example.com/paywalled", response=FORBIDDEN)
     assert _only_record(manifest)["status"] == 403
+
+
+def test_generic_403_omits_the_blocked_by_field(tmp_path: Path):
+    # AC3/AC4: a 403 from a host not on the bot-wall table is unchanged (US2 AC6).
+    _, _, manifest = _run(tmp_path, url="https://example.edu/papers/closed", response=FORBIDDEN)
+    assert "blocked_by" not in _only_record(manifest)
+
+
+# --- US12: a 403 from a known bot-walling host is tagged blocked_by ---
+
+
+def test_researchgate_403_records_the_blocked_by_host(tmp_path: Path):
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method",
+        response=FORBIDDEN,
+    )
+    assert _only_record(manifest)["blocked_by"] == "researchgate.net"
+
+
+def test_researchgate_403_reason_names_the_wall_and_the_lane(tmp_path: Path):
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method",
+        response=FORBIDDEN,
+    )
+    reason = _only_record(manifest)["reason"]
+    assert "bot-walled" in reason and "resolve-oa" in reason
+
+
+def test_pubmed_403_records_the_blocked_by_host(tmp_path: Path):
+    _, _, manifest = _run(
+        tmp_path, url="https://pubmed.ncbi.nlm.nih.gov/2303742/", response=FORBIDDEN
+    )
+    assert _only_record(manifest)["blocked_by"] == "pubmed.ncbi.nlm.nih.gov"
+
+
+def test_pubmed_403_reason_flags_abstract_only(tmp_path: Path):
+    _, _, manifest = _run(
+        tmp_path, url="https://pubmed.ncbi.nlm.nih.gov/2303742/", response=FORBIDDEN
+    )
+    assert "abstract" in _only_record(manifest)["reason"]
+
+
+def test_non_403_error_from_a_walled_host_stays_generic(tmp_path: Path):
+    # The bot-wall branch is gated on 403; a walled host's 503 is a real outage.
+    server_error = FakeResponse(status_code=503, content_type="text/html", content=b"down")
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method",
+        response=server_error,
+    )
+    assert "blocked_by" not in _only_record(manifest)
 
 
 # --- quarantine a fetch exception without raising (AC6) ---

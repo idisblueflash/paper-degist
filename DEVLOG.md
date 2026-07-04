@@ -797,6 +797,28 @@ location, the case not yet handled, and the trigger that should make us fix it.
   degeneration deferred, and already covered at the scorecard level by the
   completion_tokens signal).
 
+## fetch_one — bot-wall table is 2 hosts; no auto-route to resolve-oa (US12)
+
+- **Where:** `src/paper_degist/fetch_one.py::_BOT_WALLED_HOSTS` / `bot_wall_for`
+  and the 403 branch of `fetch_one`.
+- **Case not handled (two, both deliberate):** (1) **Auto-route.** US12 only
+  *tags* a recognized 403 with `blocked_by` + an actionable reason; it does not
+  itself call `resolve-oa`, because fetch-one holds only the URL, not a DOI or
+  title. `recover-blocked` (US17) already consumes the `blocked_by` tag to drain
+  these into the *browser* lane; auto-routing a `blocked_by` record into the
+  *resolve-oa* (DOI/OA) lane is the still-open orchestration named in the
+  resolve-oa rescue-lane flag above. (2) **Growing the table.** The host table
+  ships `researchgate.net` and `pubmed.ncbi.nlm.nih.gov` only. A new bot-walling
+  host that recurs as a bare `http 403` in the manifest is the trigger to promote
+  it — a one-line addition to `_BOT_WALLED_HOSTS`, per rule 02 (the manifest is
+  the queue of cases). The branch is gated on **403 specifically**: a walled
+  host's non-403 error (e.g. a real 503 outage) keeps the generic record.
+- **Trigger to fix:** (1) when the resolve-oa auto-route orchestrator is built —
+  read a `blocked_by` record, recover a DOI/title, dispatch to `resolve-oa`.
+  (2) the first recurring generic-403 host worth encoding. Both test-first.
+- **Status:** OPEN (US12 shipped the recognition + tag; auto-route and table
+  growth deferred by design — the story's "Later stages").
+
 ## ocr_page — transport hardened against four never-crash gaps (US20 follow-up)
 
 - **Where:** `src/paper_degist/ocr_page.py` (`_parse_response`, `_default_post`,
