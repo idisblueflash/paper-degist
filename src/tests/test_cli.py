@@ -26,6 +26,7 @@ from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.parse_url import app as parse_url_app
+from paper_degist.recover_blocked import app as recover_blocked_app
 from paper_degist.resolve_oa import app as resolve_oa_app
 
 runner = CliRunner()
@@ -373,6 +374,78 @@ def test_browser_fetch_cli_missing_file_exits_two_without_traceback(tmp_path):
     result = runner.invoke(browser_fetch_app, [str(tmp_path / "nope.txt")])
     assert result.exit_code == 2
     assert "Traceback" not in result.output
+
+
+# --- recover-blocked CLI: route the manifest's blocked_by URLs into browser-fetch (US17) ---
+
+
+RB_RG = "https://www.researchgate.net/publication/287147155_The_Mnemonic_Keyword_Method"
+RB_PUBMED = "https://pubmed.ncbi.nlm.nih.gov/2303742/"
+
+
+def _blocked_manifest(tmp_path):
+    """A manifest holding two fetch-one blocked_by quarantines and one generic one."""
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(
+        '{"stage": "fetch-one", "url": "%s", "status": 403, "blocked_by": "researchgate.net"}\n'
+        '{"stage": "fetch-one", "url": "https://example.edu/papers/some-closed-paper", "status": 403, "reason": "http 403"}\n'
+        '{"stage": "fetch-one", "url": "%s", "status": 403, "blocked_by": "pubmed.ncbi.nlm.nih.gov"}\n'
+        % (RB_RG, RB_PUBMED),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_recover_blocked_cli_prints_the_recovered_paths(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch)  # a warm Chrome that renders each URL
+    manifest = _blocked_manifest(tmp_path)
+    files = tmp_path / "files"
+    result = runner.invoke(recover_blocked_app, [str(manifest), "--files-dir", str(files)])
+    assert result.stdout == (
+        f"{files / '287147155_The_Mnemonic_Keyword_Method.html'}\n"
+        f"{files / '2303742.html'}\n"
+    )
+
+
+def test_recover_blocked_cli_ignores_the_generic_quarantine(tmp_path, monkeypatch):
+    # The plain http-403 (no blocked_by) is not this lane's job — its slug never
+    # reaches files/.
+    _patch_browser_batch(monkeypatch)
+    manifest = _blocked_manifest(tmp_path)
+    files = tmp_path / "files"
+    result = runner.invoke(recover_blocked_app, [str(manifest), "--files-dir", str(files)])
+    assert "some-closed-paper" not in result.stdout
+
+
+def test_recover_blocked_cli_no_browser_exits_zero(tmp_path, monkeypatch):
+    # No dev-mode Chrome: the blocked URLs wait in the manifest (browser-fetch's
+    # own quarantine), and recover-blocked still exits cleanly (AC4).
+    _patch_browser_batch(monkeypatch, reachable=False)
+    manifest = _blocked_manifest(tmp_path)
+    result = runner.invoke(recover_blocked_app, [str(manifest), "--files-dir", str(tmp_path / "files")])
+    assert result.exit_code == 0
+
+
+def test_recover_blocked_cli_no_blocked_records_prints_nothing(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch)
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(
+        '{"stage": "fetch-one", "url": "https://example.edu/papers/some-closed-paper", "status": 403, "reason": "http 403"}\n',
+        encoding="utf-8",
+    )
+    result = runner.invoke(recover_blocked_app, [str(manifest), "--files-dir", str(tmp_path / "files")])
+    assert result.stdout == ""
+
+
+def test_recover_blocked_cli_missing_manifest_exits_two_without_traceback(tmp_path):
+    result = runner.invoke(recover_blocked_app, [str(tmp_path / "nope.jsonl")])
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+def test_root_signpost_lists_recover_blocked():
+    result = runner.invoke(root_app, [])
+    assert "recover-blocked" in result.stdout
 
 
 def test_root_signpost_lists_browser_fetch():
