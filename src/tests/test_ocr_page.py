@@ -10,11 +10,14 @@ end-to-end (rule 06 §7), not here. Distinct example pages/models per case
 import json
 from pathlib import Path
 
+import pytest
+
 from paper_degist.ocr_page import (
     REGISTRY,
     OcrResponse,
     TransportError,
     _decode_grounding,
+    _parse_response,
     _strip_markdown_fence,
     ocr_page,
 )
@@ -271,3 +274,54 @@ def test_flap_recovery_stops_retrying_once_it_succeeds(tmp_path: Path):
     post = _fail_then_ok(1)
     _run(tmp_path, post=post, attempts=3)
     assert len(post.calls) == 2  # one 502, then the success — no further tries
+
+
+# --- transport parse: a 200 with bad JSON/schema must retry+quarantine, not crash (rule 02) ---
+#
+# `curl -w "\n%{http_code}"` appends the status as a final line, so the parser's
+# input is the response body, a newline, then the HTTP code.
+
+
+def _curl_stdout(body: str, code: str = "200") -> str:
+    return f"{body}\n{code}"
+
+
+def _chat_json(content="# Doc", finish_reason="stop", completion_tokens=9) -> str:
+    return json.dumps(
+        {
+            "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+            "usage": {"completion_tokens": completion_tokens},
+        }
+    )
+
+
+def test_parse_response_extracts_the_content():
+    assert _parse_response(_curl_stdout(_chat_json(content="# Real Page"))).content == "# Real Page"
+
+
+def test_parse_response_extracts_the_completion_tokens():
+    assert _parse_response(_curl_stdout(_chat_json(completion_tokens=321))).completion_tokens == 321
+
+
+def test_parse_non_200_raises_transport_error():
+    with pytest.raises(TransportError):
+        _parse_response(_curl_stdout(_chat_json(), code="502"))
+
+
+def test_parse_empty_body_raises_transport_error():
+    with pytest.raises(TransportError):
+        _parse_response(_curl_stdout("", code="200"))
+
+
+def test_parse_malformed_json_raises_transport_error():
+    # A 200 whose body is truncated/not JSON must convert to a retryable error,
+    # never a raw JSONDecodeError out of the step (Codex review).
+    with pytest.raises(TransportError):
+        _parse_response(_curl_stdout("{not: valid json", code="200"))
+
+
+def test_parse_unexpected_schema_raises_transport_error():
+    # A 200 with valid JSON but no choices[0].message.content (a wrong schema)
+    # must also become a retryable TransportError, not a KeyError.
+    with pytest.raises(TransportError):
+        _parse_response(_curl_stdout(json.dumps({"error": "model not loaded"}), code="200"))

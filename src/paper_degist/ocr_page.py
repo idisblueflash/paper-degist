@@ -177,14 +177,29 @@ def _default_post(model_id: str, prompt: str, image_path: Path, endpoint: str) -
 
     if proc.returncode != 0:
         raise TransportError(f"curl exited {proc.returncode}: {proc.stderr.strip()[-200:]}")
-    resp_body, _, code = proc.stdout.rpartition("\n")
+    return _parse_response(proc.stdout)
+
+
+def _parse_response(stdout: str) -> OcrResponse:
+    """Parse ``curl -w "\\n%{http_code}"`` output into an ``OcrResponse``.
+
+    The body is everything before the trailing status line. A non-200, an empty
+    body, or a 200 whose JSON is truncated/off-schema all raise
+    ``TransportError`` — a malformed 200 must retry and then quarantine like a
+    502, never crash the step out of the loop (rule 02).
+    """
+    resp_body, _, code = stdout.rpartition("\n")
     if code != "200" or not resp_body.strip():
         raise TransportError(f"server returned {code or 'empty body'}")
-    data = json.loads(resp_body)
-    choice = data["choices"][0]
+    try:
+        data = json.loads(resp_body)
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise TransportError(f"unparseable 200 response ({type(exc).__name__}): {exc}") from exc
     usage = data.get("usage") or {}
     return OcrResponse(
-        content=choice["message"]["content"],
+        content=content,
         finish_reason=choice.get("finish_reason", ""),
         completion_tokens=usage.get("completion_tokens", 0),
     )
