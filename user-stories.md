@@ -24,7 +24,7 @@ timeless spec and carry no status marker.
 | [US 9](user-stories/us-09-resolving-open-access.md)     | Resolving open access for a failed fetch | `resolve-oa`    | ✅ Done         |
 | [US 10](user-stories/us-10-resolving-doi-from-title.md) | Resolving a DOI from a title (Crossref)  | `resolve-oa`    | ✅ Done         |
 | [US 11](user-stories/us-11-clickable-doi-in-manifest.md) | Clickable DOI link in the manifest record | `resolve-oa`    | ✅ Done         |
-| [US 12](user-stories/us-12-recognize-bot-walled-sources.md) | Recognize bot-walled sources on a blocked fetch | `fetch-one`     | —              |
+| [US 12](user-stories/us-12-recognize-bot-walled-sources.md) | Recognize bot-walled sources on a blocked fetch | `fetch-one`     | ✅ Done         |
 | [US 13](user-stories/us-13-verify-filename-matches-title.md) | Verify the saved filename matches the paper's title | `fetch-one`     | ✅ Done |
 | [US 14](user-stories/us-14-dedup-inputs-by-doi.md) | Dedup inputs by normalized DOI before fetching | `dedup-inputs`  | —              |
 | [US 15](user-stories/us-15-browser-fetch-bot-walled.md) | Fetch a bot-walled page through a dev-mode browser | `browser-fetch` | ✅ Done         |
