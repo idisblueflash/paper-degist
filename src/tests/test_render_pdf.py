@@ -178,3 +178,25 @@ def test_failed_render_leaves_no_partial_pages(tmp_path: Path):
 
     _run(tmp_path, name="Half_Rendered.pdf", render=_partial_then_boom)
     assert not sorted((tmp_path / "pages" / "Half_Rendered").glob("p*.png"))
+
+
+def test_crashed_render_is_not_published_so_a_rerun_rerenders(tmp_path: Path):
+    # A partial set from a crashed render must never sit at the final path where
+    # the idempotency skip would accept it as complete: the next run must render.
+    calls = []
+
+    def _flaky(pdf_path: Path, out_dir: Path, dpi: int) -> list[Path]:
+        calls.append(1)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "p0001.png").write_bytes(b"partial page")
+        if len(calls) == 1:
+            raise RuntimeError("gs crashed after one page")
+        (out_dir / "p0002.png").write_bytes(b"second page")
+        return sorted(out_dir.glob("p*.png"))
+
+    pdf = tmp_path / "Flaky.pdf"
+    pdf.write_bytes(b"%PDF-1.7\nbody bytes")
+    kwargs = dict(pages_dir=tmp_path / "pages", manifest_path=tmp_path / "manifest.jsonl", render=_flaky)
+    render_pdf(pdf, **kwargs)  # first run crashes and quarantines
+    render_pdf(pdf, **kwargs)  # second run must re-render, not skip a partial
+    assert len(calls) == 2

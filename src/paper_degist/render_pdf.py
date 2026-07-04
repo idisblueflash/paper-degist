@@ -44,7 +44,7 @@ def _default_render(pdf_path: Path, out_dir: Path, dpi: int) -> list[Path]:
     failure so the caller can quarantine a corrupt PDF rather than crash.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    proc = subprocess.run(
         [
             "gs",
             "-dNOPAUSE",
@@ -55,9 +55,13 @@ def _default_render(pdf_path: Path, out_dir: Path, dpi: int) -> list[Path]:
             "-sOutputFile=" + str(out_dir / "p%04d.png"),
             str(pdf_path),
         ],
-        check=True,
         capture_output=True,
     )
+    if proc.returncode != 0:
+        # Surface gs's own diagnostic (bounded) so the quarantine reason is
+        # debuggable without re-running the render.
+        tail = proc.stderr.decode("utf-8", "replace").strip()[-300:]
+        raise RuntimeError(f"gs exited {proc.returncode}: {tail}")
     return sorted(out_dir.glob("p*.png"))
 
 
@@ -107,19 +111,26 @@ def render_pdf(
     if existing:
         return existing  # idempotent skip — never re-render or overwrite
 
+    # Render into a staging sibling and publish with one atomic rename, so a
+    # partial set from a failed *or* killed render is never left at the final
+    # path where the idempotency skip would mistake it for a complete render.
+    # Clear any staging leftover from a prior crash first.
+    staging = out_dir.with_name(out_dir.name + ".rendering")
+    shutil.rmtree(staging, ignore_errors=True)
     try:
-        pages = render(pdf_path, out_dir, dpi)
+        pages = render(pdf_path, staging, dpi)
     except Exception as exc:  # a %PDF file gs still cannot render — quarantine
-        # gs can write some pages before dying; drop the partial set so a re-run
-        # does not mistake it for a complete render (idempotency skip is by
-        # existence). We only reach here when out_dir held no pages before.
-        shutil.rmtree(out_dir, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         _quarantine(manifest_path, pdf=str(pdf_path), reason=f"unrenderable PDF: {exc}")
         return None
     if not pages:
+        shutil.rmtree(staging, ignore_errors=True)
         _quarantine(manifest_path, pdf=str(pdf_path), reason="unrenderable PDF: no pages produced")
         return None
 
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging.rename(out_dir)
+    pages = sorted(out_dir.glob("p*.png"))  # repoint from staging to the published dir
     _manifest.append(
         manifest_path, stage="render-pdf", pdf=str(pdf_path), pages=len(pages), dpi=dpi
     )
