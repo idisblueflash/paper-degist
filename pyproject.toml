@@ -25,6 +25,7 @@ resolve-oa = "paper_degist.resolve_oa:main"
 browser-up = "paper_degist.browser_up:main"
 browser-fetch = "paper_degist.browser_fetch:main"
 render-pdf = "paper_degist.render_pdf:main"
+ocr-page = "paper_degist.ocr_page:main"
 recover-blocked = "paper_degist.recover_blocked:main"
 
 [tool.pytest.ini_options]
