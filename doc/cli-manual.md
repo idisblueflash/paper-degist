@@ -389,6 +389,69 @@ each registered model.
 
 ---
 
+## `recover-blocked` — route the manifest's bot-walled URLs into the browser lane (US17)
+
+`browser-fetch` (US15/16) is the recovery *mechanism*; `recover-blocked` is the
+*routing* that decides **which** URLs need it. `fetch-one` (US12) tags a
+bot-walled 403 with a `blocked_by` host in the manifest; `recover-blocked` reads
+the append-only manifest, selects the `blocked_by` records **not yet recovered**,
+and hands their URLs to `browser-fetch`'s warm-batch path (one Chrome, US16). It
+is deterministic, offline routing — it filters the manifest and delegates the
+actual fetching, holding no browser logic and no LLM. It is the **second recovery
+lane, parallel to `resolve-oa`** (US9's DOI lane): this one recovers by
+*rendering the walled page itself*.
+
+```
+uv run recover-blocked [manifest] [--cdp http://localhost:9222] [--files-dir files]
+```
+
+- **Argument**: `manifest` — the manifest to scan for `blocked_by` records
+  (default `manifest.jsonl`). It must exist (nothing has been fetched otherwise).
+  Unlike the other steps this reads a **file, not stdin**: the manifest is a
+  persistent, appended-to record — `browser-fetch` writes its recovery records
+  back into this same file — not a pipeable stream.
+- **Options**: `--cdp` (CDP endpoint of the running dev-mode Chrome; default
+  `http://localhost:9222`), `--files-dir` (where the rendered HTML is saved;
+  default `files/`). The manifest read *and* written is the argument above.
+- **Output**: each recovered path on stdout, **one per line, in first-seen
+  order** — a drop-in to pipe into `convert-html`. A one-line outcome is noted on
+  **stderr** (stdout stays paths-only for piping).
+- **Classify-then-dispatch.** A record with **no** `blocked_by` (a generic 403)
+  is skipped — not this lane's job. A `blocked_by` record **already recovered** by
+  a later `browser-fetch` `saved` record is skipped — so the step is **idempotent
+  across runs**. Everything else is dispatched wholesale to `browser-fetch`.
+- **Never drives Chrome, never writes its own record.** The new recovery record
+  is `browser-fetch`'s own `saved` one; the original `blocked_by` record is left
+  untouched (append-only). With **no** dev-mode Chrome reachable, the blocked URLs
+  stay quarantined via `browser-fetch`'s own missing-endpoint reason and
+  `recover-blocked` exits cleanly — the retry simply waits for a run with Chrome up.
+
+### Examples
+
+```bash
+# Happy path — after fetch-one has tagged some 403s as blocked_by, bring Chrome
+# up and drain the walled URLs through it in one warm session
+endpoint=$(uv run browser-up)
+uv run recover-blocked manifest.jsonl --cdp "$endpoint"
+#   -> files/287147155_The_Mnemonic_Keyword_Method.html   (a recovered page)
+#   -> stderr: recovered 1 blocked page(s)
+#   -> manifest: a new {"stage":"browser-fetch","result":"saved", …} record;
+#                the original {"stage":"fetch-one","blocked_by":"researchgate.net", …} untouched
+
+# Drop-in over the manifest: pipe the recovered paths straight into convert-html
+uv run recover-blocked --cdp "$endpoint" | while read -r p; do
+  uv run convert-html "$p"
+done
+
+# Quarantine branch — no Chrome up: the blocked URLs wait, the step exits 0
+uv run recover-blocked manifest.jsonl
+#   -> stdout: (empty — nothing recovered)
+#   -> stderr: no blocked pages recovered — nothing walled to retry, or no dev-mode Chrome reachable
+#   -> manifest: {"stage":"browser-fetch","reason":"no dev-mode browser endpoint reachable …"}
+```
+
+---
+
 ## `ocr-page` — OCR one page image with one registered model (US20)
 
 The second step of the OCR-model bench: send **one** page PNG (from `render-pdf`)
@@ -478,6 +541,13 @@ done
 # 4. For anything that quarantined with a 403, try the OA lane by hand:
 #    inspect manifest.jsonl, then for each failed url:
 uv run resolve-oa "<failed-url>" && uv run fetch-one "<printed OA pdf url>"
+
+# 5. For bot-walled 403s (blocked_by), drain them through the browser lane in one
+#    warm session, then convert whatever it recovered:
+endpoint=$(uv run browser-up)
+uv run recover-blocked manifest.jsonl --cdp "$endpoint" | while read -r p; do
+  case "$p" in *.html) uv run convert-html "$p" ;; esac
+done
 ```
 
 Inspect `manifest.jsonl` for everything that could not be handled

@@ -207,12 +207,33 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when we build the manual/browser rescue step. Read the
   `resolve-oa` manifest records and present them as a work queue (or drive a
   logged-in browser context), quarantining anything still unreachable.
-- **Status:** MECHANISM ADDRESSED by US15. `browser-fetch` is the fetch
+- **Status:** ADDRESSED by US15 + US17. `browser-fetch` (US15) is the fetch
   *mechanism*: it attaches to an already-running dev-mode Chrome (US18
   `browser-up`) over CDP, navigates one URL, and saves the rendered HTML with the
-  researcher's real cookies. Still OPEN: the *routing* that reads `resolve-oa` /
-  `fetch-one` `blocked_by` records and feeds them to `browser-fetch`
-  automatically is US17 — nothing consumes the manifest reason yet.
+  researcher's real cookies. `recover-blocked` (US17) is now the *routing* that
+  consumes the manifest reason: it reads `fetch-one`'s `blocked_by` records, skips
+  the ones a later run already recovered, and hands the rest to `browser-fetch`'s
+  warm-batch path (US16) — deterministic, offline, no LLM. Still OPEN for the
+  **`resolve-oa` DOI lane**: recover-blocked drives the *browser* lane only, so
+  `resolve-oa`'s `closed access` / `no DOI` records are not yet auto-routed (see
+  the two US17 deferrals below).
+
+## recover_blocked — browser lane only; no per-host lane policy, no recovery report (US17)
+
+- **Where:** `src/paper_degist/recover_blocked.py::recover_blocked`.
+- **Case not handled:** recover-blocked routes every `blocked_by` record to the
+  *browser* lane. It does not (a) pick the cheaper lane per host — some walls
+  yield to `resolve-oa`'s DOI lookup (an open-access copy) without a browser, and
+  a policy that tries `resolve-oa` first and falls back to the browser per
+  `blocked_by` host is a routing refinement; nor (b) show a consolidated
+  recovery report (blocked → retried → recovered) grouped by paper — that is a
+  read-side view, complementary to US11's deferred per-paper rollup.
+- **Trigger to fix:** (a) the first `blocked_by` host observed to recover more
+  cheaply via `resolve-oa` than the browser — promote it into a per-host lane
+  table; (b) the first time the append-only manifest's recovery history needs a
+  human-readable rollup — build it alongside the resolve-oa per-paper view.
+- **Status:** OPEN (deferred by US17 — this story performs the browser-lane retry;
+  lane policy and the report are follow-ups).
 
 ## browser_fetch — a wall/login/consent page can be saved as if it were the paper (US15)
 
