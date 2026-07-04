@@ -836,3 +836,68 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `OSError` into a `TransportError`, and `ocr_page` guards a **missing page** file
   with a distinct `page image not found` quarantine before any network call (the
   Typer CLI already rejects it up front; this guards direct library callers).
+
+## embed_text — single (text, model, role) per run; no batch driver (US24)
+
+- **Where:** `src/paper_degist/embed_text.py` (one `text` + one `model_id` +
+  one `role` per invocation).
+- **Case not handled:** embed-text embeds exactly one text with one model+role
+  per invocation, each with its own connect + retry budget. Walking a whole
+  abstract list — honoring the sequential-with-gap rule so the flaky runtime
+  never sees rapid-fire hits — is the US26 abstract-filter driver's job, composed
+  from this step. The inter-*item* recovery gap therefore lives in that future
+  driver; this step's `gap` is only the between-retries gap.
+- **Trigger to fix:** when US26 filters a candidate list by abstract similarity.
+  Add a batch driver that iterates texts calling `embed_text`, inserting the
+  recovery gap between items, driven by a test that asserts the sequencing.
+- **Status:** OPEN (deliberate — kept single-input like the sibling steps; named
+  in the US24 "Later stages").
+
+## embed_text — one JSON per vector; no on-disk vector index (US24)
+
+- **Where:** `src/paper_degist/embed_text.py::_save` (writes
+  `out/embeddings/<model>/<hash>.json`, one file per text).
+- **Case not handled:** vectors are content-addressed as one JSON per
+  `(model, role, text)`. A proper on-disk vector index (reuse across topics, ANN
+  search over a corpus) is a separate design, deferred until a corpus is large
+  enough to need it. The current layout is enough for US26 to load a candidate
+  set's vectors and score cosine similarity in memory.
+- **Trigger to fix:** the first topic run whose candidate corpus is large enough
+  that per-file JSON load or linear similarity is the bottleneck. Add a vector
+  store (e.g. a single packed array + id map, or an ANN index), driven by a test.
+- **Status:** OPEN (deliberate — named in the US24 "Later stages").
+
+## embed_text — server lifecycle (LM Studio up + model loaded) is the operator's job (US24)
+
+- **Where:** `src/paper_degist/embed_text.py::_default_post` (assumes a reachable
+  `/v1/embeddings` endpoint with the model loadable).
+- **Case not handled:** embed-text does not bring the model server up or warm a
+  model — as `ocr-page` (US20) and `browser-fetch` (US15) assume their server /
+  Chrome is already up. A crashed runtime that 5xxs is handled (retry →
+  quarantine), but *starting* LM Studio, or detecting a wedged runtime that needs
+  a restart, is not.
+- **Trigger to fix:** when the filter wants an unattended run that can recover a
+  dead server. Add a warm step (mirroring `browser-up`) that ensures the endpoint
+  answers and the model is loaded before embed-text runs; keep it a separate
+  step, not a branch inside the loop.
+- **Status:** OPEN (deliberate — server lifecycle deferred by the US24 story).
+
+## embed_text — registry holds one nomic entry; alias id + Qwen3 not registered (US24)
+
+- **Where:** `src/paper_degist/embed_text.py::REGISTRY`.
+- **Case not handled:** the registry ships `nomic-embed-text-v1.5` only. The US24
+  real E2E found the live LM Studio serves that model under the id
+  `text-embedding-nomic-embed-text-v1.5` yet **also accepts the short
+  `nomic-embed-text-v1.5` as an alias** (JIT model resolution) — so the AC's
+  registered id works unchanged (a 768-dim vector came back). The same server
+  also serves `text-embedding-qwen3-embedding-0.6b` — the `Qwen3-Embedding-0.6B`
+  the story names ("Adding … later is one registry entry") — which is not
+  registered yet, so embed-text quarantines it as "unknown model". This is by
+  design (a new model is one registry entry, its `(query, doc)` prefix pair being
+  the only per-model data), but the entry is not written until the filter needs
+  to compare it.
+- **Trigger to fix:** when the abstract filter compares a second embedding model,
+  or a server serves nomic only under its long id (no alias). Add a `ModelSpec`
+  per model id (and/or the long `text-embedding-…` id as its own key), driven by
+  a failing test — a one-line data add, not a branch.
+- **Status:** OPEN (deliberate — registry is data; add entries on demand).
