@@ -29,7 +29,7 @@ Runnable from the command line (rule 03):
 """
 
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, Optional
 from urllib.parse import urlsplit
@@ -75,11 +75,17 @@ def _no_proxy_for(host: str) -> Iterator[None]:
     Adding ``host`` to ``NO_PROXY`` makes the driver hit the endpoint directly,
     without disabling the proxy for the page's own traffic. Restores the prior
     ``NO_PROXY``/``no_proxy`` on the way out.
+
+    The two variables can each hold distinct entries, so we **union** both (plus
+    ``host``) rather than picking one — dropping the other's hosts could route a
+    connection through the proxy that was meant to bypass it.
     """
     keys = ("NO_PROXY", "no_proxy")
     saved = {k: os.environ.get(k) for k in keys}
-    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    merged = ",".join(part for part in (existing, host) if part)
+    entries: list[str] = []
+    for source in (os.environ.get("NO_PROXY", ""), os.environ.get("no_proxy", ""), host):
+        entries.extend(part for part in source.split(",") if part)
+    merged = ",".join(dict.fromkeys(entries))  # dedup, preserve order
     os.environ["NO_PROXY"] = merged
     os.environ["no_proxy"] = merged
     try:
@@ -90,6 +96,24 @@ def _no_proxy_for(host: str) -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _teardown(page: object, context: object, *, created_context: bool) -> None:
+    """Best-effort teardown of a CDP-attach session (close only what we opened).
+
+    Closes the tab we opened, and a context **only if we created one** (never the
+    researcher's reused default context). Each close is wrapped in ``suppress`` so
+    a cleanup error never masks the real navigation result/error, and a context we
+    created is still closed even if creating the page failed (``page`` is ``None``)
+    or ``page.close()`` raises. We never call ``browser.close()`` — see
+    ``_default_fetch_rendered``. (Codex review finding.)
+    """
+    if page is not None:
+        with suppress(Exception):
+            page.close()  # close only the tab we opened
+    if created_context:
+        with suppress(Exception):
+            context.close()  # and a context only if we created it
 
 
 def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) -> str:
@@ -122,14 +146,13 @@ def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) 
         browser = p.chromium.connect_over_cdp(cdp_url)
         reuse_context = bool(browser.contexts)  # the researcher's existing session
         context = browser.contexts[0] if reuse_context else browser.new_context()
-        page = context.new_page()
+        page = None
         try:
+            page = context.new_page()
             page.goto(url, wait_until="networkidle", timeout=timeout_ms)
             return page.content()
         finally:
-            page.close()  # close only the tab we opened — never the whole browser
-            if not reuse_context:
-                context.close()  # and a context only if we created it
+            _teardown(page, context, created_context=not reuse_context)
 
 
 def browser_fetch(

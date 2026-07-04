@@ -240,6 +240,11 @@ location, the case not yet handled, and the trigger that should make us fix it.
   Cloudflare challenge markers, and a **title/slug mismatch** between the URL and
   the rendered `<title>`. Operationally the precondition is that the researcher
   logs the profile into the host first (US15 defers in-script auth by design).
+  **Stickiness (Codex review):** because the save writes a real file and re-runs
+  skip an existing target (AC4 idempotency), a bad wall capture is *permanently*
+  treated as a success — recovering it needs deleting the saved `.html` (and its
+  manifest row) by hand. A future wall-signature check would need to run **before**
+  the save so a wall never becomes the sticky artifact in the first place.
 
 ## browser_fetch — proxy env broke the CDP connection (fixed in the US15 E2E)
 

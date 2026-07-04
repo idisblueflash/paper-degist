@@ -21,7 +21,7 @@ import json
 import os
 from pathlib import Path
 
-from paper_degist.browser_fetch import _no_proxy_for, _target_path, browser_fetch
+from paper_degist.browser_fetch import _no_proxy_for, _target_path, _teardown, browser_fetch
 
 # The three ResearchGate publications the AC names, plus two more, each distinct
 # and self-describing (rule 08) so a scenario's URL *is* its label.
@@ -114,6 +114,62 @@ def test_no_proxy_for_restores_the_prior_no_proxy_after(monkeypatch):
     with _no_proxy_for("localhost"):
         pass
     assert os.environ["NO_PROXY"] == "example.com"
+
+
+def test_no_proxy_for_unions_entries_from_both_proxy_vars(monkeypatch):
+    # NO_PROXY and no_proxy can each hold distinct entries; the CDP host must be
+    # added *without* dropping either variable's existing hosts (Codex finding).
+    monkeypatch.setenv("NO_PROXY", "corp.internal")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    with _no_proxy_for("localhost"):
+        entries = set(os.environ["NO_PROXY"].split(","))
+    assert {"corp.internal", "127.0.0.1", "localhost"} <= entries
+
+
+# --- teardown: close only what we opened, never mask the nav result (Codex) ---
+
+
+class _FakeClosable:
+    """A page/context stand-in that records close() — or raises on cleanup."""
+
+    def __init__(self, *, boom=False):
+        self.closed = False
+        self._boom = boom
+
+    def close(self):
+        if self._boom:
+            raise RuntimeError("close failed")
+        self.closed = True
+
+
+def test_teardown_closes_the_tab_we_opened():
+    page, ctx = _FakeClosable(), _FakeClosable()
+    _teardown(page, ctx, created_context=False)
+    assert page.closed is True
+
+
+def test_teardown_leaves_a_reused_context_open():
+    page, ctx = _FakeClosable(), _FakeClosable()
+    _teardown(page, ctx, created_context=False)
+    assert ctx.closed is False
+
+
+def test_teardown_closes_a_context_we_created():
+    page, ctx = _FakeClosable(), _FakeClosable()
+    _teardown(page, ctx, created_context=True)
+    assert ctx.closed is True
+
+
+def test_teardown_suppresses_a_page_close_error_and_still_closes_the_context():
+    page, ctx = _FakeClosable(boom=True), _FakeClosable()
+    _teardown(page, ctx, created_context=True)  # must not raise
+    assert ctx.closed is True
+
+
+def test_teardown_tolerates_a_missing_page():
+    ctx = _FakeClosable()
+    _teardown(None, ctx, created_context=True)  # new_page() failed before assignment
+    assert ctx.closed is True
 
 
 # --- AC1: reachable endpoint → save the rendered HTML and record `saved` ---
