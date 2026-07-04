@@ -29,7 +29,7 @@ Runnable from the command line (rule 03):
 """
 
 import os
-from contextlib import contextmanager, suppress
+from contextlib import AbstractContextManager, contextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, Optional
 from urllib.parse import urlsplit
@@ -48,6 +48,9 @@ from paper_degist.browser_up import DEFAULT_CDP, _default_probe_cdp
 # dispatch is testable without a real Chrome — the browser_up / fetch_one shape.
 CDPProbe = Callable[[str], bool]  # is a dev-mode Chrome answering at this CDP url?
 RenderedFetcher = Callable[[str, str], str]  # (cdp_url, url) -> rendered HTML; raises on nav failure
+TabFetcher = Callable[[str], str]  # (url) -> rendered HTML on a fresh tab; raises on nav failure
+# A batch session: connect once, yield a per-URL TabFetcher, detach on exit (US16).
+SessionOpener = Callable[[str], "AbstractContextManager[TabFetcher]"]
 
 
 def _target_path(url: str, files_dir: Path) -> Path:
@@ -116,28 +119,42 @@ def _teardown(page: object, context: object, *, created_context: bool) -> None:
             context.close()  # and a context only if we created it
 
 
-def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) -> str:
-    """Attach to the running Chrome over CDP, navigate ``url``, return its HTML.
+def _fetch_on_new_tab(context: object, url: str, *, timeout_ms: int) -> str:
+    """Open a fresh tab on ``context``, navigate ``url``, return its rendered HTML.
+
+    Waits for ``networkidle`` so a client-rendered page is captured (not the
+    initial shell), then reads the DOM. Closes **only the tab it opened** on the
+    way out (US16 AC2 — a finished URL's tab is closed but the browser stays
+    running), via ``_teardown(page, context, created_context=False)``; the
+    ``context`` is left to the caller (``_cdp_context``), so a warm session can
+    open the next URL on the same connection. Any navigation failure (nav
+    timeout, load error) propagates so the caller quarantines that one URL — so
+    one URL's failure never aborts a batch.
+    """
+    page = None
+    try:
+        page = context.new_page()
+        page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+        return page.content()
+    finally:
+        _teardown(page, context, created_context=False)  # close the tab, keep the context
+
+
+@contextmanager
+def _cdp_context(cdp_url: str) -> Iterator[object]:
+    """Connect to the already-running Chrome over CDP **once**; yield a context.
 
     Connects to the *already-running* dev-mode Chrome (``connect_over_cdp`` — it
-    never launches or kills a browser), opens a fresh tab in the existing logged-in
-    context so the researcher's session cookies apply, navigates and waits for
-    ``networkidle`` so a client-rendered page is captured (not the initial shell),
-    then reads the rendered DOM. Any failure (connect refused, nav timeout, load
-    error) propagates so the caller quarantines with the distinct nav-failed
-    reason — this step never crashes the batch itself.
-
-    **Teardown closes only what we opened.** We never call ``browser.close()``:
+    never launches or kills a browser) and selects the researcher's existing
+    logged-in context (or creates one if the browser has none) so session cookies
+    apply. On exit it **detaches without closing Chrome** (US16 AC3): it closes a
+    context only if we created it and **never** calls ``browser.close()`` —
     Playwright's own docs say that for a CDP *attach* it is "similar to
-    force-quitting the browser" and clears the browser's contexts — which would
-    disturb the researcher's live logged-in session (spec: this step never kills
-    Chrome, and the profile must carry the login forward). Instead we close just
-    the tab we opened (and a context only if we had to create one), then let
-    ``sync_playwright()`` exit disconnect the driver, leaving the real Chrome and
-    the researcher's tabs untouched.
-
-    ``_no_proxy_for`` wraps the whole session so the loopback CDP connection
-    bypasses any ``HTTP_PROXY`` (see its docstring — a US15 E2E finding).
+    force-quitting the browser" and would clear the researcher's live contexts.
+    Exiting ``sync_playwright()`` merely disconnects the driver, leaving the real
+    Chrome and the researcher's tabs untouched, so the same warm browser serves
+    the next run. ``_no_proxy_for`` wraps the session so the loopback CDP
+    connection bypasses any ``HTTP_PROXY`` (see its docstring — a US15 E2E finding).
     """
     from playwright.sync_api import sync_playwright
 
@@ -146,13 +163,104 @@ def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) 
         browser = p.chromium.connect_over_cdp(cdp_url)
         reuse_context = bool(browser.contexts)  # the researcher's existing session
         context = browser.contexts[0] if reuse_context else browser.new_context()
-        page = None
         try:
-            page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-            return page.content()
+            yield context
         finally:
-            _teardown(page, context, created_context=not reuse_context)
+            # Detach: close a context only if we created it — never the browser.
+            _teardown(None, context, created_context=not reuse_context)
+
+
+def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) -> str:
+    """Attach over CDP, navigate ``url`` on a fresh tab, return its rendered HTML.
+
+    The single-URL path (US15). Built on the same primitives the batch session
+    reuses — ``_cdp_context`` (connect-once + detach-not-close) and
+    ``_fetch_on_new_tab`` (tab-per-URL) — so the connect and teardown invariants
+    live in one place for both. Any failure (connect refused, nav timeout, load
+    error) propagates so the caller quarantines with the distinct nav-failed
+    reason; this step never crashes the batch itself.
+    """
+    with _cdp_context(cdp_url) as context:
+        return _fetch_on_new_tab(context, url, timeout_ms=timeout_ms)
+
+
+@contextmanager
+def _default_open_session(cdp_url: str, *, timeout_ms: int = 30000) -> Iterator[TabFetcher]:
+    """Open **one** warm CDP connection and yield a per-URL tab fetcher (US16).
+
+    The batch primitive: connect once (``_cdp_context``) and hand back a
+    ``fetch_tab(url) -> html`` that opens and closes a *tab* per URL against that
+    single connection (``_fetch_on_new_tab``) — so every URL in the batch rides
+    the same warm, authenticated session. On block exit ``_cdp_context`` detaches
+    without closing Chrome, leaving the warm browser for the next run.
+    """
+    with _cdp_context(cdp_url) as context:
+        yield lambda url: _fetch_on_new_tab(context, url, timeout_ms=timeout_ms)
+
+
+def _quarantine_no_endpoint(manifest_path: Path, url: str, cdp_url: str) -> None:
+    """Record the missing-dev-mode-browser quarantine for ``url`` (AC2).
+
+    Shared by the single fetch (US15) and the batch (US16): when the CDP endpoint
+    is unreachable the item cannot be fetched now, so it waits — with a reason
+    **distinct** from a navigation failure — for a run with Chrome up. Never
+    launch one here, never crash.
+    """
+    _manifest.append(
+        manifest_path,
+        stage="browser-fetch",
+        url=url,
+        cdp_url=cdp_url,
+        reason=(
+            f"no dev-mode browser endpoint reachable at {cdp_url} — "
+            f"bring one up with browser-up, then re-run"
+        ),
+    )
+
+
+def _dispatch_url(
+    url: str,
+    fetch_tab: TabFetcher,
+    *,
+    cdp_url: str,
+    files_dir: Path,
+    manifest_path: Path,
+) -> Optional[Path]:
+    """Fetch one URL via ``fetch_tab``, save it, or quarantine — return its path or None.
+
+    The per-URL classify shared by the single fetch (US15) and the batch (US16),
+    so both behave identically per URL. An already-saved target is skipped
+    (idempotent, appends no record); ``fetch_tab(url)`` raising quarantines that
+    one URL with the **distinct** nav-failed reason (so one failure never aborts
+    a batch); success saves the rendered HTML and records ``saved``.
+    """
+    target = _target_path(url, files_dir)
+    if target.exists():
+        return target  # idempotent skip (AC4) — never re-fetch, overwrite, or re-record
+
+    try:
+        html = fetch_tab(url)
+    except Exception as exc:  # nav timeout/error — a *distinct* reason from "no browser" (AC3)
+        _manifest.append(
+            manifest_path,
+            stage="browser-fetch",
+            url=url,
+            cdp_url=cdp_url,
+            reason=f"navigation failed: {exc}",
+        )
+        return None
+
+    files_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(html, encoding="utf-8")
+    _manifest.append(
+        manifest_path,
+        stage="browser-fetch",
+        url=url,
+        cdp_url=cdp_url,
+        result="saved",
+        path=str(target),
+    )
+    return target
 
 
 def browser_fetch(
@@ -187,43 +295,17 @@ def browser_fetch(
         return target  # idempotent skip (AC4) — never re-fetch, overwrite, or re-record
 
     if not probe_cdp(cdp_url):
-        # No dev-mode browser to attach to (AC2). The item waits for a run with
-        # Chrome up — never launch one here, never crash.
-        _manifest.append(
-            manifest_path,
-            stage="browser-fetch",
-            url=url,
-            cdp_url=cdp_url,
-            reason=(
-                f"no dev-mode browser endpoint reachable at {cdp_url} — "
-                f"bring one up with browser-up, then re-run"
-            ),
-        )
+        _quarantine_no_endpoint(manifest_path, url, cdp_url)  # no dev-mode browser (AC2)
         return None
 
-    try:
-        html = fetch_rendered(cdp_url, url)
-    except Exception as exc:  # nav timeout/error — a *distinct* reason from "no browser" (AC3)
-        _manifest.append(
-            manifest_path,
-            stage="browser-fetch",
-            url=url,
-            cdp_url=cdp_url,
-            reason=f"navigation failed: {exc}",
-        )
-        return None
-
-    files_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(html, encoding="utf-8")
-    _manifest.append(
-        manifest_path,
-        stage="browser-fetch",
-        url=url,
+    # One tab on a fresh single-URL connection; the batch swaps in a warm session.
+    return _dispatch_url(
+        url,
+        lambda one_url: fetch_rendered(cdp_url, one_url),
         cdp_url=cdp_url,
-        result="saved",
-        path=str(target),
+        files_dir=files_dir,
+        manifest_path=manifest_path,
     )
-    return target
 
 
 app = typer.Typer(
