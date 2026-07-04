@@ -709,4 +709,65 @@ location, the case not yet handled, and the trigger that should make us fix it.
   edit-distance-to-gold score would flag the fabricated page. No fix belongs in
   ocr-page; logged here so the scoring stories have the concrete failure mode on
   record.
-- **Status:** OPEN (by design — quality judgment is the scorers' job, US21–22).
+- **Status:** PARTIALLY ADDRESSED by US21. `score-ocr` now emits the
+  reference-free defect panel (`dup_pct`, `hyphen_artifacts`, `citation_groups`,
+  `cjk_present`) joined with US20's `finish_reason`/`latency`/`completion_tokens`.
+  The US21 real E2E on the same page confirmed the limit precisely: DeepSeek's
+  *fluent* hallucination did **not** trip `dup_pct` (it was coherent prose, not a
+  repetition loop), but its manifest-sourced `completion_tokens` was **2301 vs
+  qwen's 167** — a runaway-length signal the scorecard now carries. Catching a
+  fluent-but-wrong page on *content* still needs the gold tier (edit distance /
+  TEDS), US22 — exactly as this story scopes it.
+
+## score_ocr — scores.jsonl is append-only; a re-run duplicates the (model, page) row (US21)
+
+- **Where:** `src/paper_degist/score_ocr.py::score_ocr` / `_append_score`.
+- **Case not handled:** `score-ocr` appends one row per run with no
+  already-scored skip, so re-scoring the same `out/<model>/<page>.md` writes a
+  second identical `scores.jsonl` row (confirmed in the US21 E2E: 2 rows → 3
+  after a re-run). This mirrors `manifest.jsonl`'s append-only contract (and the
+  resolve-oa re-run dup flag) — the results log is a stream, and the aggregator
+  (US23) is expected to take the last row per (model, page). It is *not* the
+  file-idempotent skip the saved-artifact steps use, because there is no
+  per-target file to test for existence.
+- **Trigger to fix:** when duplicate re-run rows become noise for US23, or a
+  reader wants `scores.jsonl` to carry exactly one row per (model, page). Add a
+  read-back-and-skip (or a last-wins compaction in the aggregator), driven by a
+  failing test. Pairs with the resolve-oa/manifest per-paper rollup + dedup
+  deferrals.
+- **Status:** OPEN (deliberate — append-only results log, consistent with the
+  manifest).
+
+## score_ocr — dup_pct boilerplate exclusion is rules + blanks only, not affiliations (US21)
+
+- **Where:** `src/paper_degist/score_ocr.py::_substantive_lines` (`_RULE_RE`).
+- **Case not handled:** the report named two legitimately-repeated boilerplate
+  kinds that inflate a naive duplicate-line count — `---` rules **and**
+  affiliation lines. Only the deterministically-detectable one is excluded:
+  blank lines and markdown horizontal rules. A page that genuinely repeats an
+  affiliation/footer line across columns could still nudge `dup_pct` up, since
+  "this line is an affiliation" is not a deterministic signal the way a `---`
+  rule is.
+- **Trigger to fix:** the first real page whose repeated affiliation/footer lines
+  push `dup_pct` into false-positive territory. Add a boilerplate-line
+  classifier (e.g. drop lines matching an affiliation/footer signature, or only
+  count *runs* of consecutive duplicates so a repeated-once footer is ignored),
+  driven by a captured fixture.
+- **Status:** OPEN (the `---`/blank exclusion — the report's concrete case — is
+  encoded; the affiliation case is deferred).
+
+## score_ocr — manifest join keys on model-slug + page-stem, not the full path (US21)
+
+- **Where:** `src/paper_degist/score_ocr.py::_manifest_fields`.
+- **Case not handled:** the per-call fields are joined by matching the ocr-page
+  record whose `model` slugifies to the output dir and whose `page` **stem**
+  equals the output stem. Two page PNGs with the same stem in different
+  directories (`A/p02.png`, `B/p02.png`) OCR'd by the same model would both
+  match, and the last-wins pick could attribute the wrong call's latency/tokens.
+  Today the bench renders one paper's pages under one dir with unique stems, so
+  this cannot fire; it becomes reachable if a corpus batch reuses stems across
+  papers.
+- **Trigger to fix:** when a batch scores pages with colliding stems across
+  papers. Carry the full source page path into the output (or into a sidecar) so
+  the join is exact, driven by a failing test with two same-stem pages.
+- **Status:** OPEN (low priority — current single-paper layout has unique stems).
