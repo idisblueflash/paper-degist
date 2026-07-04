@@ -669,6 +669,56 @@ uv run score-gold OmniDocBench.json qwen/qwen3-vl-4b --out-dir out
 (gold-referenced) together fill `scores.jsonl`, which US23's `ocr-report` will
 aggregate into the model comparison scorecard.
 
+### Getting the gold data (no AI, no full 1.6 GB pull)
+
+OmniDocBench is **research-only / non-commercial**, so it is not vendored — you
+download it once from HuggingFace (`opendatalab/OmniDocBench`) into a gitignored
+dir (`files/` is ignored). You only need the pages the subset filter selects
+(45 of 1651 — academic, double-column, en/mixed), so fetch the 40 MB annotation
+JSON, compute the in-subset image list with the *same* `matches_subset` filter
+`score-gold` uses, and pull only those images (~40 MB, not ~1.6 GB):
+
+```bash
+mkdir -p files/omnidocbench/images
+HF=https://huggingface.co/datasets/opendatalab/OmniDocBench/resolve/main
+
+# 1. the annotation JSON (a list of 1651 page objects)
+curl -sSL -o files/omnidocbench/OmniDocBench.json "$HF/OmniDocBench.json"
+
+# 2. the in-subset image filenames, via the shipped filter (reproducible, no AI)
+uv run python -c "
+import json
+from paper_degist.score_gold import matches_subset
+pages = json.load(open('files/omnidocbench/OmniDocBench.json'))
+subset = [p for p in pages if matches_subset(p['page_info']['page_attribute'])]
+print('\n'.join(p['page_info']['image_path'] for p in subset))
+" > files/omnidocbench/subset_images.txt
+wc -l < files/omnidocbench/subset_images.txt          # -> 45
+
+# 3. pull only those images (note the trailing newline read, so the last line isn't dropped)
+while IFS= read -r img || [ -n "$img" ]; do
+  curl -sSL -f -o "files/omnidocbench/images/$img" "$HF/images/$img"
+done < files/omnidocbench/subset_images.txt
+```
+
+Then OCR one or a few of the images and gold-score them — no need to process all
+45 for a smoke test:
+
+```bash
+# smoke-test the whole image -> ocr -> gold-score path on ~2 pages
+for img in $(head -2 files/omnidocbench/subset_images.txt); do
+  uv run ocr-page "files/omnidocbench/images/$img" qwen/qwen3-vl-4b --out-dir out
+done
+uv run score-gold files/omnidocbench/OmniDocBench.json qwen/qwen3-vl-4b --out-dir out
+# score-gold quarantines the 43 pages you did NOT OCR ("run ocr-page first") and
+# scores the 2 you did — exit 0, batch still finishes.
+```
+
+> **Caveat (see DEVLOG).** `qwen` renders tables as GFM pipe tables, which the
+> HTML-`<table>`-only TEDS extraction does not yet read — so `teds` reads `0.0`
+> on a qwen table it actually transcribed. The `text_edit_distance` dimension is
+> unaffected; wiring GFM-pipe→HTML is the top score-gold follow-up.
+
 `score-ocr` composes after `ocr-page` (whose `out/<model>/<page>.md` output it
 scores, joining the manifest row `ocr-page` wrote for the same call). It scores
 one output per run; the gold-referenced accuracy tier is US22 (`score-gold`), and

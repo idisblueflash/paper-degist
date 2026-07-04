@@ -834,7 +834,15 @@ location, the case not yet handled, and the trigger that should make us fix it.
   tables. Add a GFM-pipe→HTML converter before the TEDS compare (e.g. via
   `markdown`/`markdownify`), driven by a failing test on a captured pipe-table
   output.
-- **Status:** OPEN.
+- **Status:** OPEN — **confirmed live by the US22 gold smoke test (2026-07-05).**
+  `qwen/qwen3-vl-4b` OCR of the in-subset OmniDocBench table page
+  `page-83587fc3-…` rendered the table as a **GFM pipe table** (13 `| … |` rows,
+  **zero** `<table>` tags), so `_model_tables` found nothing and TEDS scored
+  `0.0` on a table the model *did* transcribe. So the table dimension is a false
+  zero for **any** markdown-emitting model (qwen), not an edge case — TEDS is
+  only meaningful today for models that emit inline HTML tables (DeepSeek-OCR's
+  grounding output). This is now the highest-value score_gold follow-up: wiring
+  GFM-pipe→HTML makes `teds` real for the pipeline's primary model.
 
 ## score_gold — only the first table per page is scored; multi-table pairing deferred (US22)
 
