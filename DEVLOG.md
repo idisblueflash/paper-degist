@@ -508,6 +508,61 @@ location, the case not yet handled, and the trigger that should make us fix it.
   the resolve-oa rollup), driven by a failing test.
 - **Status:** OPEN (deferred with the resolve-oa manifest-rollup work).
 
+## render_pdf — Ghostscript-only renderer; no PyMuPDF/poppler branch (US19)
+
+- **Where:** `src/paper_degist/render_pdf.py::_default_render`.
+- **Case not handled:** the renderer of record is Ghostscript (`png16m`, fixed
+  dpi) because poppler/PyMuPDF were not installable in the report's env. There is
+  no dispatch branch for an alternate engine, so a machine without `gs` on
+  `$PATH` falls through to a `FileNotFoundError` inside the subprocess — caught
+  and quarantined as `"unrenderable PDF: …"` (never crashes), but read as a
+  corrupt-PDF case rather than a "no renderer installed" diagnostic.
+- **Trigger to fix:** the first env with PyMuPDF/poppler available (for a speed
+  or fidelity comparison) or one missing `gs`. Add the alternate as a dispatch
+  branch and/or a distinct "renderer not found" reason, driven by a failing test.
+- **Status:** OPEN (US19 shipped the gs path; alternate renderers deferred — see
+  US19 "Later stages").
+
+## render_pdf — single PDF per invocation; no directory batch (US19)
+
+- **Where:** `src/paper_degist/render_pdf.py` (one `pdf_path` argument).
+- **Case not handled:** render-pdf renders one PDF per run. Rendering a whole
+  folder of PDFs (the bench at corpus scale) is a thin wrapper not yet built; the
+  single-PDF step is designed to compose into it.
+- **Trigger to fix:** when the OCR bench (US 20–23) drives a batch of papers. Add
+  a directory/glob driver that calls `render_pdf` per file, driven by a test.
+- **Status:** OPEN (deliberate — kept single-input like the sibling steps).
+
+## render_pdf — PNG determinism relies on gs png16m being timestamp-free (US19)
+
+- **Where:** `src/paper_degist/render_pdf.py::_default_render` (AC2, byte-stable
+  re-render).
+- **Case not handled:** AC2 requires a byte-identical re-render so downstream
+  scores are reproducible. The US19 real E2E confirmed it (same SHA-256 across two
+  renders of the same 3-page PDF at 150 dpi), but this rests on Ghostscript's
+  `png16m` device emitting no timestamp/`tIME` chunk — an unversioned assumption.
+  A future gs that stamps output would silently break byte-identity (the *pixels*
+  would still match; a content hash that ignores PNG ancillary chunks would be
+  more robust than a raw file hash).
+- **Trigger to fix:** the first gs version whose re-render differs byte-for-byte.
+  Compare decoded pixels (or strip ancillary chunks) instead of hashing raw
+  bytes, driven by a test.
+- **Status:** OPEN (low priority — verified byte-identical on the current gs).
+
+## test suite — resolve-oa missing-email CLI test is environment-dependent (pre-existing)
+
+- **Where:** `src/tests/test_cli.py::test_resolve_oa_cli_missing_email_exits_two`.
+- **Case not handled:** this test expects `exit_code == 2` when `resolve-oa` runs
+  with **no** `--email`. It **fails on a clean `master`** too (verified during the
+  US19 work — not introduced here): when `UNPAYWALL_EMAIL` is set in the
+  environment, the email is supplied via the env fallback, so the required-option
+  path never triggers and the exit code differs. The test does not isolate the
+  env var, so its result depends on the shell it runs in.
+- **Trigger to fix:** when tightening the CLI gate to green. Monkeypatch
+  `UNPAYWALL_EMAIL` out of the environment (`monkeypatch.delenv(...,
+  raising=False)`) inside the test so it is hermetic.
+- **Status:** OPEN (pre-existing; out of scope for US19, logged on discovery).
+
 ## fetch_one — filename↔title match is ASCII-slug only (US13)
 
 - **Where:** `src/paper_degist/fetch_one.py::_slug_tokens` (`[a-z0-9]+`).

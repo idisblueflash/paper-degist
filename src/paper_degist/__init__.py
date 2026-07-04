@@ -16,6 +16,7 @@ _STEPS = [
     ("resolve-oa", "Check a failed URL/DOI for an open-access copy (US9)."),
     ("browser-up", "Launch/reuse a dev-mode Chrome for the browser lane (US18)."),
     ("browser-fetch", "Fetch a bot-walled page through a dev-mode Chrome over CDP (US15)."),
+    ("render-pdf", "Render a PDF into one PNG per page for the OCR bench (US19)."),
 ]
 
 app = typer.Typer(
