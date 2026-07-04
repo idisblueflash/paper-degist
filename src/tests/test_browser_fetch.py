@@ -21,7 +21,16 @@ import json
 import os
 from pathlib import Path
 
-from paper_degist.browser_fetch import _no_proxy_for, _target_path, _teardown, browser_fetch
+from contextlib import contextmanager
+
+from paper_degist.browser_fetch import (
+    _fetch_on_new_tab,
+    _no_proxy_for,
+    _target_path,
+    _teardown,
+    browser_fetch,
+    browser_fetch_batch,
+)
 
 # The three ResearchGate publications the AC names, plus two more, each distinct
 # and self-describing (rule 08) so a scenario's URL *is* its label.
@@ -286,3 +295,287 @@ def test_idempotent_skip_appends_no_manifest_record(tmp_path: Path):
         fetch_rendered=_boom,
     )
     assert not manifest.exists()
+
+
+# ======================================================================== #
+# US16 — reuse one warm browser across a batch of URLs (browser_fetch_batch)
+# ======================================================================== #
+#
+# The batch injects an ``open_session`` collaborator (default: the real
+# ``_default_open_session``) — a context manager that connects once and yields a
+# per-URL ``fetch_tab(url) -> html``. The fake below records how many times the
+# connection is opened and closed (AC1/AC3) and maps each URL to its rendered
+# HTML or an exception to raise (AC4), so the batch loop is exercised without a
+# real Chrome — the same injected shape as US15's ``fetch_rendered``.
+
+# Distinct, self-describing HTML per URL (rule 08) so a saved file *is* its label.
+BODY = {
+    OK_URL: "<html><body><h1>Spaced Repetition and Long-Term Retention</h1></body></html>",
+    NAV_FAIL_URL: TimeoutError("Page.navigate timed out after 30000ms"),
+    NO_BROWSER_URL: "<html><body><h1>Retrieval Practice Produces More Learning</h1></body></html>",
+    RERUN_URL: "<html><body><h1>Interleaving Improves Mathematics Learning</h1></body></html>",
+}
+
+
+def _slug_html(url):
+    """files/<slug>.html for a ResearchGate publication URL, as _target_path derives it."""
+    return _target_path(url, Path("files")).name
+
+
+def _fake_session(responses, *, opens=None):
+    """A fake warm session: one connection, a per-URL tab fetcher.
+
+    ``opens`` (if given) records ``("enter", cdp_url)`` on connect and ``"exit"``
+    on detach, so a test can assert the connection was opened **once** (AC1) and
+    detached (AC3). ``responses`` maps each URL to its rendered HTML, or to an
+    Exception the tab raises (a per-URL nav failure, AC4).
+    """
+
+    @contextmanager
+    def _open(cdp_url):
+        if opens is not None:
+            opens.append(("enter", cdp_url))
+        try:
+
+            def fetch_tab(url):
+                reply = responses[url]
+                if isinstance(reply, Exception):
+                    raise reply
+                return reply
+
+            yield fetch_tab
+        finally:
+            if opens is not None:
+                opens.append(("exit", cdp_url))
+
+    return _open
+
+
+@contextmanager
+def _boom_session(cdp_url, **_kw):
+    """A session that fails to *open* — connect raised after the probe passed."""
+    raise RuntimeError("Browser context management is not supported")
+    yield  # pragma: no cover — unreachable; the open raised first
+
+
+def _run_batch(tmp_path, urls, *, probe_cdp=_reached, responses=None, opens=None, open_session=None):
+    """Arrange a fresh files/ + manifest and run browser_fetch_batch; return the trio."""
+    files = tmp_path / "files"
+    manifest = tmp_path / "manifest.jsonl"
+    if open_session is None:
+        open_session = _fake_session(responses if responses is not None else BODY, opens=opens)
+    result = browser_fetch_batch(
+        urls,
+        files_dir=files,
+        manifest_path=manifest,
+        probe_cdp=probe_cdp,
+        open_session=open_session,
+    )
+    return result, files, manifest
+
+
+def _records(manifest: Path):
+    return [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+
+
+# --- AC5: each saved page's path is returned/printed in first-seen order ---
+
+
+def test_batch_returns_saved_paths_in_first_seen_order(tmp_path: Path):
+    result, files, _ = _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL])
+    assert result == [files / _slug_html(OK_URL), files / _slug_html(NO_BROWSER_URL)]
+
+
+# --- AC1: the CDP connection is opened once for the whole batch, not per URL ---
+
+
+def test_batch_opens_the_connection_once_for_the_whole_list(tmp_path: Path):
+    opens = []
+    _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL, RERUN_URL], opens=opens)
+    assert [op for op, _ in opens].count("enter") == 1
+
+
+# --- AC3: the batch detaches from the session when the list is done ---
+
+
+def test_batch_detaches_from_the_session_when_done(tmp_path: Path):
+    # The session context manager is exited (detach-not-close lives in the real
+    # session; here we assert the batch *closes* the connection it opened).
+    opens = []
+    _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL], opens=opens)
+    assert opens[-1][0] == "exit"
+
+
+# --- AC4: one URL failing (nav timeout / Chrome lost mid-batch) never aborts ---
+
+
+def test_batch_continues_past_a_failed_url(tmp_path: Path):
+    # NAV_FAIL_URL raises mid-batch; the URL *after* it must still be fetched.
+    result, files, _ = _run_batch(tmp_path, [OK_URL, NAV_FAIL_URL, RERUN_URL])
+    assert files / _slug_html(RERUN_URL) in result
+
+
+def test_batch_omits_the_failed_url_from_the_saved_paths(tmp_path: Path):
+    result, files, _ = _run_batch(tmp_path, [OK_URL, NAV_FAIL_URL, RERUN_URL])
+    assert files / _slug_html(NAV_FAIL_URL) not in result
+
+
+def test_batch_quarantines_the_failed_url_with_the_nav_reason(tmp_path: Path):
+    _, _, manifest = _run_batch(tmp_path, [OK_URL, NAV_FAIL_URL, RERUN_URL])
+    (failed,) = [r for r in _records(manifest) if r["url"] == NAV_FAIL_URL]
+    assert "navigation failed" in failed["reason"]
+
+
+# --- AC2 at batch scope: endpoint unreachable at the start → quarantine all ---
+
+
+def test_batch_unreachable_endpoint_quarantines_every_url(tmp_path: Path):
+    _, _, manifest = _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL], probe_cdp=_unreached)
+    assert [r["url"] for r in _records(manifest)] == [OK_URL, NO_BROWSER_URL]
+
+
+def test_batch_unreachable_endpoint_reason_names_browser_up(tmp_path: Path):
+    _, _, manifest = _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL], probe_cdp=_unreached)
+    assert all("browser-up" in r["reason"] for r in _records(manifest))
+
+
+def test_batch_unreachable_endpoint_returns_no_saved_paths(tmp_path: Path):
+    result, _, _ = _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL], probe_cdp=_unreached)
+    assert result == []
+
+
+def test_batch_unreachable_endpoint_never_opens_a_session(tmp_path: Path):
+    # Probe once at the batch boundary — never open a connection we can't use.
+    opens = []
+    _run_batch(tmp_path, [OK_URL, NO_BROWSER_URL], probe_cdp=_unreached, opens=opens)
+    assert "enter" not in [op for op, _ in opens]
+
+
+# --- US15 idempotency, unchanged over a list: an already-saved URL is skipped ---
+
+
+def _preseed(tmp_path, url, content="<html>already here</html>"):
+    """Pre-save ``files/<slug>`` for ``url`` so the batch should skip it."""
+    files = tmp_path / "files"
+    files.mkdir(parents=True, exist_ok=True)
+    (files / _slug_html(url)).write_text(content, encoding="utf-8")
+    return files / _slug_html(url)
+
+
+def test_batch_skips_an_already_saved_url(tmp_path: Path):
+    # RERUN_URL is pre-saved and would *raise* if fetched — so its presence in the
+    # result proves it was skipped, not re-fetched.
+    existing = _preseed(tmp_path, RERUN_URL)
+    responses = {**BODY, RERUN_URL: RuntimeError("must not be fetched")}
+    result, _, _ = _run_batch(tmp_path, [RERUN_URL, OK_URL], responses=responses)
+    assert existing in result
+
+
+def test_batch_skip_appends_no_manifest_record(tmp_path: Path):
+    _preseed(tmp_path, RERUN_URL)
+    responses = {**BODY, RERUN_URL: RuntimeError("must not be fetched")}
+    _, _, manifest = _run_batch(tmp_path, [RERUN_URL, OK_URL], responses=responses)
+    assert [r["url"] for r in _records(manifest)] == [OK_URL]
+
+
+def test_batch_unreachable_endpoint_still_skips_an_already_saved_url(tmp_path: Path):
+    # A pre-saved URL is returned even with no browser — idempotency precedes the
+    # missing-endpoint quarantine, so a re-run of a partly-done batch stays quiet.
+    existing = _preseed(tmp_path, RERUN_URL)
+    result, _, _ = _run_batch(tmp_path, [RERUN_URL], probe_cdp=_unreached)
+    assert result == [existing]
+
+
+def test_batch_saves_each_url_body(tmp_path: Path):
+    _, files, _ = _run_batch(tmp_path, [OK_URL, RERUN_URL])
+    assert (files / _slug_html(RERUN_URL)).read_text(encoding="utf-8") == BODY[RERUN_URL]
+
+
+# --- never crash: the warm session fails to *open* after the probe passed ---
+# (US15 DEVLOG: a non-Chrome CDP server answers the probe, or Chrome dies between
+#  probe and connect. US15's single fetch caught this per-URL; the batch must too.)
+
+
+def test_batch_session_open_failure_does_not_crash(tmp_path: Path):
+    result, _, _ = _run_batch(tmp_path, [OK_URL, NAV_FAIL_URL], open_session=_boom_session)
+    assert result == []
+
+
+def test_batch_session_open_failure_quarantines_every_url(tmp_path: Path):
+    _, _, manifest = _run_batch(tmp_path, [OK_URL, NAV_FAIL_URL], open_session=_boom_session)
+    assert [r["url"] for r in _records(manifest)] == [OK_URL, NAV_FAIL_URL]
+
+
+def test_batch_session_open_failure_reason_is_distinct(tmp_path: Path):
+    # Distinct from both "no browser" (probe failed) and per-URL "navigation failed".
+    _, _, manifest = _run_batch(tmp_path, [OK_URL], open_session=_boom_session)
+    reason = _records(manifest)[0]["reason"]
+    assert "session" in reason and "browser-up" not in reason
+
+
+def test_batch_session_open_failure_still_skips_an_already_saved_url(tmp_path: Path):
+    # A pre-saved URL is returned (idempotent), never re-quarantined by the guard.
+    existing = _preseed(tmp_path, RERUN_URL)
+    result, _, _ = _run_batch(tmp_path, [RERUN_URL], open_session=_boom_session)
+    assert result == [existing]
+
+
+# --- an empty list is a no-op: never probe or open a browser for zero URLs ---
+
+
+def test_batch_empty_list_is_a_no_op(tmp_path: Path):
+    def _explode(cdp_url):
+        raise AssertionError("must not probe (or open a browser) for an empty list")
+
+    result, _, _ = _run_batch(tmp_path, [], probe_cdp=_explode)
+    assert result == []
+
+
+# --- AC2: a finished URL's tab is closed, but the context (browser) stays open ---
+
+
+class _FakePage(_FakeClosable):
+    """A page stand-in that records goto()/close() and returns canned content."""
+
+    def __init__(self, html):
+        super().__init__()
+        self._html = html
+        self.goto_args = None
+
+    def goto(self, url, *, wait_until, timeout):
+        self.goto_args = (url, wait_until, timeout)
+
+    def content(self):
+        return self._html
+
+
+class _FakeContext:
+    """A context stand-in that hands out one page and records its own close()."""
+
+    def __init__(self, page):
+        self._page = page
+        self.closed = False
+
+    def new_page(self):
+        return self._page
+
+    def close(self):
+        self.closed = True
+
+
+def test_fetch_on_new_tab_returns_the_rendered_content():
+    page = _FakePage(BODY[OK_URL])
+    assert _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000) == BODY[OK_URL]
+
+
+def test_fetch_on_new_tab_closes_the_finished_tab():
+    page = _FakePage(BODY[OK_URL])
+    _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000)
+    assert page.closed is True
+
+
+def test_fetch_on_new_tab_leaves_the_context_open_for_the_next_url():
+    page = _FakePage(BODY[OK_URL])
+    ctx = _FakeContext(page)
+    _fetch_on_new_tab(ctx, OK_URL, timeout_ms=30000)
+    assert ctx.closed is False

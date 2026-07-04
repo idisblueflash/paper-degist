@@ -476,3 +476,37 @@ location, the case not yet handled, and the trigger that should make us fix it.
   re-run rows become noise. Build a read-only reporting tool over the manifest
   (never collapsing the append-only write path), driven by a failing test.
 - **Status:** OPEN (US11 shipped the clickable link; the rollup + dedup deferred).
+
+## browser_fetch — batch is sequential tab reuse; real parallelism deferred (US16)
+
+- **Where:** `src/paper_degist/browser_fetch.py::browser_fetch_batch` (the
+  `for url in urls` loop over one `open_session`).
+- **Case not handled:** the batch fetches URLs **one tab at a time** on the one
+  warm connection. Fetching several tabs concurrently (a bounded pool with
+  backpressure) could speed a large list, but risks tripping the very
+  rate-limits and bot-walls the browser is meant to slip past — so US16
+  deliberately keeps sequential tab reuse (named in the story's "Later stages").
+- **Trigger to fix:** the first batch large enough that sequential fetching is
+  the bottleneck *and* the target hosts tolerate concurrency. Add a bounded tab
+  pool (N in flight) with per-host backpressure, driven by a failing test that
+  asserts the cap; keep the single-connection, detach-not-close invariants.
+- **Status:** OPEN (deliberate — sequential by design for US16).
+
+## browser_fetch — a mid-batch Chrome loss quarantines each remaining URL one by one (US16)
+
+- **Where:** `src/paper_degist/browser_fetch.py::browser_fetch_batch` /
+  `_dispatch_url` (the per-URL `try/except` around `fetch_tab`).
+- **Case not handled:** the batch probes the CDP endpoint **once** at the start
+  (AC1). If Chrome dies *mid-batch*, the open session is now dead, so every
+  remaining URL's `fetch_tab` raises and each quarantines individually with a
+  `navigation failed: …` reason. This is correct and resilient (AC4 — one
+  failure never aborts the run, and the loop finishes), but noisy: a lost
+  browser writes one nav-failed record *per remaining URL* rather than a single
+  "browser lost mid-batch" signal, and it keeps trying a connection it could
+  cheaply tell is gone.
+- **Trigger to fix:** the first real batch where Chrome dies partway and the
+  manifest fills with redundant nav-failed rows. Detect a dropped connection
+  (a re-probe, or a disconnect event on the session) and short-circuit the
+  remaining URLs to a distinct `browser lost mid-batch` reason, driven by a
+  failing test that kills the session partway.
+- **Status:** OPEN (resilient today; the fast-fail + distinct reason deferred).

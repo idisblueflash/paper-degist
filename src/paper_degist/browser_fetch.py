@@ -22,16 +22,25 @@ has an item to carry forward, so an unreachable endpoint or a failed nav is a
 manifest **quarantine**, not a raised error — mirroring ``fetch-one``'s save +
 manifest contract so ``convert-html`` can consume the result.
 
+US16 lifts this to a **batch**: ``browser_fetch_batch`` reads a *list* of URLs,
+connects to the CDP endpoint **once**, fetches each on its own tab against that
+one warm session, and detaches at the end **without closing Chrome** — so the
+whole list rides a single authenticated session (and, via Chrome's persistent
+profile, the next run reuses it too). Each URL keeps US15's per-URL save,
+idempotency, and quarantine behaviour; one URL's failure never aborts the run.
+
 Runnable from the command line (rule 03):
 
-    uv run browser-fetch <url>                       # attach to :9222, save HTML
-    uv run browser-fetch <url> --cdp http://localhost:9333
+    uv run browser-fetch urls.txt                    # one URL per line, one warm session
+    cat urls.txt | uv run browser-fetch              # or from stdin
+    uv run browser-fetch urls.txt --cdp http://localhost:9333
 """
 
 import os
+import sys
 from contextlib import AbstractContextManager, contextmanager, suppress
 from pathlib import Path
-from typing import Annotated, Callable, Iterator, Optional
+from typing import Annotated, Callable, Iterable, Iterator, Optional
 from urllib.parse import urlsplit
 
 import typer
@@ -308,15 +317,109 @@ def browser_fetch(
     )
 
 
+def browser_fetch_batch(
+    urls: Iterable[str],
+    *,
+    cdp_url: str = DEFAULT_CDP,
+    files_dir: Path = Path("files"),
+    manifest_path: Path = Path("manifest.jsonl"),
+    probe_cdp: Optional[CDPProbe] = None,
+    open_session: Optional[SessionOpener] = None,
+) -> list[Path]:
+    """Fetch a **list** of URLs over **one** warm CDP connection (US16).
+
+    The classify-then-dispatch from US15 lifts to the batch boundary: probe the
+    CDP endpoint **once**. Unreachable → every URL that is not already saved
+    quarantines with the missing-endpoint reason and the run exits cleanly (AC2
+    at batch scope). Reachable → open a single warm session (``open_session``,
+    connect-once) and dispatch each URL to its own tab on that one connection
+    (AC1), reusing US15's per-URL classify (idempotent skip / save / nav-failed
+    quarantine) via ``_dispatch_url`` — so one URL's failure (a nav timeout, or
+    Chrome lost mid-batch) quarantines just that URL and the loop carries on
+    (AC4). On block exit the session detaches without closing Chrome (AC3).
+
+    Returns the saved (and already-present) paths in **first-seen order** (AC5),
+    ready to pipe into ``convert-html`` — a drop-in over a list. Each collaborator
+    defaults to its module-level ``_default_*`` implementation so a test (or the
+    CLI) can monkeypatch it.
+    """
+    probe_cdp = probe_cdp or _default_probe_cdp
+    open_session = open_session or _default_open_session
+    files_dir = Path(files_dir)
+    manifest_path = Path(manifest_path)
+    urls = list(urls)  # materialize once: iterate twice below, and slice on failure
+
+    saved: list[Path] = []
+    if not urls:
+        return saved  # nothing to fetch — never probe or open a browser for an empty list
+
+    if not probe_cdp(cdp_url):
+        # No dev-mode browser for the whole batch — quarantine each URL that is
+        # not already saved (an existing target is still an idempotent skip), then
+        # exit cleanly. Never open a session, never launch Chrome, never crash.
+        for url in urls:
+            target = _target_path(url, files_dir)
+            if target.exists():
+                saved.append(target)
+            else:
+                _quarantine_no_endpoint(manifest_path, url, cdp_url)
+        return saved
+
+    # One connection for the whole list; a tab per URL rides the warm session.
+    handled = 0
+    try:
+        with open_session(cdp_url) as fetch_tab:
+            for url in urls:
+                path = _dispatch_url(
+                    url,
+                    fetch_tab,
+                    cdp_url=cdp_url,
+                    files_dir=files_dir,
+                    manifest_path=manifest_path,
+                )
+                handled += 1
+                if path is not None:
+                    saved.append(path)
+    except Exception as exc:
+        # The warm session failed to open (or tear down) after the probe passed —
+        # e.g. Chrome died between probe and connect, or a non-Chrome CDP server
+        # answered the probe (US15 DEVLOG). ``_dispatch_url`` already caught every
+        # *per-URL* nav failure, so only URLs the loop never reached remain: a
+        # teardown raise after a full pass leaves ``urls[handled:]`` empty (nothing
+        # double-quarantined). Quarantine that remainder with a **distinct** reason
+        # and never crash the batch (rule 02).
+        for url in urls[handled:]:
+            target = _target_path(url, files_dir)
+            if target.exists():
+                saved.append(target)  # idempotent skip precedes the quarantine
+            else:
+                _manifest.append(
+                    manifest_path,
+                    stage="browser-fetch",
+                    url=url,
+                    cdp_url=cdp_url,
+                    reason=f"browser session failed to open: {exc}",
+                )
+    return saved
+
+
 app = typer.Typer(
     add_completion=False,
-    help="Fetch a bot-walled page through a dev-mode Chrome over CDP (US15).",
+    help="Fetch bot-walled URLs through a dev-mode Chrome over CDP, one warm session (US15/US16).",
 )
 
 
 @app.command()
 def run(
-    url: Annotated[str, typer.Argument(help="the bot-walled URL to fetch through the browser")],
+    urls_file: Annotated[
+        Optional[Path],
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="file of bot-walled URLs, one per line; reads stdin when omitted",
+        ),
+    ] = None,
     cdp: Annotated[
         str,
         typer.Option(help="CDP endpoint of the already-running dev-mode Chrome"),
@@ -330,14 +433,30 @@ def run(
         typer.Option(help="manifest of saved and quarantined records"),
     ] = Path("manifest.jsonl"),
 ) -> None:
-    """Fetch the URL through the browser; print the saved path, or a quarantine note."""
-    target = browser_fetch(url, cdp_url=cdp, files_dir=files_dir, manifest_path=manifest)
-    if target is None:
-        # Quarantine is an expected outcome, not a crash: the item waits for a run
-        # with Chrome up. Note it on stderr and exit cleanly.
-        typer.echo(f"quarantined (see {manifest}): {url}", err=True)
-        return
-    typer.echo(str(target))
+    """Fetch a list of URLs over one warm browser; print each saved path, one per line.
+
+    Reads URLs from ``urls_file`` (or stdin when omitted), one per line — blank
+    lines and surrounding whitespace are ignored, so a single URL is just a
+    one-line list. Prints each saved (or already-present) path to stdout in
+    first-seen order (AC5), a drop-in to pipe into ``convert-html``; anything that
+    could not be fetched is quarantined in ``manifest`` (inspect it for the
+    reasons), never crashing the run.
+    """
+    text = urls_file.read_text(encoding="utf-8") if urls_file else sys.stdin.read()
+    urls = [line.strip() for line in text.splitlines() if line.strip()]
+    paths = browser_fetch_batch(
+        urls, cdp_url=cdp, files_dir=files_dir, manifest_path=manifest
+    )
+    for path in paths:
+        typer.echo(str(path))
+    # Don't leave a batch that saved nothing silent: note the quarantine count on
+    # stderr (stdout stays paths-only for piping into convert-html). The manifest
+    # carries the per-URL reasons.
+    quarantined = len(urls) - len(paths)
+    if quarantined:
+        typer.echo(
+            f"{quarantined} of {len(urls)} URL(s) quarantined (see {manifest})", err=True
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
