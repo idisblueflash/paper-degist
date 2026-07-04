@@ -231,7 +231,15 @@ location, the case not yet handled, and the trigger that should make us fix it.
   (known login/consent markers, or a title/URL mismatch) that quarantines with a
   distinct "looks like a wall, not the paper" reason, driven by a captured
   wall-page fixture.
-- **Status:** OPEN.
+- **Status:** OPEN — **confirmed live by the US15 real E2E (2026-07-04).** Fetching
+  `…/220320021_Spaced_Repetition_and_Long-Term_Retention` through a real dev-mode
+  Chrome **not logged in to ResearchGate** saved a 939 KB HTML that was a
+  Cloudflare-gated "Request PDF" page (markers `cloudflare` / `challenge-platform`,
+  and a `<title>` for an *unrelated* paper) — recorded `saved`, exactly the
+  wall-as-paper case. Two concrete signals a fix could use surfaced here: the
+  Cloudflare challenge markers, and a **title/slug mismatch** between the URL and
+  the rendered `<title>`. Operationally the precondition is that the researcher
+  logs the profile into the host first (US15 defers in-script auth by design).
 
 ## browser_fetch — proxy env broke the CDP connection (fixed in the US15 E2E)
 
@@ -268,7 +276,19 @@ location, the case not yet handled, and the trigger that should make us fix it.
   confirm the rendered HTML is saved and `convert-html` consumes it; `networkidle`
   + the fixed 30s timeout may also surface a page (persistent websocket/polling)
   that never idles and quarantines as a nav timeout — retune the wait then.
-- **Status:** OPEN.
+- **Status:** RESOLVED (2026-07-04). Ran against a **real** dev-mode Chrome on
+  `:9222` (a genuine `browser-up`-style Chrome on `.browser-profile`): `browser-fetch`
+  connected over CDP, navigated, and saved a 939 KB rendered HTML with a `saved`
+  manifest record (exit 0); a second run was idempotent (existing path printed, no
+  duplicate manifest row). The earlier "context management not supported" was a
+  non-Chrome CDP server transiently on `:9222`, not this code — a direct playwright
+  `connect_over_cdp` → `new_page` → `goto` → `content()` against the real Chrome
+  works. Two residuals stay open as their own flags: the saved page was a Cloudflare
+  wall (see wall-as-paper flag above), and `convert-html` consumption + the
+  `networkidle` timeout retune are still worth a pass on a logged-in fetch.
+  NB: a second Chrome cannot launch on a `--user-data-dir` a first Chrome already
+  holds (profile lock) — matches the `browser_up` locked-profile deferred flag;
+  reuse the running endpoint instead.
 
 ## resolve_oa — single OA source (Unpaywall); OpenAlex/CORE not cross-checked
 
