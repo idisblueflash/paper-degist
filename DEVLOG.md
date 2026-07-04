@@ -631,3 +631,54 @@ location, the case not yet handled, and the trigger that should make us fix it.
   into `_slug_tokens` (e.g. NFKD + strip combining marks) driven by a failing
   test with that title.
 - **Status:** OPEN (low priority — ASCII slugs, the common case, are correct).
+
+## ocr_page — non-retryable 4xx now fails fast; malformed-200 retried (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py::_ocr_over_transport` (the three-way
+  classify on the transport result).
+- **Case:** the report's recipe is *retry-on-502* for a flapping runtime (§3). A
+  genuine client error (`HTTP 400` — e.g. a bad body, or the literal
+  `<image>`-token double-image bug) is **not** transient, so retrying it burns
+  the recovery gaps and mislabels a request-shape bug as a server outage.
+- **Status:** RESOLVED (US20 self-review). The transport now classifies three
+  ways: a usable 200 returns; a **4xx** raises immediately with a distinct
+  `request rejected (HTTP …) — not a transient server error` reason (no retry);
+  everything else (502/503, a `000` connection failure, **or a 200 whose body is
+  malformed** — a half-crashed runtime) waits the gap and retries, then
+  quarantines `server unreachable after retries`. Pinned by
+  `test_client_error_is_not_retried`,
+  `test_client_error_reason_is_distinct_from_server_unreachable`, and
+  `test_malformed_200_body_is_quarantined_not_crashed`. Two adjacent review bugs
+  were fixed in the same pass: `usage: null` no longer crashes after a successful
+  OCR (`(data.get("usage") or {})`), and recorded `latency` now wraps only the
+  successful request, not the recovery-gap sleeps (bench-fair timing).
+
+## ocr_page — decode_grounding emits U+FFFD for some non-ASCII glyphs (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py::decode_grounding` (the byte-BPE
+  reversal + `errors="replace"` decode), ported from the report's
+  `decode_grounding.py`.
+- **Case not handled:** reversing the GPT-2 byte↔unicode map and UTF-8-decoding
+  with `errors="replace"` turns a token the model emitted for a symbol like `×`
+  into `�` (U+FFFD). Confirmed in the US20 real E2E on `deepseek-ocr-2` page 1:
+  `"2 (imagery level) � 2 (processing strategy)"` — the `×` multiplication sign
+  was replaced rather than recovered. Harmless for prose (English text is clean),
+  but a maths-dense page loses operators. qwen (fence-strip, no BPE) is unaffected.
+- **Trigger to fix:** the first scored page whose defect metric (US21) is dragged
+  by dropped symbols. Map the known DeepSeek symbol tokens explicitly, or decode
+  with a fallback that preserves the glyph, driven by a failing test on a captured
+  grounding sample containing `×`/`–`/`≈`.
+- **Status:** OPEN (low priority — prose is clean; symbol loss is the edge).
+
+## ocr_page — one (page, model) per invocation; no batch driver (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py` (one `image_path`, one `model`).
+- **Case not handled:** ocr-page does exactly one (page, model) call with its own
+  connect + recovery gap. Walking a page directory across every registered model
+  — honoring the sequential-with-gap rule — is a thin driver left to the
+  report/US23 aggregator, which this step composes into. Named in the US20 spec's
+  "Later stages".
+- **Trigger to fix:** when the OCR bench (US23) drives the full matrix. Add a
+  driver that loops pages × `REGISTRY`, calling `ocr_page` per cell and keeping
+  the calls sequential, driven by a test.
+- **Status:** OPEN (deliberate — kept single-input like the sibling steps).

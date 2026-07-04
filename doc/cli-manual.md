@@ -389,6 +389,90 @@ each registered model.
 
 ---
 
+## `ocr-page` — OCR one page with one registered model (US20)
+
+The second bench step: send **one** page PNG (from `render-pdf`) to **one** named
+vision model over the **stable transport** and save the Markdown it returns. The
+transport is the investigation report's costliest lesson, encoded once (rule 02)
+so it is never rediscovered: the JSON body is built in Python and POSTed with
+**`curl --data @body.json`** (a `urllib` image POST returns an empty-body 502 and
+crashes the MLX worker), **sequentially with a recovery gap and retry-on-502**
+(rapid-fire requests flap the runtime) — never `urllib`, never concurrent.
+
+The model list is a **registry**: each entry is `(model id → prompt,
+post-processor)`, so adding a model is **one entry, not a code branch**. Shipped
+entries: `qwen/qwen3-vl-4b` (a plain instruction; strips a whole-output
+```` ```markdown ```` fence) and the DeepSeek-OCR grounding models
+`deepseek-ocr-2`, `deepseek-ocr@8bit`, `unlimited-ocr-mlx`, `deepseek-ocr` (the
+`<|grounding|>Convert the document to markdown.` prompt with the literal
+`<image>` token **omitted**, then `decode_grounding` post-processing).
+
+```
+uv run ocr-page <page.png> <model-id> [--out-dir out] [--server URL] [--retries 4] [--gap 8] [--manifest manifest.jsonl]
+```
+
+- **Arguments**: `page` — the page PNG to OCR (validated up front — a missing
+  file exits 2); `model` — a registered model id (e.g. `qwen/qwen3-vl-4b`).
+- **Options**: `--out-dir` (root the Markdown lands under; default `out/`),
+  `--server` (LM Studio chat-completions endpoint; default
+  `http://localhost:1234/v1/chat/completions`), `--retries` (retry-on-502 budget;
+  default `4`), `--gap` (recovery gap between attempts in seconds; default `8`),
+  `--manifest` (default `manifest.jsonl`).
+- **Output**: the saved Markdown path on stdout —
+  `out/<model>/<page>.md` (the model id's `/` becomes `_`, e.g.
+  `out/qwen_qwen3-vl-4b/p02.md`) — plus an `ocr` record in the manifest
+  (`stage: "ocr-page"`, `model`, `page`, `latency`, `finish_reason`,
+  `completion_tokens`).
+- **Quarantine, not a crash** (rule 02). Two cases land in the manifest and exit
+  cleanly (exit 0), each with a **distinct** reason so "model not configured" is
+  never confused with "server down":
+  - `unknown model (not in registry): …` — the model id is not registered; the
+    network is **not touched** at all.
+  - `server unreachable after retries (…)` — the server 502'd (or was
+    unreachable) through the whole retry budget; no Markdown is saved.
+- **Idempotent.** A page whose `out/<model>/<page>.md` already exists is skipped —
+  the model is **not** re-hit (model calls are the expensive, flaky resource) and
+  **no** manifest record is appended.
+- **Requires** `curl` on `$PATH` and LM Studio already up with the model loadable
+  (bringing the server up / warming a model is the operator's job, as `browser-up`
+  is for Chrome — out of scope for this step).
+
+### Examples
+
+```bash
+# Happy path — OCR page 2 with qwen; the saved path prints, an ocr record lands
+uv run ocr-page pages/WordCraft/p0002.png qwen/qwen3-vl-4b
+#   -> out/qwen_qwen3-vl-4b/p0002.md
+#   -> manifest: {"stage":"ocr-page","model":"qwen/qwen3-vl-4b","page":"pages/WordCraft/p0002.png",
+#                 "latency":23.4,"finish_reason":"stop","completion_tokens":614}
+
+# A different model on the same page is a second registry entry, same command
+uv run ocr-page pages/WordCraft/p0001.png deepseek-ocr-2
+#   -> out/deepseek-ocr-2/p0001.md   (decode_grounding strips the layout tokens)
+
+# Unknown model quarantines WITHOUT touching the network (distinct from a 502)
+uv run ocr-page pages/WordCraft/p0002.png some-unregistered-ocr
+#   -> stderr: quarantined (see manifest.jsonl): pages/WordCraft/p0002.png [some-unregistered-ocr]
+#   -> manifest: {"stage":"ocr-page","page":"…","model":"some-unregistered-ocr",
+#                 "reason":"unknown model (not in registry): some-unregistered-ocr"}
+
+# Server down — retried then quarantined cleanly (tighten the budget to fail fast)
+uv run ocr-page pages/WordCraft/p0003.png deepseek-ocr-2 --server http://localhost:9/v1/chat/completions --retries 2 --gap 1
+#   -> stderr: quarantined (see manifest.jsonl): pages/WordCraft/p0003.png [deepseek-ocr-2]
+#   -> manifest: {"stage":"ocr-page", …, "reason":"server unreachable after retries (2 attempts, last HTTP 000)"}
+```
+
+Composing with `render-pdf`: render a paper to pages, then OCR one page per model.
+A batch driver over pages × models (the full bench matrix) is US23's job, composed
+from this single-cell step (kept sequential-with-gap).
+
+```bash
+uv run render-pdf files/WordCraft_Scaffolding_the_Keyword_Method.pdf
+uv run ocr-page pages/WordCraft_Scaffolding_the_Keyword_Method/p0001.png qwen/qwen3-vl-4b
+```
+
+---
+
 ## `recover-blocked` — route the manifest's bot-walled URLs into the browser lane (US17)
 
 `browser-fetch` (US15/16) is the recovery *mechanism*; `recover-blocked` is the
