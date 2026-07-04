@@ -525,6 +525,75 @@ is the US23 report driver, composed from this step.
 
 ---
 
+## `score-ocr` — score one OCR output on reference-free defect metrics (US21)
+
+The third step of the OCR-model bench: score **one** saved OCR output
+(`out/<model>/<page>.md` from `ocr-page`) on cheap deterministic **defect**
+metrics that need **no gold reference**. It is the everyday, offline scoring
+tier — point it at any model's output for any page and get one `scores.jsonl`
+row, no hand-corrected reference required (that is US22's gold tier). Each metric
+is one deterministic function = one scored dimension (rule 02).
+
+```
+uv run score-ocr <output.md> [--scores scores.jsonl] [--manifest manifest.jsonl]
+```
+
+- **Argument**: the saved `output` Markdown (validated up front — a missing file
+  exits 2). The `(model, page)` key is read straight off the path:
+  `out/<model>/<page>.md` → `model` = the slug dir, `page` = the stem.
+- **Options**: `--scores` (the append-only results log; default `scores.jsonl`),
+  `--manifest` (the US20 manifest to join per-call fields from, and to quarantine
+  to; default `manifest.jsonl`).
+- **Output**: a `<model>/<page> -> <scores>` note on stdout, plus one appended
+  `scores.jsonl` row carrying every reference-free dimension **joined** with the
+  per-call fields `ocr-page` recorded (`finish_reason`, `latency`,
+  `completion_tokens`):
+  - `dup_pct` — percentage of substantive lines that repeat an earlier one (the
+    metric that flagged `unlimited-ocr`'s 95 % loop); markdown rules (`---`) and
+    blank lines are excluded so legitimate boilerplate does not inflate it.
+  - `hyphen_artifacts` — count of `word- word` dehyphenation breaks (the
+    `"low- quality"` leak that separated `deepseek-ocr@8bit` from qwen).
+  - `citation_groups` — count of inline numeric citation lists (`[51,53,75,82]`),
+    so a model that *drops* citations scores lower than one that keeps them.
+  - `cjk_present` — whether any CJK/IPA codepoint survived (the reads-the-language
+    signal).
+- **Quarantine, not a crash** (rule 02). An output it cannot read (e.g. a
+  non-UTF-8 file) lands in the manifest (`stage: "score-ocr"`, a `reason`) and the
+  step exits **cleanly (exit 0)** — the batch still finishes.
+- **Append-only log.** `scores.jsonl` is a stream like `manifest.jsonl`: a re-run
+  **appends** another row for the same (model, page) rather than skipping (the
+  aggregator, US23, takes the last row per key). This is *not* the file-idempotent
+  skip the saved-artifact steps use — there is no per-target file to test for.
+
+### Examples
+
+```bash
+# Happy path — score qwen's page-1 output; appends one scores.jsonl row
+uv run score-ocr out/qwen_qwen3-vl-4b/p0001.md
+#   -> stdout: qwen_qwen3-vl-4b/p0001 -> scores.jsonl
+#   -> scores.jsonl: {"model":"qwen_qwen3-vl-4b","page":"p0001","dup_pct":0.0,
+#        "hyphen_artifacts":0,"citation_groups":0,"cjk_present":false,
+#        "finish_reason":"stop","latency":9.378,"completion_tokens":167}
+
+# The same page's DeepSeek output is just a different output path. A fluent
+# hallucination shows up here as a runaway completion_tokens (2301 vs 167),
+# joined from the manifest — the reference-free signal the bench ranks on.
+uv run score-ocr out/deepseek-ocr/p0001.md
+
+# An unreadable output quarantines cleanly (a page PNG mistakenly named .md)
+uv run score-ocr out/deepseek-ocr_4bit/p0009.md
+#   -> stderr: quarantined (see manifest.jsonl): out/deepseek-ocr_4bit/p0009.md
+#   -> manifest: {"stage":"score-ocr","page":"p0009","model":"deepseek-ocr_4bit",
+#                 "reason":"unreadable output (UnicodeDecodeError): …"}
+```
+
+`score-ocr` composes after `ocr-page` (whose `out/<model>/<page>.md` output it
+scores, joining the manifest row `ocr-page` wrote for the same call). It scores
+one output per run; the gold-referenced accuracy tier is US22 (`score-gold`), and
+aggregating a cross-model scorecard from these rows is US23 (`ocr-report`).
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash
