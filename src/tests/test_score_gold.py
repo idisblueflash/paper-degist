@@ -307,3 +307,30 @@ def test_text_edit_distance_is_not_applicable_for_a_tables_only_page(): # Codex 
     # A page with no gold text (only a table) has no text to score: the text
     # metric is not-applicable (null), never a false 1.0 that poisons averages.
     assert _score(_TABLE_PAGE, _GOLD_TABLE)["text_edit_distance"] is None
+
+
+# --- GFM pipe-table -> HTML for TEDS (score_gold gold smoke-test finding) ---
+
+
+_GFM_GOLD = "<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>"
+_GFM_PAGE = {"layout_dets": [{"category_type": "table", "html": _GFM_GOLD, "order": 0}]}
+
+
+def test_teds_scores_a_gfm_pipe_table_the_model_emitted():
+    # qwen renders tables as GFM pipe tables, not HTML <table>; those must be
+    # converted so TEDS scores the transcribed table instead of a false 0.0.
+    output = "Some prose.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nMore prose."
+    assert _score(_GFM_PAGE, output)["teds"] == 1.0
+
+
+def test_text_edit_distance_ignores_a_gfm_pipe_table():
+    # A GFM table, like an HTML one, is scored by TEDS — it must be stripped from
+    # the text before the edit distance so it does not inflate a faithful page.
+    page = {
+        "layout_dets": [
+            {"category_type": "text_block", "text": "Results follow.", "order": 0},
+            {"category_type": "table", "html": _GFM_GOLD, "order": 1},
+        ]
+    }
+    output = "Results follow.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    assert _score(page, output)["text_edit_distance"] < 0.1

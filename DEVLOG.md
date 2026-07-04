@@ -824,25 +824,28 @@ location, the case not yet handled, and the trigger that should make us fix it.
 
 ## score_gold — model-table extraction is HTML-`<table>`-only; GFM pipe tables not converted (US22)
 
-- **Where:** `src/paper_degist/score_gold.py::_model_tables` (`_MODEL_TABLE_RE`).
-- **Case not handled:** TEDS needs the model's table as HTML. Extraction finds
-  inline `<table>…</table>` blocks (what doc-parse OCR models emit), but a model
-  that renders a table as a **GFM pipe table** (`| a | b |`) produces no `<table>`
-  match, so `_score_table` scores it `0.0` as if the table were omitted — a false
-  low for a model that *did* transcribe the table, just in Markdown syntax.
-- **Trigger to fix:** the first registered model whose real output uses pipe
-  tables. Add a GFM-pipe→HTML converter before the TEDS compare (e.g. via
-  `markdown`/`markdownify`), driven by a failing test on a captured pipe-table
-  output.
-- **Status:** OPEN — **confirmed live by the US22 gold smoke test (2026-07-05).**
-  `qwen/qwen3-vl-4b` OCR of the in-subset OmniDocBench table page
-  `page-83587fc3-…` rendered the table as a **GFM pipe table** (13 `| … |` rows,
-  **zero** `<table>` tags), so `_model_tables` found nothing and TEDS scored
-  `0.0` on a table the model *did* transcribe. So the table dimension is a false
-  zero for **any** markdown-emitting model (qwen), not an edge case — TEDS is
-  only meaningful today for models that emit inline HTML tables (DeepSeek-OCR's
-  grounding output). This is now the highest-value score_gold follow-up: wiring
-  GFM-pipe→HTML makes `teds` real for the pipeline's primary model.
+- **Where:** `src/paper_degist/score_gold.py::_model_tables_and_text`
+  (`_extract_gfm_tables` / `_rows_to_html`).
+- **Case not handled:** TEDS needs the model's table as HTML. Extraction found
+  only inline `<table>…</table>` blocks (what doc-parse OCR models emit), but a
+  model that renders a table as a **GFM pipe table** (`| a | b |`) produced no
+  `<table>` match, so `_score_table` scored it `0.0` as if the table were omitted
+  — a false low for a model that *did* transcribe the table, just in Markdown
+  syntax.
+- **Confirmed live** by the US22 gold smoke test (2026-07-05): `qwen/qwen3-vl-4b`
+  OCR of the in-subset OmniDocBench table page `page-83587fc3-…` rendered the
+  table as a GFM pipe table (13 `| … |` rows, zero `<table>` tags) and scored
+  `teds: 0.0` on a table it had transcribed.
+- **Status:** RESOLVED (US22 follow-up, 2026-07-05). `_model_tables_and_text`
+  now extracts **both** inline HTML `<table>` blocks and GFM pipe tables: a
+  header row followed by a `|---|` delimiter is parsed and rendered to
+  `<table><tr><td>…</td></tr></table>` (all `<td>`, no `<th>`/`thead`, matching
+  OmniDocBench's gold shape). The pipe rows are also stripped from the text so
+  they no longer inflate `text_edit_distance`. Re-running the smoke test moved
+  the same qwen page from `teds 0.0 → 0.7737` and `text_edit_distance 0.186 →
+  0.047`. Two residual limits stay open (below): a pipe table cannot express
+  `colspan`/`rowspan` (every converted cell spans 1), and an **unescaped** `|`
+  inside a LaTeX cell (`$|x|$`) still mis-splits — GFM requires `\|`.
 
 ## score_gold — only the first table per page is scored; multi-table pairing deferred (US22)
 

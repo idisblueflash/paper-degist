@@ -714,10 +714,12 @@ uv run score-gold files/omnidocbench/OmniDocBench.json qwen/qwen3-vl-4b --out-di
 # scores the 2 you did — exit 0, batch still finishes.
 ```
 
-> **Caveat (see DEVLOG).** `qwen` renders tables as GFM pipe tables, which the
-> HTML-`<table>`-only TEDS extraction does not yet read — so `teds` reads `0.0`
-> on a qwen table it actually transcribed. The `text_edit_distance` dimension is
-> unaffected; wiring GFM-pipe→HTML is the top score-gold follow-up.
+`score-gold` reads **both** table forms a model emits — inline HTML `<table>`
+blocks (DeepSeek-OCR) and GFM pipe tables (`| a | b |`, what qwen emits, which
+are converted to HTML before the TEDS compare) — so `teds` reflects a
+transcribed table regardless of syntax. (Residual limits in DEVLOG: a pipe table
+cannot carry `colspan`/`rowspan`, and an unescaped `|` inside a LaTeX cell
+mis-splits.)
 
 `score-ocr` composes after `ocr-page` (whose `out/<model>/<page>.md` output it
 scores, joining the manifest row `ocr-page` wrote for the same call). It scores

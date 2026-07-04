@@ -247,15 +247,87 @@ def _gold_tables(page: dict) -> list[str]:
 
 _MODEL_TABLE_RE = re.compile(r"<table\b.*?</table>", re.DOTALL | re.IGNORECASE)
 
+# A GFM pipe-table delimiter row (``|---|:--:|--:|``): the line that, right under
+# a header row, marks a Markdown table. Each cell is dashes with optional
+# alignment colons. This is the strong signal a ``| … |`` line is really a table
+# and not prose that happens to contain a pipe.
+_GFM_DELIMITER_RE = re.compile(r"^\s*:?-{1,}:?\s*$")
+_PIPE_SPLIT_RE = re.compile(r"(?<!\\)\|")  # split on unescaped ``|`` (keeps ``\|`` in a cell)
 
-def _model_tables(model_output: str) -> list[str]:
-    """The HTML tables the model emitted in its Markdown output, in order.
 
-    Document-parse OCR models render a table as an inline HTML ``<table>`` block;
-    those are extracted here to compare against the gold via TEDS. (GFM
-    pipe-table output is not yet converted — see DEVLOG.)
+def _pipe_cells(row: str) -> list[str]:
+    """The cells of one GFM pipe row (outer pipes dropped, cells stripped)."""
+    row = row.strip()
+    if row.startswith("|"):
+        row = row[1:]
+    if row.endswith("|"):
+        row = row[:-1]
+    return [cell.strip() for cell in _PIPE_SPLIT_RE.split(row)]
+
+
+def _is_delimiter_row(row: str) -> bool:
+    """Whether a row is a GFM header/body separator (``|---|---|``)."""
+    cells = _pipe_cells(row)
+    return bool(cells) and all(_GFM_DELIMITER_RE.match(cell) for cell in cells)
+
+
+def _rows_to_html(rows: list[str]) -> str:
+    """Render GFM pipe rows as ``<table><tr><td>…</td></tr>…</table>``.
+
+    All cells are emitted as ``<td>`` (no ``<th>``/``thead``) to match
+    OmniDocBench's gold table shape, so a faithfully transcribed pipe table lines
+    up structurally with the gold and scores a high TEDS. A pipe table cannot
+    express ``colspan``/``rowspan``, so every cell spans 1.
     """
-    return _MODEL_TABLE_RE.findall(model_output)
+    body = ""
+    for row in rows:
+        cells = "".join(f"<td>{cell}</td>" for cell in _pipe_cells(row))
+        body += f"<tr>{cells}</tr>"
+    return f"<table>{body}</table>"
+
+
+def _extract_gfm_tables(text: str) -> tuple[list[str], str]:
+    """Pull every GFM pipe table out of ``text``; return (tables-as-HTML, rest).
+
+    A pipe table is a header row, a delimiter row (``|---|``), then zero or more
+    body rows. Each is converted to HTML for TEDS and removed from ``text`` so it
+    does not also count against the gold *text* edit distance. Lines that merely
+    contain a ``|`` are left alone — the delimiter row under the header is the
+    signal that distinguishes a real table from prose.
+    """
+    lines = text.split("\n")
+    tables: list[str] = []
+    kept: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        is_header = "|" in lines[i] and i + 1 < n and _is_delimiter_row(lines[i + 1])
+        if not is_header:
+            kept.append(lines[i])
+            i += 1
+            continue
+        rows = [lines[i]]  # header (the delimiter row is dropped)
+        i += 2
+        while i < n and "|" in lines[i] and lines[i].strip():
+            rows.append(lines[i])
+            i += 1
+        tables.append(_rows_to_html(rows))
+    return tables, "\n".join(kept)
+
+
+def _model_tables_and_text(model_output: str) -> tuple[list[str], str]:
+    """The model's tables (HTML), plus its text with those tables removed.
+
+    Handles both forms a registered model emits: inline HTML ``<table>`` blocks
+    (DeepSeek-OCR grounding output) and GFM pipe tables (qwen). Both are pulled
+    out for TEDS and stripped from the text so a table is scored *once*, by TEDS,
+    and never inflates the text edit distance (the US22 gold smoke-test finding).
+    """
+    html_tables = _MODEL_TABLE_RE.findall(model_output)
+    text = _MODEL_TABLE_RE.sub("", model_output)
+    gfm_tables, text = _extract_gfm_tables(text)
+    # Pulling a table out leaves blank lines where it was; the surrounding
+    # whitespace is not part of the gold text, so trim it before the compare.
+    return html_tables + gfm_tables, text.strip()
 
 
 def score_gold_page(gold_page: dict, model_output: str, *, model: str, page: str) -> dict:
@@ -272,10 +344,10 @@ def score_gold_page(gold_page: dict, model_output: str, *, model: str, page: str
     gold_tables = _gold_tables(gold_page)
     gold_text = _gold_text(gold_page)
     # The gold *text* excludes tables (a table block carries no ``text`` field),
-    # so the model's table HTML must be stripped before the text compare — the
-    # table is scored separately by TEDS, and leaving it in double-counts it and
-    # balloons a faithful page's edit distance (caught by the US22 real E2E).
-    model_text = _MODEL_TABLE_RE.sub("", model_output)
+    # so the model's tables (HTML or GFM pipe) are pulled out before the text
+    # compare — each table is scored once, by TEDS, and leaving it in the text
+    # double-counts it and balloons a faithful page's edit distance (US22 E2E).
+    model_tables, model_text = _model_tables_and_text(model_output)
     return {
         "model": model,
         "page": page,
@@ -286,11 +358,11 @@ def score_gold_page(gold_page: dict, model_output: str, *, model: str, page: str
         "text_edit_distance": (
             None if not gold_text else round(normalized_edit_distance(model_text, gold_text), 4)
         ),
-        "teds": _score_table(model_output, gold_tables),
+        "teds": _score_table(model_tables, gold_tables),
     }
 
 
-def _score_table(model_output: str, gold_tables: list[str]) -> float | None:
+def _score_table(model_tables: list[str], gold_tables: list[str]) -> float | None:
     """The page's TEDS, or ``None`` when the gold page carries no table (AC4).
 
     A gold table with no matching model table scores a real ``0.0`` — the model
@@ -300,7 +372,6 @@ def _score_table(model_output: str, gold_tables: list[str]) -> float | None:
     """
     if not gold_tables:
         return None
-    model_tables = _model_tables(model_output)
     if not model_tables:
         return 0.0
     return teds(model_tables[0], gold_tables[0])
