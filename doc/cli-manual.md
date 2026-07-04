@@ -603,6 +603,140 @@ uv run score-ocr out/deepseek-ocr_4bit/p0009.md
 #                 "reason":"unreadable output (UnicodeDecodeError): …"}
 ```
 
+## `score-gold` — score a model against an OmniDocBench gold subset (US22)
+
+The **gold-referenced accuracy** tier of the OCR bench, complementary to
+`score-ocr`'s reference-free defect tier. Where `score-ocr` ranks models by
+*fewest defects* with no reference, `score-gold` scores each model's saved OCR
+output against **OmniDocBench**'s gold annotations with its official per-element
+metrics — so "which model is most *faithful*" becomes a reproducible number, no
+hand-labeling. Every metric is a deterministic comparison to the gold; **no LLM
+judge** is ever called.
+
+The gold set is **filtered to the pipeline's target distribution** — only
+`data_source=academic_literature`, `layout=double_column`,
+`language∈{english,en_ch_mixed}` pages (the two-column, embedded-CJK papers this
+pipeline converts); newspapers, receipts, handwriting, and single-column pages
+are dropped.
+
+> **The dataset is not vendored.** OmniDocBench is research-only / non-commercial
+> (license verified at build time), so you supply the annotation JSON and page
+> images from your own local download (`opendatalab/OmniDocBench` on HuggingFace).
+> OCR the gold page images with `ocr-page` first (its outputs are this step's
+> input), then point `score-gold` at the annotation file.
+
+```
+uv run score-gold <annotations.json> <model> [--out-dir out] [--scores scores.jsonl] [--manifest manifest.jsonl]
+```
+
+- **Arguments**: `annotations` (the OmniDocBench annotation JSON — validated up
+  front; a missing file exits 2, and a file that is not a JSON list of pages
+  exits 2 with a clear message, never a traceback) and `model` (a registered
+  model id, e.g. `qwen/qwen3-vl-4b`).
+- **Options**: `--out-dir` (where `ocr-page` saved the outputs, `out/<model>/`;
+  default `out`), `--scores` (the append-only results log; default
+  `scores.jsonl`), `--manifest` (where un-OCR'd / unreadable pages quarantine;
+  default `manifest.jsonl`).
+- **What it does** (classify-then-dispatch, rule 02): loads the annotations,
+  keeps only the in-subset pages, and for each scores the model's saved output at
+  `out/<model-slug>/<image-stem>.md` — reusing US20's idempotent cache, so a
+  re-run re-scores from stored outputs without re-hitting the flaky server. One
+  metric is dispatched per annotation type the page carries:
+  - `text_edit_distance` — normalized edit distance of the model's text to the
+    gold text (**0.0** = perfect, higher = worse; the model's `<table>` HTML is
+    stripped first so a table is not double-counted here).
+  - `teds` — Tree-Edit-Distance-based Similarity of the model's table to the gold
+    table (**1.0** = perfect structure + contents, → 0 as it degrades). A gold
+    table the model omitted scores a real `0.0`.
+  - Each row is tagged `"gold": true`, distinguishing it from `score-ocr`'s
+    reference-free rows in the shared `scores.jsonl`.
+- **Not-applicable, never a false zero** (AC4). A page missing a type records
+  that metric as `null` (e.g. `teds: null` on a text-only page), *not* `0.0` — a
+  false zero would poison the model's average.
+- **Quarantine, not a crash** (rule 02). A selected page whose output has not been
+  OCR'd yet, or an unreadable output, lands in the manifest
+  (`stage: "score-gold"`, a `reason`) and the step exits **cleanly** — the batch
+  still finishes.
+- **Append-only log**, exactly like `score-ocr`: a re-run appends another row per
+  (model, page); the aggregator (US23) takes the last row per key.
+
+### Examples
+
+```bash
+# Happy path — score qwen against every in-subset gold page (outputs already
+# produced by ocr-page under out/qwen_qwen3-vl-4b/)
+uv run score-gold OmniDocBench.json qwen/qwen3-vl-4b --out-dir out
+#   -> stdout: scored 37 gold page(s) for qwen/qwen3-vl-4b -> scores.jsonl
+#   -> scores.jsonl: {"model":"qwen_qwen3-vl-4b","page":"acad_0007","gold":true,
+#        "text_edit_distance":0.0652,"teds":1.0}   # a text+table page
+#        {"model":"qwen_qwen3-vl-4b","page":"acad_0012","gold":true,
+#        "text_edit_distance":0.041,"teds":null}   # text-only: table n/a
+
+# Compare a second model on the same gold — just a different model id / out dir
+uv run score-gold OmniDocBench.json deepseek-ocr --out-dir out
+
+# Quarantine — a selected gold page not yet OCR'd exits cleanly, no scores row
+uv run score-gold OmniDocBench.json qwen/qwen3-vl-4b --out-dir out
+#   -> manifest: {"stage":"score-gold","page":"acad_0007","model":"qwen_qwen3-vl-4b",
+#                 "reason":"no model output at out/qwen_qwen3-vl-4b/acad_0007.md (run ocr-page first)"}
+```
+
+`render-pdf` → `ocr-page` → `score-ocr` (reference-free) and `score-gold`
+(gold-referenced) together fill `scores.jsonl`, which US23's `ocr-report` will
+aggregate into the model comparison scorecard.
+
+### Getting the gold data (no AI, no full 1.6 GB pull)
+
+OmniDocBench is **research-only / non-commercial**, so it is not vendored — you
+download it once from HuggingFace (`opendatalab/OmniDocBench`) into a gitignored
+dir (`files/` is ignored). You only need the pages the subset filter selects
+(45 of 1651 — academic, double-column, en/mixed), so fetch the 40 MB annotation
+JSON, compute the in-subset image list with the *same* `matches_subset` filter
+`score-gold` uses, and pull only those images (~40 MB, not ~1.6 GB):
+
+```bash
+mkdir -p files/omnidocbench/images
+HF=https://huggingface.co/datasets/opendatalab/OmniDocBench/resolve/main
+
+# 1. the annotation JSON (a list of 1651 page objects)
+curl -sSL -o files/omnidocbench/OmniDocBench.json "$HF/OmniDocBench.json"
+
+# 2. the in-subset image filenames, via the shipped filter (reproducible, no AI)
+uv run python -c "
+import json
+from paper_degist.score_gold import matches_subset
+pages = json.load(open('files/omnidocbench/OmniDocBench.json'))
+subset = [p for p in pages if matches_subset(p['page_info']['page_attribute'])]
+print('\n'.join(p['page_info']['image_path'] for p in subset))
+" > files/omnidocbench/subset_images.txt
+wc -l < files/omnidocbench/subset_images.txt          # -> 45
+
+# 3. pull only those images (note the trailing newline read, so the last line isn't dropped)
+while IFS= read -r img || [ -n "$img" ]; do
+  curl -sSL -f -o "files/omnidocbench/images/$img" "$HF/images/$img"
+done < files/omnidocbench/subset_images.txt
+```
+
+Then OCR one or a few of the images and gold-score them — no need to process all
+45 for a smoke test:
+
+```bash
+# smoke-test the whole image -> ocr -> gold-score path on ~2 pages
+for img in $(head -2 files/omnidocbench/subset_images.txt); do
+  uv run ocr-page "files/omnidocbench/images/$img" qwen/qwen3-vl-4b --out-dir out
+done
+uv run score-gold files/omnidocbench/OmniDocBench.json qwen/qwen3-vl-4b --out-dir out
+# score-gold quarantines the 43 pages you did NOT OCR ("run ocr-page first") and
+# scores the 2 you did — exit 0, batch still finishes.
+```
+
+`score-gold` reads **both** table forms a model emits — inline HTML `<table>`
+blocks (DeepSeek-OCR) and GFM pipe tables (`| a | b |`, what qwen emits, which
+are converted to HTML before the TEDS compare) — so `teds` reflects a
+transcribed table regardless of syntax. (Residual limits in DEVLOG: a pipe table
+cannot carry `colspan`/`rowspan`, and an unescaped `|` inside a LaTeX cell
+mis-splits.)
+
 `score-ocr` composes after `ocr-page` (whose `out/<model>/<page>.md` output it
 scores, joining the manifest row `ocr-page` wrote for the same call). It scores
 one output per run; the gold-referenced accuracy tier is US22 (`score-gold`), and
