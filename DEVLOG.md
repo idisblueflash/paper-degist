@@ -904,3 +904,38 @@ location, the case not yet handled, and the trigger that should make us fix it.
   read-back-and-skip or a last-wins compaction in the aggregator. Pairs with the
   US21 score_ocr append-only dup flag.
 - **Status:** OPEN (deliberate — append-only results log, consistent with US21).
+
+## score_gold — model-table extraction is regex-based; nested tables mis-split (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::_model_tables` / `_MODEL_TABLE_RE`
+  and the `_MODEL_TABLE_RE.sub("", …)` text strip in `score_gold_page`.
+- **Case not handled (Codex US22 review):** `<table\b.*?</table>` is non-greedy,
+  so a **nested** `<table>` inside a cell matches only through the *first*
+  `</table>` — the outer table's tail is left as orphan `</table>` residue. That
+  residue both (a) inflates `text_edit_distance` (it stays in the stripped text)
+  and (b) feeds a structurally broken fragment to TEDS. Non-greedy regex cannot
+  balance nested tags. Academic double-column pages rarely nest tables, so this
+  is an edge case today.
+- **Trigger to fix:** the first in-subset gold page (or model output) with a
+  nested table. Replace the regex with an lxml parse that extracts top-level
+  `<table>` subtrees (and removes them for the text compare), driven by a failing
+  nested-table fixture. Pairs with the GFM-pipe-table conversion deferral.
+- **Status:** OPEN (regex handles the flat-table common case; nested deferred).
+
+## score_gold — output path keys on image stem; same stem across docs collides (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_batch`
+  (`Path(image_path).stem` → `out/<model>/<stem>.md`).
+- **Case not handled (Codex US22 review):** the model output is located by the
+  gold page's image **stem**. Two gold pages from different documents that share
+  a base filename (`doc_A/page001.jpg`, `doc_B/page001.jpg`) map to the *same*
+  `out/<model>/page001.md`, so both score against one output and append two rows
+  keyed by the same stem — a silent collision, not a quarantine. This is the same
+  stem-uniqueness assumption already flagged for `score_ocr`'s manifest join
+  (US21) and `ocr_page`'s output dir (US20); OmniDocBench's own image names are
+  globally unique, so it cannot fire on the real dataset today.
+- **Trigger to fix:** the first batch whose gold images collide on stem across
+  documents. Key the output on a document-qualified path (or carry the full
+  image path through), driven by a failing two-same-stem test. Pairs with the
+  US21 stem-collision deferral.
+- **Status:** OPEN (low risk — OmniDocBench image names are unique).

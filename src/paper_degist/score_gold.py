@@ -35,6 +35,7 @@ from typing import Annotated, Optional
 
 import typer
 from apted import APTED, Config
+from lxml import etree
 from lxml import html as lxml_html
 from rapidfuzz.distance import Levenshtein
 
@@ -133,9 +134,20 @@ def _build_tree(element) -> _TableNode:
     return node
 
 
-def _parse_table(table_html: str) -> _TableNode:
-    """Parse a table HTML fragment into a ``_TableNode`` tree."""
-    return _build_tree(lxml_html.fragment_fromstring(table_html, create_parent="div"))
+def _parse_table(table_html: str) -> "_TableNode | None":
+    """Parse a table HTML fragment into a ``_TableNode`` tree, or ``None``.
+
+    The fragment's own root element (the ``<table>``) is the tree root — no
+    wrapper node is added, so the node count is the canonical TEDS ``|t|`` and a
+    real table is not diluted by an extra div. Empty or unparseable input (``""``,
+    non-HTML) yields ``None`` rather than crashing (rule 02), so ``teds`` can
+    treat it as an absent table.
+    """
+    try:
+        element = lxml_html.fragment_fromstring(table_html)
+    except (etree.LxmlError, ValueError):
+        return None
+    return _build_tree(element)
 
 
 def _node_count(node: _TableNode) -> int:
@@ -176,14 +188,37 @@ def teds(pred_html: str, gold_html: str) -> float:
     """
     pred_tree = _parse_table(pred_html)
     gold_tree = _parse_table(gold_html)
+    pred_n = _node_count(pred_tree) if pred_tree is not None else 0
+    gold_n = _node_count(gold_tree) if gold_tree is not None else 0
+    if pred_n == 0 or gold_n == 0:
+        # An empty/unparseable side has no structure to match: two empties are
+        # trivially identical (1.0); one empty against a real table is completely
+        # dissimilar (0.0) — never the wrapper-div-inflated middling score.
+        return 1.0 if pred_n == 0 and gold_n == 0 else 0.0
     distance = APTED(pred_tree, gold_tree, _TedsConfig()).compute_edit_distance()
-    denom = max(_node_count(pred_tree), _node_count(gold_tree))
-    if denom == 0:
-        return 1.0
-    return round(1.0 - distance / denom, 4)
+    return round(1.0 - distance / max(pred_n, gold_n), 4)
 
 
 # --- classify a gold page by its annotation types; dispatch one metric each ---
+
+
+def _layout_dets(page: dict) -> list[dict]:
+    """The page's ``layout_dets`` blocks, keeping only well-formed dict entries.
+
+    A stray non-dict element (``None``, a bare string, a mis-shaped file) is
+    dropped rather than crashing the scorer on ``.get`` (rule 02 — never crash).
+    """
+    return [det for det in page.get("layout_dets", []) if isinstance(det, dict)]
+
+
+def _reading_order(det: dict) -> int:
+    """A block's reading-order key, coercing a missing/non-int ``order`` to 0.
+
+    A null or non-integer ``order`` must not raise a ``TypeError`` when sorted
+    against integer orders (rule 02); such blocks simply sort first.
+    """
+    order = det.get("order", 0)
+    return order if isinstance(order, int) else 0
 
 
 def _gold_text(page: dict) -> str:
@@ -194,8 +229,8 @@ def _gold_text(page: dict) -> str:
     without text (tables, figures) do not. This is the reference the model's
     transcription is compared against.
     """
-    blocks = [det for det in page.get("layout_dets", []) if isinstance(det.get("text"), str)]
-    blocks.sort(key=lambda det: det.get("order", 0))
+    blocks = [det for det in _layout_dets(page) if isinstance(det.get("text"), str)]
+    blocks.sort(key=_reading_order)
     return "\n".join(det["text"] for det in blocks)
 
 
@@ -205,8 +240,8 @@ def _gold_tables(page: dict) -> list[str]:
     Each ``layout_dets`` block carrying an ``html`` field is a table; a page with
     none is text-only and skips the table metric entirely (AC4).
     """
-    tables = [det for det in page.get("layout_dets", []) if isinstance(det.get("html"), str)]
-    tables.sort(key=lambda det: det.get("order", 0))
+    tables = [det for det in _layout_dets(page) if isinstance(det.get("html"), str)]
+    tables.sort(key=_reading_order)
     return [det["html"] for det in tables]
 
 
@@ -235,6 +270,7 @@ def score_gold_page(gold_page: dict, model_output: str, *, model: str, page: str
     reference-free rows in the shared ``scores.jsonl``.
     """
     gold_tables = _gold_tables(gold_page)
+    gold_text = _gold_text(gold_page)
     # The gold *text* excludes tables (a table block carries no ``text`` field),
     # so the model's table HTML must be stripped before the text compare — the
     # table is scored separately by TEDS, and leaving it in double-counts it and
@@ -244,7 +280,12 @@ def score_gold_page(gold_page: dict, model_output: str, *, model: str, page: str
         "model": model,
         "page": page,
         "gold": True,
-        "text_edit_distance": round(normalized_edit_distance(model_text, _gold_text(gold_page)), 4),
+        # A tables-only page has no gold text to score: not-applicable (null),
+        # never a false 1.0 that would poison the model's text average (mirrors
+        # the table metric's not-applicable rule for a text-only page).
+        "text_edit_distance": (
+            None if not gold_text else round(normalized_edit_distance(model_text, gold_text), 4)
+        ),
         "teds": _score_table(model_output, gold_tables),
     }
 

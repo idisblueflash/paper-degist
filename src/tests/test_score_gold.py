@@ -274,3 +274,36 @@ def test_batch_rejects_a_non_list_annotations_file(tmp_path: Path):
     with pytest.raises(ValueError, match="list of page"):
         score_gold_batch(bad, "qwen/qwen3-vl-4b", out_dir=tmp_path / "out",
                          scores_path=tmp_path / "s.jsonl", manifest_path=tmp_path / "m.jsonl")
+
+
+# --- Codex review: never-crash on malformed annotations + edge-case scores ---
+
+
+def test_score_gold_page_survives_a_non_dict_layout_det(): # rule 02 never-crash
+    # A stray non-dict element in layout_dets must not crash the scorer (Codex).
+    page = {"layout_dets": [None, {"category_type": "text_block", "text": "hi", "order": 0}]}
+    assert _score(page, "hi")["text_edit_distance"] == 0.0
+
+
+def test_score_gold_page_survives_a_none_order(): # rule 02 never-crash
+    # A block whose "order" is null must not raise a TypeError when sorting
+    # against integer orders (Codex).
+    page = {
+        "layout_dets": [
+            {"text": "second", "order": None},
+            {"text": "first", "order": 1},
+        ]
+    }
+    assert _score(page, "anything")["text_edit_distance"] is not None
+
+
+def test_teds_is_zero_for_empty_model_output(): # Codex WRONG_SCORE
+    # Empty/unparseable model output vs a real gold table is completely
+    # dissimilar → 0.0, not the 0.25 the wrapper-div inflation produced.
+    assert teds("", _GOLD_TABLE) == 0.0
+
+
+def test_text_edit_distance_is_not_applicable_for_a_tables_only_page(): # Codex WRONG_SCORE
+    # A page with no gold text (only a table) has no text to score: the text
+    # metric is not-applicable (null), never a false 1.0 that poisons averages.
+    assert _score(_TABLE_PAGE, _GOLD_TABLE)["text_edit_distance"] is None
