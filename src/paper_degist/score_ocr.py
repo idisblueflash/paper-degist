@@ -46,8 +46,10 @@ _RULE_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 
 # A `word- word` dehyphenation artifact: a letter/digit, a hyphen, then a space
 # before the next word (the `"low- quality"` / `"L1- Chinese"` leak that
-# separated @8bit from qwen).
-_HYPHEN_ARTIFACT_RE = re.compile(r"\w-\s+\w")
+# separated @8bit from qwen). The word chars are matched with zero-width
+# look-around so adjacent breaks (`"a- b- c"`) each count — the following word
+# char is not consumed by one match and hidden from the next (Codex review).
+_HYPHEN_ARTIFACT_RE = re.compile(r"(?<=\w)-\s+(?=\w)")
 
 # An inline numeric citation group: `[51]` or `[51,53,75,82]`. A model that
 # *drops* citation lists scores lower on this dimension than one that keeps them.
@@ -127,6 +129,11 @@ def _manifest_fields(manifest_path: Path, model_slug: str, page_stem: str) -> di
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        # A valid-JSON line that is not an object (`[]`, `null`, a bare string —
+        # hand-edited or mis-shaped) is not a manifest record: skip it, never
+        # let `.get()` raise (Codex review: hold the never-crash invariant).
+        if not isinstance(record, dict):
             continue
         if record.get("stage") != "ocr-page" or "finish_reason" not in record:
             continue

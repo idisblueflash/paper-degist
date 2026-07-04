@@ -53,6 +53,12 @@ def test_hyphen_artifacts_ignores_a_clean_hyphenated_compound():
     assert hyphen_artifacts("a well-formed state-of-the-art result") == 0
 
 
+def test_hyphen_artifacts_counts_adjacent_breaks_independently():
+    # Two artifacts sharing a word ("b") must both count — the match must not
+    # consume the following word char (Codex review: overlapping undercount).
+    assert hyphen_artifacts("a- b- c") == 2
+
+
 # --- citation_groups: inline numeric citation lists (AC4) ---
 
 
@@ -161,6 +167,16 @@ def test_score_manifest_fields_are_none_when_no_ocr_record_matches(tmp_path: Pat
     # No manifest at all: the per-call fields are present but null, not missing.
     _, scores, _ = _run(tmp_path)
     assert _only_score(scores)["finish_reason"] is None
+
+
+def test_score_survives_a_non_object_manifest_line(tmp_path: Path):
+    # A valid-JSON but non-object line (`[]`, hand-edited / mis-shaped) must be
+    # skipped, not crash the join (Codex review: never-crash invariant).
+    output = _save_output(tmp_path, "# Doc", model="qwen_qwen3-vl-4b", page="p02.md")
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text("[]\n", encoding="utf-8")
+    record = score_ocr(output, scores_path=tmp_path / "scores.jsonl", manifest_path=manifest)
+    assert record is not None
 
 
 def test_score_ignores_a_quarantine_record_for_the_join(tmp_path: Path):
