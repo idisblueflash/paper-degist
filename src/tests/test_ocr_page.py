@@ -13,10 +13,13 @@ from pathlib import Path
 import pytest
 
 from paper_degist.ocr_page import (
+    DEFAULT_ENDPOINT,
     REGISTRY,
+    ClientRequestError,
     OcrResponse,
     TransportError,
     _decode_grounding,
+    _default_post,
     _parse_response,
     _strip_markdown_fence,
     ocr_page,
@@ -325,3 +328,96 @@ def test_parse_unexpected_schema_raises_transport_error():
     # must also become a retryable TransportError, not a KeyError.
     with pytest.raises(TransportError):
         _parse_response(_curl_stdout(json.dumps({"error": "model not loaded"}), code="200"))
+
+
+# --- hardening (US20 follow-up): CRLF, null content, 4xx fast-fail, missing file ---
+
+
+def test_strip_markdown_fence_handles_crlf_line_endings():
+    # A qwen answer with \r\n line endings must still have its outer fence
+    # stripped, not saved verbatim with the fence intact.
+    assert _strip_markdown_fence("```markdown\r\n# H\r\n```") == "# H"
+
+
+def test_parse_null_content_raises_transport_error():
+    # A 200 whose choices[0].message.content is JSON null (not a string) must
+    # convert to a retryable TransportError — never reach the post-processor and
+    # AttributeError on None.strip().
+    body = json.dumps({"choices": [{"message": {"content": None}}], "usage": {}})
+    with pytest.raises(TransportError):
+        _parse_response(_curl_stdout(body, code="200"))
+
+
+def test_parse_client_error_raises_client_request_error():
+    # A 4xx is a deterministic client error (e.g. a rejected body); it must be a
+    # ClientRequestError so the orchestrator can fail fast instead of retrying.
+    with pytest.raises(ClientRequestError):
+        _parse_response(_curl_stdout("", code="400"))
+
+
+def _client_error_post():
+    """A transport that rejects with a 4xx (deterministic — retrying cannot help)."""
+
+    def post(model_id, prompt, image_path, endpoint):
+        post.calls.append((model_id, prompt, image_path, endpoint))
+        raise ClientRequestError("request rejected: server returned 400")
+
+    post.calls = []
+    return post
+
+
+def test_client_error_returns_none(tmp_path: Path):
+    result, _, _, _ = _run(tmp_path, post=_client_error_post(), attempts=3)
+    assert result is None
+
+
+def test_client_error_quarantines_without_retrying(tmp_path: Path):
+    post = _client_error_post()
+    _run(tmp_path, post=post, attempts=3)
+    assert len(post.calls) == 1  # deterministic — no retry burned on a rejected request
+
+
+def test_client_error_reason_is_distinct_from_server_unreachable(tmp_path: Path):
+    _, _, manifest, _ = _run(tmp_path, post=_client_error_post(), attempts=3)
+    assert "server unreachable" not in _only_record(manifest)["reason"]
+
+
+def test_missing_page_is_quarantined_not_crashed(tmp_path: Path):
+    # A stale/missing page path (e.g. from a batch driver calling the library)
+    # must not crash — the CLI guards existence via Typer, ocr_page must too.
+    manifest = tmp_path / "manifest.jsonl"
+    result = ocr_page(
+        tmp_path / "pages" / "WordCraft" / "gone.png",
+        "qwen/qwen3-vl-4b",
+        out_dir=tmp_path / "out",
+        manifest_path=manifest,
+        post=_boom_post(),
+        sleep=lambda _s: None,
+    )
+    assert result is None
+
+
+def test_missing_page_does_not_hit_the_network(tmp_path: Path):
+    post = _boom_post()
+    ocr_page(
+        tmp_path / "pages" / "WordCraft" / "gone.png",
+        "qwen/qwen3-vl-4b",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        post=post,
+        sleep=lambda _s: None,
+    )
+    assert post.calls == []
+
+
+def test_default_post_curl_missing_raises_transport_error(tmp_path: Path, monkeypatch):
+    # curl absent from PATH → subprocess raises FileNotFoundError; the transport
+    # must convert it to a retryable TransportError, never crash the batch.
+    page = _page(tmp_path)
+
+    def boom_run(*args, **kwargs):
+        raise FileNotFoundError("curl")
+
+    monkeypatch.setattr("paper_degist.ocr_page.subprocess.run", boom_run)
+    with pytest.raises(TransportError):
+        _default_post("qwen/qwen3-vl-4b", "prompt", page, DEFAULT_ENDPOINT)

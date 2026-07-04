@@ -60,6 +60,16 @@ class TransportError(Exception):
     """
 
 
+class ClientRequestError(TransportError):
+    """A 4xx — the request itself was rejected (a bad body, an unloadable model).
+
+    A subclass of ``TransportError`` so any transport error is caught by one
+    ``except``, but distinct so the orchestrator can **fail fast**: a client
+    error is deterministic, so retrying it only burns the recovery budget and
+    mislabels a rejected request as an unreachable server.
+    """
+
+
 @dataclass(frozen=True)
 class OcrResponse:
     """One model's answer, parsed from the chat-completions response."""
@@ -80,7 +90,7 @@ def _strip_markdown_fence(text: str) -> str:
     Unfenced output is returned untouched (only the whole-string wrapper is a
     fence; a code block *inside* the document is left alone).
     """
-    text = text.strip()
+    text = text.replace("\r\n", "\n").strip()  # normalize CRLF so the fence matches
     match = _FENCE_RE.match(text)
     return match.group("body").strip() if match else text
 
@@ -172,6 +182,10 @@ def _default_post(model_id: str, prompt: str, image_path: Path, endpoint: str) -
             capture_output=True,
             text=True,
         )
+    except OSError as exc:
+        # curl not on PATH (or otherwise unspawnable) is a transport failure, not
+        # a crash — convert it so the caller retries then quarantines (rule 02).
+        raise TransportError(f"curl unavailable: {exc}") from exc
     finally:
         os.unlink(body_file)
 
@@ -189,12 +203,20 @@ def _parse_response(stdout: str) -> OcrResponse:
     502, never crash the step out of the loop (rule 02).
     """
     resp_body, _, code = stdout.rpartition("\n")
+    if code.startswith("4"):
+        # A client error (bad body, unloadable model) is deterministic — surface
+        # it distinctly so the caller fails fast instead of retrying.
+        raise ClientRequestError(f"request rejected: server returned {code}")
     if code != "200" or not resp_body.strip():
         raise TransportError(f"server returned {code or 'empty body'}")
     try:
         data = json.loads(resp_body)
         choice = data["choices"][0]
         content = choice["message"]["content"]
+        if not isinstance(content, str):
+            # A 200 with null / non-string content is a flap, not an answer —
+            # retry it rather than let None reach the post-processor and crash.
+            raise TypeError(f"content is {type(content).__name__}, not str")
     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise TransportError(f"unparseable 200 response ({type(exc).__name__}): {exc}") from exc
     usage = data.get("usage") or {}
@@ -264,8 +286,21 @@ def ocr_page(
     if target.exists():
         return target  # idempotent skip — the model call is the expensive, flaky resource
 
-    # Layer 2 — dispatch on the transport result: 200 → save; 502/empty → wait
-    # the recovery gap and retry; after the budget, quarantine (server down).
+    # A missing/unreadable page (e.g. a stale path from a batch driver on the
+    # library path) is quarantined, not crashed over, before any network call —
+    # the Typer CLI already rejects it up front; this guards direct callers.
+    if not page_path.is_file():
+        _quarantine(
+            manifest_path,
+            page=str(page_path),
+            model=model_id,
+            reason=f"page image not found: {page_path}",
+        )
+        return None
+
+    # Layer 2 — dispatch on the transport result: 200 → save; 4xx → fail fast
+    # (deterministic); 502/empty → wait the recovery gap and retry; after the
+    # budget, quarantine (server down).
     last_error: Optional[TransportError] = None
     for attempt in range(attempts):
         if attempt > 0:
@@ -276,6 +311,11 @@ def ocr_page(
         start = time.monotonic()
         try:
             response = post(model_id, spec.prompt, page_path, endpoint)
+        except ClientRequestError as exc:
+            # Deterministic — retrying a rejected request cannot help; fail fast
+            # with a distinct reason rather than burning the retry budget.
+            _quarantine(manifest_path, page=str(page_path), model=model_id, reason=str(exc))
+            return None
         except TransportError as exc:
             last_error = exc
             continue

@@ -88,6 +88,15 @@ uv run fetch-one <url> --files-dir out/ --manifest manifest.jsonl
   a `4xx`/`5xx`/timeout, or an unrecognized content type. A `403` from a
   Cloudflare-gated host (ResearchGate, Academia.edu) lands here — that is the
   cue to try `resolve-oa`.
+- **Bot-wall recognition** (US12): a `403` from a *known* bot-walling host is
+  tagged, not left as a bare `http 403`. The record gains a `blocked_by`
+  registrable host (`researchgate.net`, `pubmed.ncbi.nlm.nih.gov`) and a `reason`
+  that names it a bot-wall and points at the `resolve-oa` lane (PubMed also warns
+  the URL is abstract-only). This is additive and `fetch-one`-only: a `403` from
+  any other host keeps the generic record, and no exit code or stdout changes.
+  The `blocked_by` tag is the routing key `recover-blocked` (US17) reads to drain
+  these into the browser lane. Growing the host table is a one-line addition when
+  a new walling host recurs in the manifest.
 - **Filename verification** (US13): after a successful save, `fetch-one` compares
   the saved file's real title (HTML `<title>`, PDF `/Title` metadata) to its
   basename. This never changes stdout, the saved path, or the exit code — it only
@@ -109,6 +118,13 @@ uv run fetch-one https://arxiv.org/pdf/1706.03762
 # A 403 quarantines cleanly; then try the OA lane
 uv run fetch-one https://www.researchgate.net/publication/249870239_An_investigation
 #   -> stderr: quarantined (see manifest.jsonl): https://www.researchgate.net/...
+
+# US12 — a known bot-wall is tagged with blocked_by + an actionable reason
+uv run fetch-one https://pubmed.ncbi.nlm.nih.gov/2303742/
+#   -> manifest: {"stage":"fetch-one","url":"https://pubmed.ncbi.nlm.nih.gov/2303742/",
+#                 "status":403,"blocked_by":"pubmed.ncbi.nlm.nih.gov",
+#                 "reason":"bot-walled source: PubMed blocks automated fetches, and this
+#                           URL is an abstract-only page … — route around it via resolve-oa"}
 
 # US13 — a saved but generically-named PDF is flagged for rename (still exits 0)
 uv run fetch-one "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"

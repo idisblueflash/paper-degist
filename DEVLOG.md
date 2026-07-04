@@ -950,3 +950,43 @@ location, the case not yet handled, and the trigger that should make us fix it.
   image path through), driven by a failing two-same-stem test. Pairs with the
   US21 stem-collision deferral.
 - **Status:** OPEN (low risk — OmniDocBench image names are unique).
+
+## fetch_one — bot-wall table is 2 hosts; no auto-route to resolve-oa (US12)
+
+- **Where:** `src/paper_degist/fetch_one.py::_BOT_WALLED_HOSTS` / `bot_wall_for`
+  and the 403 branch of `fetch_one`.
+- **Case not handled (two, both deliberate):** (1) **Auto-route.** US12 only
+  *tags* a recognized 403 with `blocked_by` + an actionable reason; it does not
+  itself call `resolve-oa`, because fetch-one holds only the URL, not a DOI or
+  title. `recover-blocked` (US17) already consumes the `blocked_by` tag to drain
+  these into the *browser* lane; auto-routing a `blocked_by` record into the
+  *resolve-oa* (DOI/OA) lane is the still-open orchestration named in the
+  resolve-oa rescue-lane flag above. (2) **Growing the table.** The host table
+  ships `researchgate.net` and `pubmed.ncbi.nlm.nih.gov` only. A new bot-walling
+  host that recurs as a bare `http 403` in the manifest is the trigger to promote
+  it — a one-line addition to `_BOT_WALLED_HOSTS`, per rule 02 (the manifest is
+  the queue of cases). The branch is gated on **403 specifically**: a walled
+  host's non-403 error (e.g. a real 503 outage) keeps the generic record.
+- **Trigger to fix:** (1) when the resolve-oa auto-route orchestrator is built —
+  read a `blocked_by` record, recover a DOI/title, dispatch to `resolve-oa`.
+  (2) the first recurring generic-403 host worth encoding. Both test-first.
+- **Status:** OPEN (US12 shipped the recognition + tag; auto-route and table
+  growth deferred by design — the story's "Later stages").
+
+## ocr_page — transport hardened against four never-crash gaps (US20 follow-up)
+
+- **Where:** `src/paper_degist/ocr_page.py` (`_parse_response`, `_default_post`,
+  `_strip_markdown_fence`, `ocr_page` orchestrator).
+- **Case:** a parallel review pass (a duplicate US20 build's self-review + Codex)
+  surfaced four rule-02 "never crash" / precision gaps the merged US20 still had.
+- **Status:** RESOLVED (follow-up PR). Fixed test-first: (1) a **4xx** now raises
+  the new `ClientRequestError` and the orchestrator **fails fast** with a distinct
+  `request rejected` reason instead of retrying a deterministic error for the full
+  budget and mislabelling it "server unreachable"; (2) a 200 whose
+  `choices[0].message.content` is **null/non-string** becomes a retryable
+  `TransportError` rather than reaching the post-processor and `None.strip()`-ing;
+  (3) `_strip_markdown_fence` normalizes **CRLF** so a `\r\n` qwen answer still
+  has its outer fence stripped; (4) `_default_post` converts a **curl-missing**
+  `OSError` into a `TransportError`, and `ocr_page` guards a **missing page** file
+  with a distinct `page image not found` quarantine before any network call (the
+  Typer CLI already rejects it up front; this guards direct library callers).
