@@ -13,7 +13,12 @@ design principle).
 import json
 from pathlib import Path
 
-from paper_degist.fetch_one import classify, fetch_one
+from paper_degist.fetch_one import (
+    _extract_title,
+    classify,
+    fetch_one,
+    filename_reflects_title,
+)
 
 
 class FakeResponse:
@@ -204,3 +209,158 @@ def test_fetch_exception_manifest_records_null_status(tmp_path: Path):
 def test_fetch_exception_manifest_reason_mentions_the_error(tmp_path: Path):
     _, _, manifest = _run(tmp_path, url="https://example.com/slow", fetch=_boom)
     assert "timed out" in _only_record(manifest)["reason"]
+
+
+# --- US13: does the saved filename reflect the paper's title? (slug tokens) ---
+
+
+def test_reflects_when_basename_tokens_are_a_subset_of_the_title():
+    # A slug filename that drops the title's stop-words still reflects it (AC1).
+    assert filename_reflects_title(
+        "using-keyword-method-learn-vocabulary.html",
+        "Using the Keyword Method to Learn Vocabulary",
+    )
+
+
+def test_does_not_reflect_when_generic_cgi_basename_shares_no_title_token():
+    # A CGI endpoint name carries none of the title's identity (AC2).
+    assert not filename_reflects_title(
+        "viewcontent.cgi.pdf",
+        "Effects of the Keyword Method on Vocabulary Acquisition and Retention",
+    )
+
+
+# --- US13: extract the paper's real title from the saved file ---
+
+
+def test_extract_title_reads_the_html_title_element(tmp_path: Path):
+    html = tmp_path / "paper.html"
+    html.write_text(
+        "<html><head><title>Deep Residual Learning</title></head><body>x</body></html>",
+        encoding="utf-8",
+    )
+    assert _extract_title(html) == "Deep Residual Learning"
+
+
+def _write_pdf(path: Path, *, title=None):
+    """Write a one-page PDF at ``path``, optionally stamping a ``/Title``."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    if title is not None:
+        writer.add_metadata({"/Title": title})
+    with path.open("wb") as fh:
+        writer.write(fh)
+    return path
+
+
+def test_extract_title_reads_the_pdf_metadata_title(tmp_path: Path):
+    pdf = _write_pdf(
+        tmp_path / "viewcontent.cgi.pdf",
+        title="Effects of the Keyword Method on Vocabulary Acquisition and Retention",
+    )
+    assert (
+        _extract_title(pdf)
+        == "Effects of the Keyword Method on Vocabulary Acquisition and Retention"
+    )
+
+
+def test_extract_title_returns_none_when_html_has_no_title_element(tmp_path: Path):
+    html = tmp_path / "10.html"
+    html.write_text("<html><head></head><body>no title here</body></html>", encoding="utf-8")
+    assert _extract_title(html) is None
+
+
+# --- US13: fetch-one verifies the filename against the title after a save ---
+
+
+def _html_response(title_html):
+    """A 200 HTML FakeResponse whose body carries ``title_html`` in its head."""
+    return FakeResponse(
+        content_type="text/html; charset=utf-8",
+        content=f"<html><head>{title_html}</head><body>paper body</body></html>".encode(),
+    )
+
+
+# A CGI endpoint URL: its basename (viewcontent.cgi) carries none of the title.
+_MISMATCH_URL = "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"
+_MISMATCH_TITLE = "Effects of the Keyword Method on Vocabulary Acquisition and Retention"
+
+
+def _run_mismatch(tmp_path):
+    return _run(
+        tmp_path, url=_MISMATCH_URL, response=_html_response(f"<title>{_MISMATCH_TITLE}</title>")
+    )
+
+
+def test_mismatch_save_records_the_extracted_title(tmp_path: Path):
+    _, _, manifest = _run_mismatch(tmp_path)
+    assert _only_record(manifest)["title"] == _MISMATCH_TITLE
+
+
+def test_mismatch_save_records_the_saved_file(tmp_path: Path):
+    _, files, manifest = _run_mismatch(tmp_path)
+    assert _only_record(manifest)["file"] == str(files / "viewcontent.cgi.html")
+
+
+def test_mismatch_save_reason_says_the_name_does_not_reflect_the_title(tmp_path: Path):
+    _, _, manifest = _run_mismatch(tmp_path)
+    assert "does not reflect" in _only_record(manifest)["reason"]
+
+
+def test_mismatch_save_record_carries_the_fetch_one_stage(tmp_path: Path):
+    _, _, manifest = _run_mismatch(tmp_path)
+    assert _only_record(manifest)["stage"] == "fetch-one"
+
+
+def test_mismatch_save_still_returns_the_saved_path(tmp_path: Path):
+    # AC2: the mismatch is a note, not a failure — the file stays saved.
+    result, files, _ = _run_mismatch(tmp_path)
+    assert result == files / "viewcontent.cgi.html"
+
+
+def test_mismatch_save_leaves_the_file_on_disk(tmp_path: Path):
+    _, files, _ = _run_mismatch(tmp_path)
+    assert (files / "viewcontent.cgi.html").exists()
+
+
+def test_matching_save_writes_no_manifest_record(tmp_path: Path):
+    # A descriptive slug basename reflects the title (AC1) — nothing to flag.
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://keymagine.com/using-keyword-method-learn-vocabulary",
+        response=_html_response("<title>Using the Keyword Method to Learn Vocabulary</title>"),
+    )
+    assert not manifest.exists()
+
+
+def test_untitled_save_records_a_title_unverifiable_reason(tmp_path: Path):
+    # AC3: absence of a title is not a wrong name — a distinct reason.
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://ijssh.org/Vol_3_No_1_March_2016/10",
+        response=_html_response(""),
+    )
+    assert "title-unverifiable" in _only_record(manifest)["reason"]
+
+
+def test_untitled_save_omits_the_title_field(tmp_path: Path):
+    _, _, manifest = _run(
+        tmp_path,
+        url="https://ijssh.org/Vol_3_No_1_March_2016/10",
+        response=_html_response(""),
+    )
+    assert "title" not in _only_record(manifest)
+
+
+def test_idempotent_rerun_does_not_re_verify_or_record(tmp_path: Path):
+    # Re-run hits the skip branch before verification — no duplicate note.
+    _, _, manifest = _run_with_existing(
+        tmp_path,
+        url=_MISMATCH_URL,
+        response=_html_response(f"<title>{_MISMATCH_TITLE}</title>"),
+        name="viewcontent.cgi.html",
+        content=b"<html><head><title>x</title></head><body>y</body></html>",
+    )
+    assert not manifest.exists()
