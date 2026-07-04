@@ -389,6 +389,79 @@ each registered model.
 
 ---
 
+## `ocr-page` — OCR one page image with one registered model (US20)
+
+The second step of the OCR-model bench: send **one** page PNG (from `render-pdf`)
+to **one** named vision model and save its Markdown. The costly lesson from the
+investigation was the *transport*, not the models — a Python `urllib` image POST
+empty-body-502s and takes the MLX worker down. So the transport is fixed encoded
+knowledge (rule 02): the JSON body is built in Python and POSTed with
+`curl --data @body.json`, **sequentially**, with a recovery gap and
+**retry-on-502**. Models are a **registry** — a new model is one
+`(prompt, post-processor)` entry, not a code branch.
+
+```
+uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
+                [--attempts 3] [--gap 7.0] [--manifest manifest.jsonl]
+```
+
+- **Arguments**: the `page` PNG (validated up front — a missing file exits 2) and
+  a **registered** `model` id (see the registry below).
+- **Options**: `--out-dir` (root the Markdown lands under; default `out/`),
+  `--endpoint` (the chat-completions URL of the vision server; default
+  `http://localhost:1234/v1/chat/completions` — LM Studio), `--attempts` (max
+  POSTs before quarantine; default `3`), `--gap` (recovery seconds between
+  retries; default `7.0` — the report's ~6–8 s flap window), `--manifest`.
+- **Output**: the saved Markdown path on stdout —
+  `out/<model-slug>/<page>.md` (`qwen/qwen3-vl-4b` → `out/qwen_qwen3-vl-4b/`) —
+  plus an `ocr` provenance record in the manifest (`stage`, `page`, `model`,
+  `latency`, `finish_reason`, `completion_tokens`).
+- **Registered models** (the `(prompt, post-processor)` registry):
+  - `qwen/qwen3-vl-4b` — a plain "Convert the document to markdown." instruction;
+    output is unwrapped from the ```` ```markdown ```` fence it comes in.
+  - `deepseek-ocr` — the `<|grounding|>Convert the document to markdown.` prompt
+    (the literal `<image>` token **omitted**, or LM Studio 400s on a double
+    image); the grounding markup is decoded to plain Markdown.
+- **Quarantine, not a crash** (rule 02). Two cases land in the manifest and exit
+  cleanly (exit 0):
+  - `unknown model: '…' not in registry` — the model id is not registered; the
+    network is **never touched** (distinct from a server error).
+  - `server unreachable after N attempts: …` — the endpoint 502'd / was
+    unreachable through every retry; the curl diagnostic is included.
+- **Idempotent.** A `(page, model)` whose `out/<model>/<page>.md` already exists
+  is skipped — the model is the expensive, flaky resource, so a re-run **never**
+  re-hits the server and appends **no** manifest record.
+- **Requires** `curl` on `$PATH` and a vision server (LM Studio) already up with
+  the model loadable — bringing the server up / warming a model is the operator's
+  job (as `browser-up` is for Chrome), not this step.
+
+### Examples
+
+```bash
+# Happy path — OCR page 2 with qwen; Markdown saved under out/<model-slug>/
+uv run ocr-page pages/WordCraft_Scaffolding_the_Keyword_Method/p0002.png qwen/qwen3-vl-4b
+#   -> out/qwen_qwen3-vl-4b/p0002.md  (path printed)
+#   -> manifest: {"stage":"ocr-page","page":"pages/…/p0002.png","model":"qwen/qwen3-vl-4b",
+#                 "latency":20.8,"finish_reason":"stop","completion_tokens":167}
+
+# The same page through DeepSeek-OCR is just a different registered id
+uv run ocr-page pages/Attention_Is_All_You_Need/p0001.png deepseek-ocr
+
+# An unregistered model quarantines without touching the network
+uv run ocr-page pages/Deep_Residual_Learning/p0001.png some-unregistered-ocr
+#   -> stderr: quarantined (see manifest.jsonl): …/p0001.png + some-unregistered-ocr
+#   -> manifest: {"stage":"ocr-page","page":"…/p0001.png","model":"some-unregistered-ocr",
+#                 "reason":"unknown model: 'some-unregistered-ocr' not in registry"}
+```
+
+`ocr-page` composes after `render-pdf` (`render-pdf` produces the page PNGs this
+step consumes) and feeds the per-model Markdown to the bench's scoring steps
+(US21–23). It does one `(page, model)` per run; a batch driver that walks a page
+directory across every registered model — keeping the sequential-with-gap rule —
+is the US23 report driver, composed from this step.
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash

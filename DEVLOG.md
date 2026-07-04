@@ -610,3 +610,82 @@ location, the case not yet handled, and the trigger that should make us fix it.
   into `_slug_tokens` (e.g. NFKD + strip combining marks) driven by a failing
   test with that title.
 - **Status:** OPEN (low priority — ASCII slugs, the common case, are correct).
+
+## ocr_page — single (page, model) per run; no batch driver (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py` (one `page_path` + one `model_id`).
+- **Case not handled:** ocr-page OCRs exactly one page with one model per
+  invocation, each with its own connect + retry budget. Walking a page directory
+  across every registered model — honoring the sequential-with-gap rule so the
+  flaky runtime never sees rapid-fire hits — is the report/US23 driver's job,
+  composed from this step. The inter-*item* recovery gap therefore lives in that
+  future driver; this step's `gap` is only the between-retries gap.
+- **Trigger to fix:** when US23 aggregates a scorecard across a corpus. Add a
+  batch driver that iterates `(page, model)` pairs calling `ocr_page`, inserting
+  the recovery gap between items, driven by a test that asserts the sequencing.
+- **Status:** OPEN (deliberate — kept single-input like the sibling steps; named
+  in the US20 "Later stages").
+
+## ocr_page — server lifecycle (LM Studio up + model loaded) is the operator's job (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py::_default_post` (assumes a reachable
+  chat-completions endpoint with the model loadable).
+- **Case not handled:** ocr-page does not bring the vision server up or warm a
+  model — as `browser-up` is a separate step from `browser-fetch`, launching /
+  loading LM Studio is out of scope. A crashed-but-`loaded` model that 502s is
+  handled (retry → quarantine), but *starting* the server, or detecting a wedged
+  runtime that needs a restart, is not. The report §3 recovery is retry-with-gap,
+  not a relaunch.
+- **Trigger to fix:** when the bench wants an unattended run that can recover a
+  dead server. Add an `ocr-up`/warm step (mirroring `browser-up`) that ensures
+  the endpoint answers and the model is loaded before ocr-page runs; keep it a
+  separate step, not a branch inside the loop.
+- **Status:** OPEN (deliberate — server lifecycle deferred by the US20 story).
+
+## ocr_page — registry holds one DeepSeek entry; loaded variants not registered (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py::REGISTRY`.
+- **Case not handled:** the registry ships `qwen/qwen3-vl-4b` and `deepseek-ocr`.
+  The US20 real E2E found the live LM Studio also serving `deepseek-ocr-2`,
+  `deepseek-ocr@8bit`, `deepseek-ocr@4bit`, and `unlimited-ocr-mlx` — DeepSeek
+  variants the story names ("even new added models") but which are not registered
+  yet, so ocr-page quarantines them as "unknown model". This is by design (a new
+  model is one registry entry, not a branch), but the quant/variant entries are
+  not written until the bench needs to score them.
+- **Trigger to fix:** when the bench compares the DeepSeek quantizations (or the
+  `unlimited-ocr` model). Add a `ModelSpec` per variant — most reuse the
+  `<|grounding|>…` prompt + `_decode_grounding`, so it is a one-line data add.
+- **Status:** OPEN (deliberate — registry is data; add entries on demand).
+
+## ocr_page — model-slug output dir only rewrites '/', not other id punctuation (US20)
+
+- **Where:** `src/paper_degist/ocr_page.py::_model_slug` (`model_id.replace("/", "_")`).
+- **Case not handled:** the output dir name rewrites only `/` (so
+  `qwen/qwen3-vl-4b` → `qwen_qwen3-vl-4b`). A model id carrying other punctuation
+  — e.g. `deepseek-ocr@8bit` — lands its literal `@`/`:` in the path
+  (`out/deepseek-ocr@8bit/…`). These are filesystem-legal on macOS/Linux so the
+  save works today, but they are not normalized and could be awkward on Windows
+  or in shell globs.
+- **Trigger to fix:** the first registered id whose punctuation is unsafe on a
+  target FS, or the first Windows run. Broaden `_model_slug` to a
+  filesystem-safe transform (e.g. map any of `/ : @ \` to `_`), driven by a
+  failing test on such an id.
+- **Status:** OPEN (low priority — `/` is the only separator in today's ids).
+
+## ocr bench — a model can return fluent, well-formed but hallucinated OCR (US20)
+
+- **Where:** observed in the US20 real E2E; consumed by the US21–22 scorers.
+- **Case not handled:** ocr-page trusts a 200 response — it post-processes and
+  saves whatever the model returns. The US20 E2E on a clean, text-native page
+  showed `deepseek-ocr` returning 2301 tokens of *fluent but entirely fabricated*
+  content (unrelated math word-problems), `finish_reason: stop` — a perfect
+  transport success wrapping garbage output, while `qwen/qwen3-vl-4b` transcribed
+  the same page faithfully. ocr-page cannot (and should not) tell them apart; the
+  manifest's `completion_tokens`/`finish_reason` are weak signals (a runaway
+  hallucination shows as a high token count / `length`).
+- **Trigger to fix:** this is exactly what US21 (reference-free defect metrics)
+  and US22 (gold-accuracy scoring) exist to catch — a repetition/perplexity or
+  edit-distance-to-gold score would flag the fabricated page. No fix belongs in
+  ocr-page; logged here so the scoring stories have the concrete failure mode on
+  record.
+- **Status:** OPEN (by design — quality judgment is the scorers' job, US21–22).
