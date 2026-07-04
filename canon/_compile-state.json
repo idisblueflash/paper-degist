@@ -1,0 +1,8 @@
+{
+  "compiled": [
+    "5a774313-8a20-4405-8679-3b563de41dd4",
+    "6225f110-7e1f-4ca2-bd51-2a6e883dd259"
+  ],
+  "updated": "2026-07-04",
+  "note": "Scoped browser-lane compile: US18 browser-up design + US15 browser-fetch build. Remaining logbook sessions stay un-compiled for a future full pass."
+}
