@@ -715,9 +715,14 @@ location, the case not yet handled, and the trigger that should make us fix it.
   The US21 real E2E on the same page confirmed the limit precisely: DeepSeek's
   *fluent* hallucination did **not** trip `dup_pct` (it was coherent prose, not a
   repetition loop), but its manifest-sourced `completion_tokens` was **2301 vs
-  qwen's 167** — a runaway-length signal the scorecard now carries. Catching a
-  fluent-but-wrong page on *content* still needs the gold tier (edit distance /
-  TEDS), US22 — exactly as this story scopes it.
+  qwen's 167** — a runaway-length signal the scorecard now carries. The gold tier
+  that catches a fluent-but-wrong page on *content* now exists: US22's `score-gold`
+  computes `text_edit_distance` (normalized Levenshtein vs the gold text) and
+  `teds` (table fidelity) against an OmniDocBench gold page — a fabricated
+  transcription scores a near-1.0 edit distance where a faithful one scores ~0.
+  Remaining gap: this only fires on the *gold subset* (curated OmniDocBench
+  pages), not on an arbitrary new paper, which has no reference (the deferred
+  self-gold-from-arXiv source, below, is the complement).
 
 ## score_ocr — scores.jsonl is append-only; a re-run duplicates the (model, page) row (US21)
 
@@ -796,6 +801,155 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (line-level dup — the AC2 shape — is encoded; intra-line
   degeneration deferred, and already covered at the scorecard level by the
   completion_tokens signal).
+
+## score_gold — dataset is research-only; not vendored, operator supplies it (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_batch` (reads an
+  operator-supplied `annotations_path`); no OmniDocBench data under `src/tests/`.
+- **Case / constraint:** OmniDocBench's license was verified at build time (HF
+  card, 2026-07) as **"for research purposes only and not for commercial use,"**
+  with *"content not allowed for distribution has been removed"* — a
+  research-restricted license, **not** a redistributable open one (not CC-BY). So
+  the dataset is deliberately **not vendored** into the repo: `score-gold` loads
+  the annotation JSON and page images from the operator's own local download, and
+  the tests run against a small **synthetic** fixture mirroring the verified
+  schema (`page_info.page_attribute.{data_source,layout,language}`,
+  `layout_dets[].{category_type,text,html,order}`). The subset filter's field
+  names/values (`academic_literature` / `double_column` / `english`+`en_ch_mixed`)
+  were confirmed against the dataset card.
+- **Trigger to revisit:** if the license changes to permit redistribution, a tiny
+  real gold fixture could be vendored for a real E2E; until then keep synthetic.
+- **Status:** OPEN (deliberate — license-driven; the spec's "verify before
+  building" gate was honoured, both facts confirmed pre-build).
+
+## score_gold — model-table extraction is HTML-`<table>`-only; GFM pipe tables not converted (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::_model_tables_and_text`
+  (`_extract_gfm_tables` / `_rows_to_html`).
+- **Case not handled:** TEDS needs the model's table as HTML. Extraction found
+  only inline `<table>…</table>` blocks (what doc-parse OCR models emit), but a
+  model that renders a table as a **GFM pipe table** (`| a | b |`) produced no
+  `<table>` match, so `_score_table` scored it `0.0` as if the table were omitted
+  — a false low for a model that *did* transcribe the table, just in Markdown
+  syntax.
+- **Confirmed live** by the US22 gold smoke test (2026-07-05): `qwen/qwen3-vl-4b`
+  OCR of the in-subset OmniDocBench table page `page-83587fc3-…` rendered the
+  table as a GFM pipe table (13 `| … |` rows, zero `<table>` tags) and scored
+  `teds: 0.0` on a table it had transcribed.
+- **Status:** RESOLVED (US22 follow-up, 2026-07-05). `_model_tables_and_text`
+  now extracts **both** inline HTML `<table>` blocks and GFM pipe tables: a
+  header row followed by a `|---|` delimiter is parsed and rendered to
+  `<table><tr><td>…</td></tr></table>` (all `<td>`, no `<th>`/`thead`, matching
+  OmniDocBench's gold shape). The pipe rows are also stripped from the text so
+  they no longer inflate `text_edit_distance`. Re-running the smoke test moved
+  the same qwen page from `teds 0.0 → 0.7737` and `text_edit_distance 0.186 →
+  0.047`. Two residual limits stay open (below): a pipe table cannot express
+  `colspan`/`rowspan` (every converted cell spans 1), and an **unescaped** `|`
+  inside a LaTeX cell (`$|x|$`) still mis-splits — GFM requires `\|`.
+
+## score_gold — only the first table per page is scored; multi-table pairing deferred (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::_score_table` (`gold_tables[0]` vs
+  `model_tables[0]`).
+- **Case not handled:** a page with several tables scores only the first
+  gold/model pair. Positional pairing breaks when the model drops or reorders a
+  table, and the other tables are unscored. AC3's example is a single table, so
+  this is out of scope today.
+- **Trigger to fix:** the first in-subset gold page with >1 table. Pair tables
+  (positionally, or by best-match), average the per-table TEDS, driven by a
+  failing multi-table test.
+- **Status:** OPEN (deliberate — single-table scope for AC3).
+
+## score_gold — reading-order metric named in case handling, not implemented (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_page` (scores text +
+  table only).
+- **Case not handled:** the story's "Case handling" lists reading-order → edit
+  distance on the block sequence as a third dimension, but no AC requires it, and
+  recovering the model's block order from flat Markdown is non-trivial. Only text
+  (AC2) and table (AC3) dimensions are scored.
+- **Trigger to fix:** when the scorecard (US23) wants a reading-order column.
+  Derive the model's block sequence and edit-distance it against the gold `order`,
+  driven by a failing test.
+- **Status:** OPEN (no AC; deferred).
+
+## score_gold — text edit distance compares raw Markdown to gold plain text (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_page` (`normalized_edit_distance(model_output, _gold_text(...))`).
+- **Case not handled:** the model output is compared as-is (Markdown syntax —
+  `#`, `*`, `|`, link brackets) against the gold's plain recognition text, so even
+  a perfect transcription carries a small non-zero distance from its own markup.
+  Directionally fine for *ranking* models (the penalty is roughly uniform), but it
+  is not the exact OmniDocBench text-normalization pipeline (which strips markup /
+  normalizes whitespace before the edit distance).
+- **Trigger to fix:** when a leaderboard-comparable absolute number (not just a
+  ranking) is needed. Add OmniDocBench's text normalization (strip Markdown,
+  collapse whitespace) before the compare, driven by a test.
+- **Status:** OPEN (ranking-valid today; absolute-number parity deferred).
+
+## score_gold — page image field assumed `image_path`; block field names verified (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_batch`
+  (`page_info["image_path"]` → output stem).
+- **Case not handled:** the block-level names (`layout_dets`, `category_type`,
+  `text`, `html`, `order`) and the page-attribute names were verified against the
+  dataset card, but the **page image field name** (`image_path`) was assumed, not
+  confirmed against a real annotation file. If the real field is `image_name` /
+  `page_name`, the output-stem lookup finds nothing and every page quarantines as
+  "no model output".
+- **Trigger to fix:** the first real OmniDocBench run. Confirm the field against
+  the downloaded JSON and adjust (or read it tolerantly), driven by a test on a
+  real page record.
+- **Status:** OPEN (low risk — one-line fix once the real file is in hand).
+
+## score_gold — scores.jsonl is append-only; a re-run duplicates the gold row (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold` / `_append_score`.
+- **Case not handled:** like `score-ocr` (US21), `score-gold` appends one row per
+  run with no already-scored skip, so re-scoring the same page writes a second
+  `gold` row. Consistent with the append-only results-log contract; the US23
+  aggregator is expected to take the last row per (model, page). The `gold: true`
+  discriminator distinguishes these rows from US21's reference-free rows in the
+  shared `scores.jsonl`.
+- **Trigger to fix:** when duplicate re-run rows become noise for US23. Add a
+  read-back-and-skip or a last-wins compaction in the aggregator. Pairs with the
+  US21 score_ocr append-only dup flag.
+- **Status:** OPEN (deliberate — append-only results log, consistent with US21).
+
+## score_gold — model-table extraction is regex-based; nested tables mis-split (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::_model_tables` / `_MODEL_TABLE_RE`
+  and the `_MODEL_TABLE_RE.sub("", …)` text strip in `score_gold_page`.
+- **Case not handled (Codex US22 review):** `<table\b.*?</table>` is non-greedy,
+  so a **nested** `<table>` inside a cell matches only through the *first*
+  `</table>` — the outer table's tail is left as orphan `</table>` residue. That
+  residue both (a) inflates `text_edit_distance` (it stays in the stripped text)
+  and (b) feeds a structurally broken fragment to TEDS. Non-greedy regex cannot
+  balance nested tags. Academic double-column pages rarely nest tables, so this
+  is an edge case today.
+- **Trigger to fix:** the first in-subset gold page (or model output) with a
+  nested table. Replace the regex with an lxml parse that extracts top-level
+  `<table>` subtrees (and removes them for the text compare), driven by a failing
+  nested-table fixture. Pairs with the GFM-pipe-table conversion deferral.
+- **Status:** OPEN (regex handles the flat-table common case; nested deferred).
+
+## score_gold — output path keys on image stem; same stem across docs collides (US22)
+
+- **Where:** `src/paper_degist/score_gold.py::score_gold_batch`
+  (`Path(image_path).stem` → `out/<model>/<stem>.md`).
+- **Case not handled (Codex US22 review):** the model output is located by the
+  gold page's image **stem**. Two gold pages from different documents that share
+  a base filename (`doc_A/page001.jpg`, `doc_B/page001.jpg`) map to the *same*
+  `out/<model>/page001.md`, so both score against one output and append two rows
+  keyed by the same stem — a silent collision, not a quarantine. This is the same
+  stem-uniqueness assumption already flagged for `score_ocr`'s manifest join
+  (US21) and `ocr_page`'s output dir (US20); OmniDocBench's own image names are
+  globally unique, so it cannot fire on the real dataset today.
+- **Trigger to fix:** the first batch whose gold images collide on stem across
+  documents. Key the output on a document-qualified path (or carry the full
+  image path through), driven by a failing two-same-stem test. Pairs with the
+  US21 stem-collision deferral.
+- **Status:** OPEN (low risk — OmniDocBench image names are unique).
 
 ## fetch_one — bot-wall table is 2 hosts; no auto-route to resolve-oa (US12)
 

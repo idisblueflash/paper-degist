@@ -8,11 +8,14 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "apted>=1.0.3",
     "beautifulsoup4>=4.15.0",
     "httpx>=0.28.1",
+    "lxml>=6.1.1",
     "markdownify>=1.2.3",
     "playwright>=1.61.0",
     "pypdf>=6.14.2",
+    "rapidfuzz>=3.14.5",
     "typer>=0.26.8",
 ]
 
@@ -28,6 +31,7 @@ render-pdf = "paper_degist.render_pdf:main"
 recover-blocked = "paper_degist.recover_blocked:main"
 ocr-page = "paper_degist.ocr_page:main"
 score-ocr = "paper_degist.score_ocr:main"
+score-gold = "paper_degist.score_gold:main"
 embed-text = "paper_degist.embed_text:main"
 
 [tool.pytest.ini_options]

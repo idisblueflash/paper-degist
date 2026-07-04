@@ -20,6 +20,7 @@ _STEPS = [
     ("recover-blocked", "Route the manifest's blocked_by URLs into browser-fetch (US17)."),
     ("ocr-page", "OCR one page image with one registered vision model (US20)."),
     ("score-ocr", "Score a saved OCR output on reference-free defect metrics (US21)."),
+    ("score-gold", "Score a model against an OmniDocBench gold subset (US22)."),
     ("embed-text", "Embed one text with one registered local embedding model (US24)."),
 ]
 
