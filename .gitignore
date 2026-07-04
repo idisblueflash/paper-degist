@@ -9,6 +9,7 @@ __pycache__/
 # Project output
 files/
 manifest.jsonl
+scores.jsonl
 
 # OCR bench artifacts: rendered page images (US19) and per-model OCR output (US20)
 pages/

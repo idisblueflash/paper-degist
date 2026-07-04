@@ -19,6 +19,7 @@ _STEPS = [
     ("render-pdf", "Render a PDF into one PNG per page for the OCR bench (US19)."),
     ("recover-blocked", "Route the manifest's blocked_by URLs into browser-fetch (US17)."),
     ("ocr-page", "OCR one page image with one registered vision model (US20)."),
+    ("score-ocr", "Score a saved OCR output on reference-free defect metrics (US21)."),
 ]
 
 app = typer.Typer(
