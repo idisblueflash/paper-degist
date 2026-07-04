@@ -31,7 +31,7 @@ timeless spec and carry no status marker.
 | [US 16](user-stories/us-16-warm-browser-across-batch.md) | Reuse one warm browser across a batch of URLs | `browser-fetch` | —              |
 | [US 17](user-stories/us-17-recover-blocked-to-browser.md) | Recover bot-walled records through the browser lane | `recover-blocked` | —              |
 | [US 18](user-stories/us-18-launch-dev-mode-browser.md) | Launch a dev-mode Chrome for the browser lane | `browser-up`    | ✅ Done         |
-| [US 19](user-stories/us-19-render-pdf-pages.md) | Render a PDF to per-page images (OCR bench input) | `render-pdf`    | —              |
+| [US 19](user-stories/us-19-render-pdf-pages.md) | Render a PDF to per-page images (OCR bench input) | `render-pdf`    | ✅ Done         |
 | [US 20](user-stories/us-20-ocr-one-page-registry.md) | OCR one page with a registered model (stable transport) | `ocr-page`      | —              |
 | [US 21](user-stories/us-21-reference-free-scorers.md) | Score OCR output with reference-free defect metrics | `score-ocr`     | —              |
 | [US 22](user-stories/us-22-omnidocbench-gold-accuracy.md) | Score accuracy against an OmniDocBench gold subset | `score-gold`    | —              |
