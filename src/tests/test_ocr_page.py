@@ -268,6 +268,37 @@ def test_client_error_reason_is_distinct_from_server_unreachable(tmp_path: Path)
     assert "server unreachable" not in _only_record(manifest)["reason"]
 
 
+def test_transport_error_from_post_is_quarantined_not_crashed(tmp_path: Path):
+    # If the transport itself raises (e.g. curl missing → OSError), the batch must
+    # not crash (rule 02) — it retries, then quarantines.
+    def post(server, body_path):
+        raise OSError("curl: command not found")
+
+    result, _, _ = _run(tmp_path, "qwen/qwen3-vl-4b", post=post, retries=2)
+    assert result is None
+
+
+def test_null_content_is_quarantined_not_crashed(tmp_path: Path):
+    # A 200 whose content is JSON null (not a string) must not reach the
+    # post-processor and crash — treat it as a flap and quarantine.
+    def post(server, body_path):
+        return ("200", json.dumps({"choices": [{"message": {"content": None}}]}))
+
+    result, _, _ = _run(tmp_path, "qwen/qwen3-vl-4b", post=post, retries=2)
+    assert result is None
+
+
+def test_missing_image_is_quarantined_not_crashed(tmp_path: Path):
+    result = ocr_page(
+        tmp_path / "absent.png",
+        "qwen/qwen3-vl-4b",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        post=_post_boom,
+    )
+    assert result is None
+
+
 def test_null_usage_does_not_crash_after_a_successful_ocr(tmp_path: Path):
     # Some servers emit {"usage": null}; the record must still be written, not crash.
     def post(server, body_path):
@@ -344,6 +375,10 @@ def test_strip_markdown_fence_unwraps_a_whole_output_fence():
 
 def test_strip_markdown_fence_leaves_unfenced_text_alone():
     assert _strip_markdown_fence("# H\n\ntext") == "# H\n\ntext\n"
+
+
+def test_strip_markdown_fence_handles_crlf_line_endings():
+    assert _strip_markdown_fence("```markdown\r\n# H\r\n```") == "# H\n"
 
 
 def test_decode_grounding_strips_layout_boxes():

@@ -67,7 +67,7 @@ def _strip_markdown_fence(text: str) -> str:
     saved ``.md`` is the document, not a fence around it. A fence that is *not*
     the whole output (an inline code block) is left untouched.
     """
-    stripped = text.strip()
+    stripped = text.replace("\r\n", "\n").strip()
     fence = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", stripped, flags=re.S)
     if fence:
         return fence.group(1).strip() + "\n"
@@ -254,14 +254,23 @@ def _ocr_over_transport(
         code = ""
         for attempt in range(1, retries + 1):
             call_start = perf_counter()
-            code, raw = post(server, body_path)
+            try:
+                code, raw = post(server, body_path)
+            except OSError as exc:
+                # The transport itself failed (e.g. curl not on PATH) — a flap,
+                # not an answer; retry, then let the budget quarantine it rather
+                # than crash the batch (rule 02).
+                code, raw = f"transport error ({exc.__class__.__name__})", ""
             if code == "200":
                 try:
                     data = json.loads(raw)
                     choice = data["choices"][0]
                     content = choice["message"]["content"]
+                    if not isinstance(content, str):
+                        raise TypeError("content is not a string")
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                    # A 200 with an unexpected shape is a flap, not an answer —
+                    # A 200 with an unexpected shape (non-JSON, missing choices,
+                    # or a null/non-string content) is a flap, not an answer —
                     # never crash (rule 02); fall through to the retry path.
                     code = "200 (malformed body)"
                 else:
@@ -334,6 +343,17 @@ def ocr_page(
     target = out_dir / _model_slug(model) / (image_path.stem + ".md")
     if target.exists():
         return target  # idempotent skip — no server hit, no manifest record
+
+    # A missing/unreadable page (e.g. a stale path from a batch driver) is
+    # quarantined, not crashed over (rule 02) — and before any network call.
+    if not image_path.is_file():
+        _quarantine(
+            manifest_path,
+            page=str(image_path),
+            model=model,
+            reason=f"page image not found: {image_path}",
+        )
+        return None
 
     # Layer 2: dispatch on the transport result.
     try:
