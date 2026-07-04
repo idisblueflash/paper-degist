@@ -796,3 +796,21 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (line-level dup — the AC2 shape — is encoded; intra-line
   degeneration deferred, and already covered at the scorecard level by the
   completion_tokens signal).
+
+## ocr_page — transport hardened against four never-crash gaps (US20 follow-up)
+
+- **Where:** `src/paper_degist/ocr_page.py` (`_parse_response`, `_default_post`,
+  `_strip_markdown_fence`, `ocr_page` orchestrator).
+- **Case:** a parallel review pass (a duplicate US20 build's self-review + Codex)
+  surfaced four rule-02 "never crash" / precision gaps the merged US20 still had.
+- **Status:** RESOLVED (follow-up PR). Fixed test-first: (1) a **4xx** now raises
+  the new `ClientRequestError` and the orchestrator **fails fast** with a distinct
+  `request rejected` reason instead of retrying a deterministic error for the full
+  budget and mislabelling it "server unreachable"; (2) a 200 whose
+  `choices[0].message.content` is **null/non-string** becomes a retryable
+  `TransportError` rather than reaching the post-processor and `None.strip()`-ing;
+  (3) `_strip_markdown_fence` normalizes **CRLF** so a `\r\n` qwen answer still
+  has its outer fence stripped; (4) `_default_post` converts a **curl-missing**
+  `OSError` into a `TransportError`, and `ocr_page` guards a **missing page** file
+  with a distinct `page image not found` quarantine before any network call (the
+  Typer CLI already rejects it up front; this guards direct library callers).
