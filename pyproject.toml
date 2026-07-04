@@ -26,6 +26,7 @@ browser-up = "paper_degist.browser_up:main"
 browser-fetch = "paper_degist.browser_fetch:main"
 render-pdf = "paper_degist.render_pdf:main"
 recover-blocked = "paper_degist.recover_blocked:main"
+ocr-page = "paper_degist.ocr_page:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

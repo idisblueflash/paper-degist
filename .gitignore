@@ -10,6 +10,10 @@ __pycache__/
 files/
 manifest.jsonl
 
+# OCR bench artifacts: rendered page images (US19) and per-model OCR output (US20)
+pages/
+out/
+
 # US18 browser lane: the dev-mode Chrome profile holds live authenticated
 # sessions (secrets-at-rest) — never commit it.
 .browser-profile/

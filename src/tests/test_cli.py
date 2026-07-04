@@ -17,6 +17,7 @@ import paper_degist
 import paper_degist.browser_fetch as browser_fetch_mod
 import paper_degist.browser_up as browser_up_mod
 import paper_degist.fetch_one as fetch_one_mod
+import paper_degist.ocr_page as ocr_page_mod
 import paper_degist.parse_url as parse_url_mod
 import paper_degist.resolve_oa as resolve_oa_mod
 from paper_degist import app as root_app
@@ -25,6 +26,7 @@ from paper_degist.browser_fetch import app as browser_fetch_app
 from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
+from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
 from paper_degist.recover_blocked import app as recover_blocked_app
 from paper_degist.resolve_oa import app as resolve_oa_app
@@ -470,6 +472,53 @@ def test_root_signpost_lists_resolve_oa():
 def test_root_signpost_lists_convert_html():
     result = runner.invoke(root_app, [])
     assert "convert-html" in result.stdout
+
+
+def test_root_signpost_lists_ocr_page():
+    result = runner.invoke(root_app, [])
+    assert "ocr-page" in result.stdout
+
+
+# --- ocr-page CLI: unknown model quarantines without a crash or a network hit ---
+
+
+def _ocr_page_unknown_model(tmp_path: Path):
+    """Run `ocr-page` on an unregistered model; return (result, out_dir, manifest).
+
+    The unknown-model branch quarantines before any network contact, so the CLI
+    is exercisable offline with no injected transport.
+    """
+    page = tmp_path / "p02.png"
+    page.write_bytes(b"\x89PNG page bytes")
+    out_dir = tmp_path / "out"
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        ocr_page_app,
+        [str(page), "some-unregistered-ocr", "--out-dir", str(out_dir), "--manifest", str(manifest)],
+    )
+    return result, out_dir, manifest
+
+
+def test_ocr_page_cli_quarantine_exits_zero(tmp_path: Path):
+    # quarantine is an expected outcome, not a crash
+    result, _, _ = _ocr_page_unknown_model(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_ocr_page_cli_quarantine_writes_manifest(tmp_path: Path):
+    _, _, manifest = _ocr_page_unknown_model(tmp_path)
+    assert manifest.exists()
+
+
+def test_ocr_page_cli_quarantine_saves_no_output(tmp_path: Path):
+    _, out_dir, _ = _ocr_page_unknown_model(tmp_path)
+    assert not out_dir.exists()
+
+
+def test_ocr_page_cli_missing_page_exits_two(tmp_path: Path):
+    # Typer validates the page argument up front (exists=True) — clean exit 2.
+    result = runner.invoke(ocr_page_app, [str(tmp_path / "absent.png"), "qwen/qwen3-vl-4b"])
+    assert result.exit_code == 2
 
 
 def test_root_signpost_lists_steps():

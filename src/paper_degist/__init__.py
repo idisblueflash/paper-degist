@@ -18,6 +18,7 @@ _STEPS = [
     ("browser-fetch", "Fetch a bot-walled page through a dev-mode Chrome over CDP (US15)."),
     ("render-pdf", "Render a PDF into one PNG per page for the OCR bench (US19)."),
     ("recover-blocked", "Route the manifest's blocked_by URLs into browser-fetch (US17)."),
+    ("ocr-page", "OCR one page image with one registered vision model (US20)."),
 ]
 
 app = typer.Typer(
