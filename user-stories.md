@@ -36,7 +36,7 @@ timeless spec and carry no status marker.
 | [US 21](user-stories/us-21-reference-free-scorers.md) | Score OCR output with reference-free defect metrics | `score-ocr`     | ✅ Done         |
 | [US 22](user-stories/us-22-omnidocbench-gold-accuracy.md) | Score accuracy against an OmniDocBench gold subset | `score-gold`    | —              |
 | [US 23](user-stories/us-23-aggregate-scorecard-report.md) | Aggregate a model comparison scorecard | `ocr-report`    | —              |
-| [US 24](user-stories/us-24-embed-text-registry.md) | Embed one text with a registered local model (LM Studio transport) | `embed-text`    | —              |
+| [US 24](user-stories/us-24-embed-text-registry.md) | Embed one text with a registered local model (LM Studio transport) | `embed-text`    | ✅ Done         |
 | [US 25](user-stories/us-25-discover-candidates.md) | Discover candidate papers by topic (arXiv / Semantic Scholar) | `discover`      | —              |
 | [US 26](user-stories/us-26-abstract-filter-embedding.md) | Filter candidates by abstract similarity (deterministic + embedding) | `abstract-filter` | —            |
 
