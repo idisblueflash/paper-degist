@@ -1,0 +1,10 @@
+{
+  "Browser lane CDP fetch mechanism": {
+    "artifact": "src/paper_degist/browser_fetch.py",
+    "hash": "557bd0f033a43cb87c8d254705ef3c7fa42d29cad69c76c8a2d54469c5814fc7"
+  },
+  "browser-up keeps no state file": {
+    "artifact": "src/paper_degist/browser_up.py",
+    "hash": "9d7b1f834f0f0a04c79037ab81fd8f6d6bb12ef4fe6e04c29b015084e9f38435"
+  }
+}

@@ -15,6 +15,7 @@ _STEPS = [
     ("convert-html", "Convert a saved HTML paper into files/<name>.md (US5)."),
     ("resolve-oa", "Check a failed URL/DOI for an open-access copy (US9)."),
     ("browser-up", "Launch/reuse a dev-mode Chrome for the browser lane (US18)."),
+    ("browser-fetch", "Fetch a bot-walled page through a dev-mode Chrome over CDP (US15)."),
 ]
 
 app = typer.Typer(
@@ -28,7 +29,7 @@ def signpost() -> None:
     """Signpost only — run each step via its own console script."""
     typer.echo("paper-degist — run a pipeline step directly:\n")
     for name, desc in _STEPS:
-        typer.echo(f"  {name:<12} {desc}")
+        typer.echo(f"  {name:<14} {desc}")
     typer.echo("\nRun `uv run <step> --help` for a step's options.")
 
 

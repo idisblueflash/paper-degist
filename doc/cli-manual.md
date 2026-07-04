@@ -249,8 +249,65 @@ endpoint=$(uv run browser-up) && uv run browser-fetch <url> --cdp "$endpoint"
 ```
 
 The researcher owns Chrome's shutdown — `browser-up` never kills a browser (a
-warm session survives for later runs). `browser-fetch` and `--cdp` (US15/16) are
-not built yet; the composition line shows the intended shape.
+warm session survives for later runs).
+
+---
+
+## `browser-fetch` — capture a bot-walled page through the dev-mode Chrome (US15)
+
+`fetch-one` (US12) can *recognize* a bot-walled 403 but not get past it;
+`browser-fetch` is the recovery *mechanism*. It **attaches** to the
+already-running dev-mode Chrome that `browser-up` brought up (over CDP),
+navigates one URL, waits for the DOM to settle (`networkidle`, so a
+client-rendered page is captured — not the initial shell), and saves the rendered
+HTML under `files/` with the researcher's real logged-in cookies. It prints the
+saved path and mirrors `fetch-one`'s save + manifest contract, so `convert-html`
+consumes the result. It **never** launches or kills Chrome (that is `browser-up`),
+never logs in or solves a captcha for you, and fetches only the one URL it is
+given (batching is US16; deciding *which* URLs need the browser is US17).
+
+```
+uv run browser-fetch <url> [--cdp http://localhost:9222] [--files-dir files] [--manifest manifest.jsonl]
+```
+
+- **Argument**: the bot-walled `url` to fetch through the browser.
+- **Options**: `--cdp` (CDP endpoint of the running dev-mode Chrome; default
+  `http://localhost:9222` — a different port or a remote debugger is just this
+  flag, not a new command), `--files-dir` (where the rendered HTML is saved;
+  default `files/`), `--manifest` (default `manifest.jsonl`).
+- **Output**: the saved path on stdout (e.g.
+  `files/220320021_Spaced_Repetition_and_Long-Term_Retention.html`), plus a
+  `saved` record in the manifest.
+- **Quarantine, not a crash** (unlike `browser-up`, this step has an item to
+  carry forward). Two distinct manifest `reason`s keep "no browser" separate from
+  "browser could not load this page":
+  - `no dev-mode browser endpoint reachable at … — bring one up with browser-up`
+    — the CDP endpoint is unreachable; run `browser-up` first, then re-run.
+  - `navigation failed: …` — Chrome was reachable but the navigation errored or
+    timed out.
+- **Idempotent.** A URL already saved under `files/` is skipped — the file is left
+  untouched and **no** manifest record is appended, so re-runs stay quiet and safe.
+
+### Examples
+
+```bash
+# Happy path — bring Chrome up, then capture a bot-walled page's rendered HTML
+endpoint=$(uv run browser-up)
+uv run browser-fetch \
+  "https://www.researchgate.net/publication/220320021_Spaced_Repetition_and_Long-Term_Retention" \
+  --cdp "$endpoint"
+#   -> files/220320021_Spaced_Repetition_and_Long-Term_Retention.html
+#   -> manifest: {"stage":"browser-fetch","result":"saved","path":"files/220320021_…html", …}
+
+# Then convert the captured HTML to Markdown with the sibling step
+uv run convert-html files/220320021_Spaced_Repetition_and_Long-Term_Retention.html
+
+# No Chrome up — quarantines cleanly (exits 0), waits for a run with browser-up
+uv run browser-fetch \
+  "https://www.researchgate.net/publication/234567890_Retrieval_Practice_Produces_More_Learning"
+#   -> stderr: quarantined (see manifest.jsonl): https://www.researchgate.net/...
+#   -> manifest: {"stage":"browser-fetch","reason":"no dev-mode browser endpoint reachable …"}
+```
 
 ---
 

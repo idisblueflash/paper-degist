@@ -11,6 +11,7 @@ dependencies = [
     "beautifulsoup4>=4.15.0",
     "httpx>=0.28.1",
     "markdownify>=1.2.3",
+    "playwright>=1.61.0",
     "pypdf>=6.14.2",
     "typer>=0.26.8",
 ]
@@ -22,6 +23,7 @@ fetch-one = "paper_degist.fetch_one:main"
 convert-html = "paper_degist.convert_html:main"
 resolve-oa = "paper_degist.resolve_oa:main"
 browser-up = "paper_degist.browser_up:main"
+browser-fetch = "paper_degist.browser_fetch:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
