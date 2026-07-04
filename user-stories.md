@@ -15,7 +15,7 @@ timeless spec and carry no status marker.
 | ------------------------------------------------------- | ---------------------------------------- | --------------- | -------------- |
 | [US 1](user-stories/us-01-parsing-the-links.md)         | Parsing the links                        | `parse-url`     | ✅ Done         |
 | [US 2](user-stories/us-02-fetching-the-paper-file.md)   | Fetching the paper file                  | `fetch-one`     | ✅ Done         |
-| [US 3](user-stories/us-03-converting-pdf.md)            | Converting PDF                           | *(PDF path)*    | —              |
+| [US 3](user-stories/us-03-converting-pdf.md)            | Converting PDF                           | *(PDF path)*    | — *(model TBD by bench US 19–23)* |
 | [US 4](user-stories/us-04-formatting-paper.md)          | Formatting Paper                         | *(PDF path)*    | —              |
 | [US 5](user-stories/us-05-converting-html.md)           | Converting HTML                          | `convert-html`  | ✅ Done         |
 | [US 6](user-stories/us-06-importing-paper.md)           | Importing Paper                          | *(wiki import)* | —              |
@@ -31,6 +31,11 @@ timeless spec and carry no status marker.
 | [US 16](user-stories/us-16-warm-browser-across-batch.md) | Reuse one warm browser across a batch of URLs | `browser-fetch` | ✅ Done         |
 | [US 17](user-stories/us-17-recover-blocked-to-browser.md) | Recover bot-walled records through the browser lane | `recover-blocked` | —              |
 | [US 18](user-stories/us-18-launch-dev-mode-browser.md) | Launch a dev-mode Chrome for the browser lane | `browser-up`    | ✅ Done         |
+| [US 19](user-stories/us-19-render-pdf-pages.md) | Render a PDF to per-page images (OCR bench input) | `render-pdf`    | ✅ Done         |
+| [US 20](user-stories/us-20-ocr-one-page-registry.md) | OCR one page with a registered model (stable transport) | `ocr-page`      | —              |
+| [US 21](user-stories/us-21-reference-free-scorers.md) | Score OCR output with reference-free defect metrics | `score-ocr`     | —              |
+| [US 22](user-stories/us-22-omnidocbench-gold-accuracy.md) | Score accuracy against an OmniDocBench gold subset | `score-gold`    | —              |
+| [US 23](user-stories/us-23-aggregate-scorecard-report.md) | Aggregate a model comparison scorecard | `ocr-report`    | —              |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).

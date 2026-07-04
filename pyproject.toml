@@ -24,6 +24,7 @@ convert-html = "paper_degist.convert_html:main"
 resolve-oa = "paper_degist.resolve_oa:main"
 browser-up = "paper_degist.browser_up:main"
 browser-fetch = "paper_degist.browser_fetch:main"
+render-pdf = "paper_degist.render_pdf:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

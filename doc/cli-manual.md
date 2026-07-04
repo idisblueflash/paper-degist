@@ -333,6 +333,62 @@ uv run browser-fetch urls.txt
 
 ---
 
+## `render-pdf` — render a PDF to per-page images for the OCR bench (US19)
+
+The first step of the OCR-model bench (US 19–23): turn a paper PDF into one PNG
+per page so every model under comparison sees the **same** page bitmaps. The
+render is deterministic — same PDF + same dpi → byte-identical PNGs — so the
+downstream scores are reproducible. Ghostscript is the renderer of record
+(`png16m`, 150 dpi → 1275×1650 px for US-Letter); it is a bench input stage, not
+part of the fetch→convert pipeline.
+
+```
+uv run render-pdf <pdf> [--dpi 150] [--pages-dir pages] [--manifest manifest.jsonl]
+```
+
+- **Argument**: the `pdf` file to render (validated up front — a missing file
+  exits 2).
+- **Options**: `--dpi` (render resolution; default `150` — a different dpi is
+  this flag, not a new command), `--pages-dir` (root the pages land under;
+  default `pages/`), `--manifest` (default `manifest.jsonl`).
+- **Output**: one page path per line on stdout —
+  `pages/<stem>/pNNNN.png` (zero-padded, in page order) — plus a `rendered`
+  provenance record in the manifest (`stage`, `pdf`, `pages`, `dpi`).
+- **Quarantine, not a crash** (rule 02). Two cases land in the manifest and exit
+  cleanly (exit 0):
+  - `not a PDF (no %PDF header)` — the input's magic bytes are not `%PDF` (e.g.
+    a fetched `.html` was passed by mistake).
+  - `unrenderable PDF: …` — the bytes start with `%PDF` but Ghostscript could
+    not render them (truncated/corrupt); any partial pages are cleaned up so a
+    re-run does not mistake them for a complete render.
+- **Idempotent.** A PDF whose pages already exist under `pages/<stem>/` is
+  skipped — the PNGs are left untouched and **no** manifest record is appended.
+- **Requires** `gs` on `$PATH` (`brew install ghostscript`).
+
+### Examples
+
+```bash
+# Happy path — render every page of a paper to pages/<stem>/pNNNN.png
+uv run render-pdf files/WordCraft_Scaffolding_the_Keyword_Method.pdf
+#   -> pages/WordCraft_Scaffolding_the_Keyword_Method/p0001.png
+#   -> pages/WordCraft_Scaffolding_the_Keyword_Method/p0002.png   … (one per page)
+#   -> manifest: {"stage":"render-pdf","pdf":"files/WordCraft_…pdf","pages":32,"dpi":150}
+
+# A higher resolution is just a flag (no new command)
+uv run render-pdf files/Attention_Is_All_You_Need.pdf --dpi 300
+
+# Wrong type quarantines cleanly (a non-PDF is not this step's input)
+uv run render-pdf files/Deep_Residual_Learning.html
+#   -> stderr: quarantined (see manifest.jsonl): files/Deep_Residual_Learning.html
+#   -> manifest: {"stage":"render-pdf","pdf":"files/Deep_Residual_Learning.html",
+#                 "reason":"not a PDF (no %PDF header)"}
+```
+
+The page PNGs are the input the OCR bench's next step (US20 `ocr-page`) sends to
+each registered model.
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash
