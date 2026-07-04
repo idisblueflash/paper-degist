@@ -241,7 +241,10 @@ def _dispatch_url(
     so both behave identically per URL. An already-saved target is skipped
     (idempotent, appends no record); ``fetch_tab(url)`` raising quarantines that
     one URL with the **distinct** nav-failed reason (so one failure never aborts
-    a batch); success saves the rendered HTML and records ``saved``.
+    a batch); a filesystem write failure quarantines with a distinct ``save
+    failed`` reason (never mislabelled as a browser/session error); success saves
+    the rendered HTML and records ``saved``. No exception from a per-URL fetch or
+    save escapes — only a session open/teardown failure reaches the batch guard.
     """
     target = _target_path(url, files_dir)
     if target.exists():
@@ -259,8 +262,24 @@ def _dispatch_url(
         )
         return None
 
-    files_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(html, encoding="utf-8")
+    try:
+        files_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(html, encoding="utf-8")
+    except Exception as exc:  # a filesystem write failure is this URL's own, not the browser's
+        # Quarantine with a **distinct** reason so a data-integrity problem
+        # (unwritable dir, files_dir is a file, disk full) is not masked as a
+        # navigation or a browser-session failure by the batch handler (Codex
+        # review). Keeping it inside _dispatch_url means only true session
+        # open/teardown errors ever reach browser_fetch_batch's guard.
+        _manifest.append(
+            manifest_path,
+            stage="browser-fetch",
+            url=url,
+            cdp_url=cdp_url,
+            reason=f"save failed: {exc}",
+        )
+        return None
+
     _manifest.append(
         manifest_path,
         stage="browser-fetch",

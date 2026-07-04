@@ -520,6 +520,42 @@ def test_batch_session_open_failure_still_skips_an_already_saved_url(tmp_path: P
     assert result == [existing]
 
 
+# --- a per-URL *save* failure is quarantined honestly, not as a session error ---
+# (Codex P2: the broad batch handler must not mask a filesystem/manifest write
+#  failure as "browser session failed" — that hides a data-integrity problem.)
+
+
+def test_batch_save_failure_is_labelled_save_not_session(tmp_path: Path):
+    # files_dir is actually a *file*, so mkdir/write_text raises in the save path
+    # (outside fetch_tab). It must quarantine this URL as a save failure, not be
+    # mislabelled by the session-open handler.
+    blocker = tmp_path / "files"
+    blocker.write_text("i am a file, not a directory", encoding="utf-8")
+    manifest = tmp_path / "manifest.jsonl"
+    browser_fetch_batch(
+        [OK_URL],
+        files_dir=blocker,
+        manifest_path=manifest,
+        probe_cdp=_reached,
+        open_session=_fake_session(BODY),
+    )
+    reason = _records(manifest)[0]["reason"]
+    assert "save failed" in reason and "session" not in reason
+
+
+def test_batch_save_failure_saves_no_path(tmp_path: Path):
+    blocker = tmp_path / "files"
+    blocker.write_text("i am a file, not a directory", encoding="utf-8")
+    result = browser_fetch_batch(
+        [OK_URL],
+        files_dir=blocker,
+        manifest_path=tmp_path / "manifest.jsonl",
+        probe_cdp=_reached,
+        open_session=_fake_session(BODY),
+    )
+    assert result == []
+
+
 # --- an empty list is a no-op: never probe or open a browser for zero URLs ---
 
 
