@@ -244,8 +244,8 @@ uv run browser-up
 # A different port / profile is a flag, not a new command
 uv run browser-up --cdp http://localhost:9333 --user-data-dir .browser-profile
 
-# Compose with the browser lane: bring Chrome up, then fetch a bot-walled URL
-endpoint=$(uv run browser-up) && uv run browser-fetch <url> --cdp "$endpoint"
+# Compose with the browser lane: bring Chrome up, then fetch a list of URLs
+endpoint=$(uv run browser-up) && uv run browser-fetch urls.txt --cdp "$endpoint"
 ```
 
 The researcher owns Chrome's shutdown — `browser-up` never kills a browser (a
@@ -253,59 +253,81 @@ warm session survives for later runs).
 
 ---
 
-## `browser-fetch` — capture a bot-walled page through the dev-mode Chrome (US15)
+## `browser-fetch` — capture bot-walled pages through the dev-mode Chrome (US15/US16)
 
 `fetch-one` (US12) can *recognize* a bot-walled 403 but not get past it;
 `browser-fetch` is the recovery *mechanism*. It **attaches** to the
-already-running dev-mode Chrome that `browser-up` brought up (over CDP),
-navigates one URL, waits for the DOM to settle (`networkidle`, so a
-client-rendered page is captured — not the initial shell), and saves the rendered
-HTML under `files/` with the researcher's real logged-in cookies. It prints the
-saved path and mirrors `fetch-one`'s save + manifest contract, so `convert-html`
-consumes the result. It **never** launches or kills Chrome (that is `browser-up`),
-never logs in or solves a captcha for you, and fetches only the one URL it is
-given (batching is US16; deciding *which* URLs need the browser is US17).
+already-running dev-mode Chrome that `browser-up` brought up (over CDP), and for
+each URL navigates and waits for the DOM to settle (`networkidle`, so a
+client-rendered page is captured — not the initial shell), then saves the
+rendered HTML under `files/` with the researcher's real logged-in cookies. It
+mirrors `fetch-one`'s save + manifest contract, so `convert-html` consumes the
+result. It **never** launches or kills Chrome (that is `browser-up`) and never
+logs in or solves a captcha for you (deciding *which* URLs need the browser is
+US17).
+
+It reads a **list** of URLs and reuses **one** warm connection across the whole
+batch (US16): it probes the CDP endpoint once, then opens and closes a *tab* per
+URL against that single session — so every URL rides the same warm, authenticated
+Chrome instead of paying a cold connection per URL, and (via the persistent
+profile) the next run reuses it too. A single URL is just a one-line list.
 
 ```
-uv run browser-fetch <url> [--cdp http://localhost:9222] [--files-dir files] [--manifest manifest.jsonl]
+uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir files] [--manifest manifest.jsonl]
 ```
 
-- **Argument**: the bot-walled `url` to fetch through the browser.
+- **Argument**: `urls_file` — a file of bot-walled URLs, **one per line** (blank
+  lines and surrounding whitespace are ignored). Omit it to read the list from
+  **stdin**, so `browser-fetch` composes in a pipe.
 - **Options**: `--cdp` (CDP endpoint of the running dev-mode Chrome; default
   `http://localhost:9222` — a different port or a remote debugger is just this
   flag, not a new command), `--files-dir` (where the rendered HTML is saved;
   default `files/`), `--manifest` (default `manifest.jsonl`).
-- **Output**: the saved path on stdout (e.g.
-  `files/220320021_Spaced_Repetition_and_Long-Term_Retention.html`), plus a
-  `saved` record in the manifest.
-- **Quarantine, not a crash** (unlike `browser-up`, this step has an item to
-  carry forward). Two distinct manifest `reason`s keep "no browser" separate from
-  "browser could not load this page":
+- **Output**: each saved (or already-present) path on stdout, **one per line, in
+  first-seen order** — a drop-in to pipe into `convert-html` — plus a `saved`
+  record per URL in the manifest. If any URL quarantined, a one-line count is
+  noted on **stderr** (stdout stays paths-only for piping).
+- **Quarantine, not a crash** (unlike `browser-up`, this step carries items
+  forward). One URL failing never aborts the batch — it quarantines and the run
+  continues. Three distinct manifest `reason`s:
   - `no dev-mode browser endpoint reachable at … — bring one up with browser-up`
     — the CDP endpoint is unreachable; run `browser-up` first, then re-run.
-  - `navigation failed: …` — Chrome was reachable but the navigation errored or
-    timed out.
+  - `navigation failed: …` — Chrome was reachable but that URL's navigation
+    errored or timed out.
+  - `browser session failed to open: …` — the endpoint answered the probe but
+    the session could not be opened (e.g. a non-Chrome debug server, or Chrome
+    lost between probe and connect); the remaining URLs quarantine, never crash.
 - **Idempotent.** A URL already saved under `files/` is skipped — the file is left
-  untouched and **no** manifest record is appended, so re-runs stay quiet and safe.
+  untouched and **no** manifest record is appended, so re-running a partly-done
+  batch only fetches what is still missing.
 
 ### Examples
 
 ```bash
-# Happy path — bring Chrome up, then capture a bot-walled page's rendered HTML
+# Happy path — bring Chrome up, then capture a whole list over one warm session
 endpoint=$(uv run browser-up)
-uv run browser-fetch \
-  "https://www.researchgate.net/publication/220320021_Spaced_Repetition_and_Long-Term_Retention" \
-  --cdp "$endpoint"
+cat > urls.txt <<'EOF'
+https://www.researchgate.net/publication/220320021_Spaced_Repetition_and_Long-Term_Retention
+https://www.researchgate.net/publication/319012693_The_Testing_Effect_in_the_Classroom
+EOF
+uv run browser-fetch urls.txt --cdp "$endpoint"
 #   -> files/220320021_Spaced_Repetition_and_Long-Term_Retention.html
-#   -> manifest: {"stage":"browser-fetch","result":"saved","path":"files/220320021_…html", …}
+#   -> files/319012693_The_Testing_Effect_in_the_Classroom.html
+#   -> manifest: one {"stage":"browser-fetch","result":"saved", …} record per URL
 
-# Then convert the captured HTML to Markdown with the sibling step
-uv run convert-html files/220320021_Spaced_Repetition_and_Long-Term_Retention.html
+# Drop-in over a list: pipe the saved paths straight into convert-html
+uv run browser-fetch urls.txt --cdp "$endpoint" | while read -r p; do
+  uv run convert-html "$p"
+done
 
-# No Chrome up — quarantines cleanly (exits 0), waits for a run with browser-up
-uv run browser-fetch \
-  "https://www.researchgate.net/publication/234567890_Retrieval_Practice_Produces_More_Learning"
-#   -> stderr: quarantined (see manifest.jsonl): https://www.researchgate.net/...
+# Or read the list from stdin (a single URL is a one-line list)
+echo "https://www.researchgate.net/publication/234567890_Retrieval_Practice_Produces_More_Learning" \
+  | uv run browser-fetch --cdp "$endpoint"
+
+# No Chrome up — every URL quarantines cleanly (exits 0), waits for browser-up
+uv run browser-fetch urls.txt
+#   -> stdout: (empty — nothing saved)
+#   -> stderr: 2 of 2 URL(s) quarantined (see manifest.jsonl)
 #   -> manifest: {"stage":"browser-fetch","reason":"no dev-mode browser endpoint reachable …"}
 ```
 

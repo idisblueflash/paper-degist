@@ -7,18 +7,21 @@ traceback).
 """
 
 import io
+from contextlib import contextmanager
 from pathlib import Path
 
 import typer
 from typer.testing import CliRunner
 
 import paper_degist
+import paper_degist.browser_fetch as browser_fetch_mod
 import paper_degist.browser_up as browser_up_mod
 import paper_degist.fetch_one as fetch_one_mod
 import paper_degist.parse_url as parse_url_mod
 import paper_degist.resolve_oa as resolve_oa_mod
 from paper_degist import app as root_app
 from paper_degist._cli import invoke
+from paper_degist.browser_fetch import app as browser_fetch_app
 from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
 from paper_degist.fetch_one import app as fetch_one_app
@@ -268,6 +271,113 @@ def test_browser_up_main_returns_one_on_loud_failure(monkeypatch, capsys):
     monkeypatch.setattr(browser_up_mod, "_default_port_in_use", lambda h, p: False)
     monkeypatch.setattr(browser_up_mod, "_default_find_chrome", lambda: None)
     assert browser_up_mod.main([]) == 1
+
+
+# --- browser-fetch CLI: a *list* of URLs from a file/stdin over one warm session (US16) ---
+
+
+B1 = "https://www.researchgate.net/publication/220320021_Spaced_Repetition_and_Long-Term_Retention"
+B2 = "https://www.researchgate.net/publication/319012693_The_Testing_Effect_in_the_Classroom"
+
+
+def _patch_browser_batch(monkeypatch, *, reachable=True):
+    """Patch browser-fetch's collaborators so the CLI runs without a real Chrome."""
+    monkeypatch.setattr(browser_fetch_mod, "_default_probe_cdp", lambda cdp: reachable)
+
+    @contextmanager
+    def _open(cdp_url, **_kw):
+        yield lambda url: f"<html><body>{url}</body></html>"
+
+    monkeypatch.setattr(browser_fetch_mod, "_default_open_session", _open)
+
+
+def test_browser_fetch_cli_reads_urls_from_a_file_and_prints_saved_paths(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"{B1}\n{B2}\n", encoding="utf-8")
+    files = tmp_path / "files"
+
+    result = runner.invoke(
+        browser_fetch_app,
+        [str(urls), "--files-dir", str(files), "--manifest", str(tmp_path / "m.jsonl")],
+    )
+
+    assert result.stdout == (
+        f"{files / '220320021_Spaced_Repetition_and_Long-Term_Retention.html'}\n"
+        f"{files / '319012693_The_Testing_Effect_in_the_Classroom.html'}\n"
+    )
+
+
+def test_browser_fetch_cli_reads_urls_from_stdin_when_no_file(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch)
+    files = tmp_path / "files"
+    result = runner.invoke(
+        browser_fetch_app,
+        ["--files-dir", str(files), "--manifest", str(tmp_path / "m.jsonl")],
+        input=f"{B1}\n",
+    )
+    assert result.stdout == f"{files / '220320021_Spaced_Repetition_and_Long-Term_Retention.html'}\n"
+
+
+def test_browser_fetch_cli_skips_blank_lines(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"\n{B1}\n   \n", encoding="utf-8")  # blanks/whitespace ignored
+    files = tmp_path / "files"
+    result = runner.invoke(
+        browser_fetch_app,
+        [str(urls), "--files-dir", str(files), "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert result.stdout == f"{files / '220320021_Spaced_Repetition_and_Long-Term_Retention.html'}\n"
+
+
+def test_browser_fetch_cli_no_browser_prints_nothing(tmp_path, monkeypatch):
+    # Endpoint unreachable → nothing saved, so stdout is empty (the URLs wait in
+    # the manifest); the run still exits cleanly, never crashes.
+    _patch_browser_batch(monkeypatch, reachable=False)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"{B1}\n{B2}\n", encoding="utf-8")
+    result = runner.invoke(
+        browser_fetch_app,
+        [str(urls), "--files-dir", str(tmp_path / "files"), "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert result.stdout == ""
+
+
+def test_browser_fetch_cli_no_browser_notes_the_quarantine_on_stderr(tmp_path, monkeypatch):
+    # A batch that saves nothing must not be silent — the user needs to know the
+    # URLs were quarantined (and where), while stdout stays paths-only for piping.
+    _patch_browser_batch(monkeypatch, reachable=False)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"{B1}\n{B2}\n", encoding="utf-8")
+    manifest = tmp_path / "m.jsonl"
+    result = runner.invoke(
+        browser_fetch_app,
+        [str(urls), "--files-dir", str(tmp_path / "files"), "--manifest", str(manifest)],
+    )
+    assert "quarantined" in result.stderr
+
+
+def test_browser_fetch_cli_no_browser_exits_zero(tmp_path, monkeypatch):
+    _patch_browser_batch(monkeypatch, reachable=False)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"{B1}\n", encoding="utf-8")
+    result = runner.invoke(
+        browser_fetch_app,
+        [str(urls), "--files-dir", str(tmp_path / "files"), "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert result.exit_code == 0
+
+
+def test_browser_fetch_cli_missing_file_exits_two_without_traceback(tmp_path):
+    result = runner.invoke(browser_fetch_app, [str(tmp_path / "nope.txt")])
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+def test_root_signpost_lists_browser_fetch():
+    result = runner.invoke(root_app, [])
+    assert "browser-fetch" in result.stdout
 
 
 def test_root_signpost_lists_browser_up():
