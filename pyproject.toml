@@ -28,6 +28,7 @@ render-pdf = "paper_degist.render_pdf:main"
 recover-blocked = "paper_degist.recover_blocked:main"
 ocr-page = "paper_degist.ocr_page:main"
 score-ocr = "paper_degist.score_ocr:main"
+embed-text = "paper_degist.embed_text:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
