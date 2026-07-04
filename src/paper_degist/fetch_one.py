@@ -59,6 +59,41 @@ def classify(content_type: str, body: bytes) -> Optional[str]:
     return None
 
 
+# Known bot-walling hosts → the actionable manifest reason (US12). Encoded
+# knowledge (rule 02): these hosts reliably answer an automated fetch with
+# HTTP 403 because they bot-wall clients — the 403 is a *wall to route around*
+# via ``resolve-oa``, not a bug in the URL or a transient error to retry. A new
+# walled host discovered later is a one-line addition to this table, never a new
+# code branch. The key is the canonical (registrable) host recorded as
+# ``blocked_by``; a subdomain (``www.researchgate.net``) matches it by suffix.
+_BOT_WALLED_HOSTS: dict[str, str] = {
+    "researchgate.net": (
+        "bot-walled source: ResearchGate blocks automated fetches — "
+        "route around it via resolve-oa"
+    ),
+    "pubmed.ncbi.nlm.nih.gov": (
+        "bot-walled source: PubMed blocks automated fetches, and this URL is an "
+        "abstract-only page (no full text) — route around it via resolve-oa"
+    ),
+}
+
+
+def bot_wall_for(url: str) -> Optional[tuple[str, str]]:
+    """If ``url``'s host is a known bot-wall, return ``(host, actionable reason)``.
+
+    Matches the registrable host or any subdomain of it, so a ``www.`` variant
+    (``www.researchgate.net``) resolves to the canonical ``researchgate.net``
+    recorded as ``blocked_by``. Returns ``None`` for any host not on the encoded
+    table — the caller then falls through to the generic quarantine (US2 AC6)
+    unchanged (US12 AC3).
+    """
+    host = (urlsplit(url).hostname or "").lower()
+    for known, reason in _BOT_WALLED_HOSTS.items():
+        if host == known or host.endswith(f".{known}"):
+            return known, reason
+    return None
+
+
 def _slug_tokens(text: str) -> frozenset[str]:
     """Lowercase alphanumeric word tokens of ``text`` — the unit of comparison.
 
@@ -177,8 +212,15 @@ def _quarantine(
     status: Optional[int],
     content_type: Optional[str],
     reason: str,
+    blocked_by: Optional[str] = None,
 ) -> None:
-    """Append one unhandled-case record to the manifest, so the batch finishes."""
+    """Append one unhandled-case record to the manifest, so the batch finishes.
+
+    ``blocked_by`` names the bot-walling host for a recognized 403 (US12); it is
+    omitted entirely for every other quarantine, so a generic 403's record shape
+    is unchanged (US12 AC3/AC4).
+    """
+    extra = {"blocked_by": blocked_by} if blocked_by is not None else {}
     _manifest.append(
         manifest_path,
         stage="fetch-one",
@@ -186,6 +228,7 @@ def _quarantine(
         status=status,
         content_type=content_type,
         reason=reason,
+        **extra,
     )
 
 
@@ -219,13 +262,29 @@ def fetch_one(
 
     content_type = resp.headers.get("content-type", "")
     if resp.status_code >= 400:
-        _quarantine(
-            manifest_path,
-            url=url,
-            status=resp.status_code,
-            content_type=content_type,
-            reason=f"http {resp.status_code}",
-        )
+        # A 403 from a known bot-walling host is a wall to route around, not a
+        # bug or a transient error (US12): tag it with a distinct reason + the
+        # blocked_by host. Every other 4xx/5xx (and a 403 from any other host)
+        # keeps the generic record (US2 AC6) unchanged.
+        walled = bot_wall_for(url) if resp.status_code == 403 else None
+        if walled is not None:
+            host, reason = walled
+            _quarantine(
+                manifest_path,
+                url=url,
+                status=resp.status_code,
+                content_type=content_type,
+                reason=reason,
+                blocked_by=host,
+            )
+        else:
+            _quarantine(
+                manifest_path,
+                url=url,
+                status=resp.status_code,
+                content_type=content_type,
+                reason=f"http {resp.status_code}",
+            )
         return None
 
     ext = classify(content_type, resp.content)
