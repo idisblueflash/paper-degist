@@ -744,6 +744,84 @@ aggregating a cross-model scorecard from these rows is US23 (`ocr-report`).
 
 ---
 
+## `embed-text` — embed one text with one registered local model (US24)
+
+The similarity primitive for the abstract filter (US26): send **one** text to
+**one** named embedding model over the same stable transport as `ocr-page` and
+save its vector. It is the near-exact sibling of `ocr-page` — same LM Studio
+server, same **registry**, same fixed-encoded transport (rule 02): the JSON body
+is built in Python and POSTed with `curl --data @body.json`, **sequentially**,
+with a recovery gap and **retry-on-5xx** — only the `/v1/embeddings` endpoint
+instead of chat. Models are a **registry**; a new model is one
+`(query-prefix, document-prefix)` entry, not a code branch.
+
+```
+uv run embed-text <model-id> [text-file] [--role query|document]
+                  [--out-dir out] [--endpoint URL] [--attempts 3] [--gap 7.0]
+                  [--manifest manifest.jsonl]
+```
+
+- **Arguments**: a **registered** `model` id (see the registry below), and the
+  `text-file` to embed (validated up front — a missing file exits 2). With the
+  file omitted, the text is read from **stdin**, so the step is pipeable.
+- **`--role`** selects which registry prefix is applied: `document` (default —
+  a passage/abstract, `search_document: …`) or `query` (a topic/query string,
+  `search_query: …`). Getting the role wrong silently degrades ranking, so it is
+  recorded in every manifest row and folded into the cache key.
+- **Options**: `--out-dir` (root the vector lands under; default `out/`),
+  `--endpoint` (the embeddings URL; default
+  `http://localhost:1234/v1/embeddings` — LM Studio), `--attempts` (max POSTs
+  before quarantine; default `3`), `--gap` (recovery seconds between retries;
+  default `7.0`), `--manifest`.
+- **Output**: the saved vector path on stdout —
+  `out/embeddings/<model-slug>/<hash>.json`, where `<hash>` is a SHA-256 of
+  `(model, role, text)` — plus an `embed` provenance record in the manifest
+  (`stage`, `model`, `role`, `text_hash`, `dims`, `latency`). The JSON file holds
+  `{model, role, dims, embedding}`.
+- **Registered models** (the `(query, document)` prefix registry):
+  - `nomic-embed-text-v1.5` — `search_query: ` for a query, `search_document: `
+    for a passage (its documented task prefixes; a 768-dim vector).
+- **Quarantine, not a crash** (rule 02). Two cases land in the manifest and exit
+  cleanly (exit 0):
+  - `unknown model: '…' not in registry` — the model id is not registered; the
+    network is **never touched** (distinct from a server error).
+  - `server unreachable after N attempts: …` — the endpoint 5xx'd / was
+    unreachable through every retry; the curl diagnostic is included.
+- **Idempotent.** A `(model, role, text)` whose `out/embeddings/<model>/<hash>.json`
+  already exists is skipped — the model call is the expensive, flaky resource, so
+  a re-run **never** re-hits the server and appends **no** manifest record.
+- **Requires** `curl` on `$PATH` and a model server (LM Studio) already up with
+  the embedding model loadable — bringing the server up is the operator's job (as
+  `browser-up` is for Chrome), not this step.
+
+### Examples
+
+```bash
+# Happy path — embed an abstract as a document; vector saved under out/embeddings/
+uv run embed-text nomic-embed-text-v1.5 abstract.txt --role document
+#   -> out/embeddings/nomic-embed-text-v1.5/71502e4f….json  (path printed)
+#   -> manifest: {"stage":"embed-text","model":"nomic-embed-text-v1.5","role":"document",
+#                 "text_hash":"71502e4f…","dims":768,"latency":0.147}
+
+# Embed a topic string as a query (the other prefix) — piped in on stdin
+echo "spaced repetition and long-term retention" \
+  | uv run embed-text nomic-embed-text-v1.5 --role query
+
+# An unregistered model quarantines without touching the network
+uv run embed-text some-unregistered-embed abstract.txt
+#   -> stderr: quarantined (see manifest.jsonl): some-unregistered-embed + role=document
+#   -> manifest: {"stage":"embed-text","model":"some-unregistered-embed","role":"document",
+#                 "text_hash":"7909048f…","reason":"unknown model: 'some-unregistered-embed' not in registry"}
+```
+
+`embed-text` is the primitive the US26 abstract filter composes: it embeds the
+topic once as a `query` and each candidate abstract as a `document`, then ranks
+by cosine similarity — a deterministic, offline signal, no LLM in the loop. It
+does one text per run; the batch driver that walks an abstract list, keeping the
+sequential-with-gap rule, is that filter's job.
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash
