@@ -207,7 +207,93 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when we build the manual/browser rescue step. Read the
   `resolve-oa` manifest records and present them as a work queue (or drive a
   logged-in browser context), quarantining anything still unreachable.
-- **Status:** OPEN.
+- **Status:** MECHANISM ADDRESSED by US15. `browser-fetch` is the fetch
+  *mechanism*: it attaches to an already-running dev-mode Chrome (US18
+  `browser-up`) over CDP, navigates one URL, and saves the rendered HTML with the
+  researcher's real cookies. Still OPEN: the *routing* that reads `resolve-oa` /
+  `fetch-one` `blocked_by` records and feeds them to `browser-fetch`
+  automatically is US17 — nothing consumes the manifest reason yet.
+
+## browser_fetch — a wall/login/consent page can be saved as if it were the paper (US15)
+
+- **Where:** `src/paper_degist/browser_fetch.py::browser_fetch` (the save branch)
+  and `_default_fetch_rendered`.
+- **Case not handled:** browser-fetch trusts whatever the browser renders. A host
+  that answers the navigation with a login form, cookie-consent interstitial, or
+  captcha page (instead of the paper) renders *successfully* — so its HTML is
+  saved and recorded `saved`, as if the wall were the content. US15 deliberately
+  defers automating the wall (the researcher logs in by hand once), but there is
+  no signal that distinguishes "captured the paper" from "captured the wall".
+  `convert-html`'s "too thin" check (US5) catches a near-empty shell but **not** a
+  full, content-rich login page.
+- **Trigger to fix:** the first saved `.html` that is actually a wall page (a
+  convert step yielding a login/consent Markdown). Add a wall-signature check
+  (known login/consent markers, or a title/URL mismatch) that quarantines with a
+  distinct "looks like a wall, not the paper" reason, driven by a captured
+  wall-page fixture.
+- **Status:** OPEN — **confirmed live by the US15 real E2E (2026-07-04).** Fetching
+  `…/220320021_Spaced_Repetition_and_Long-Term_Retention` through a real dev-mode
+  Chrome **not logged in to ResearchGate** saved a 939 KB HTML that was a
+  Cloudflare-gated "Request PDF" page (markers `cloudflare` / `challenge-platform`,
+  and a `<title>` for an *unrelated* paper) — recorded `saved`, exactly the
+  wall-as-paper case. Two concrete signals a fix could use surfaced here: the
+  Cloudflare challenge markers, and a **title/slug mismatch** between the URL and
+  the rendered `<title>`. Operationally the precondition is that the researcher
+  logs the profile into the host first (US15 defers in-script auth by design).
+  **Stickiness (Codex review):** because the save writes a real file and re-runs
+  skip an existing target (AC4 idempotency), a bad wall capture is *permanently*
+  treated as a success — recovering it needs deleting the saved `.html` (and its
+  manifest row) by hand. A future wall-signature check would need to run **before**
+  the save so a wall never becomes the sticky artifact in the first place.
+
+## browser_fetch — proxy env broke the CDP connection (fixed in the US15 E2E)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_default_fetch_rendered` /
+  `_no_proxy_for`.
+- **Case:** playwright's `connect_over_cdp` respects `HTTP(S)_PROXY`, so on a
+  machine with a proxy set the *localhost* CDP connection was routed through the
+  proxy, which 502s a loopback debug server — a perfectly reachable dev-mode
+  Chrome then read as a navigation failure. The same trap `browser_up`'s probe
+  dodges with `trust_env=False`; surfaced by the US15 real E2E on a proxied
+  machine (`HTTP_PROXY=127.0.0.1:7897`).
+- **Status:** RESOLVED. `_default_fetch_rendered` wraps the CDP session in
+  `_no_proxy_for(host)`, which adds the CDP host to `NO_PROXY` for the duration
+  (restoring it after) so the driver hits the endpoint directly without disabling
+  the proxy for the page's own traffic. Pinned by
+  `test_no_proxy_for_adds_the_cdp_host_to_no_proxy` and
+  `test_no_proxy_for_restores_the_prior_no_proxy_after`.
+
+## browser_fetch — live happy-path E2E not yet exercised against a real Chrome
+
+- **Where:** `src/paper_degist/browser_fetch.py::_default_fetch_rendered` (the
+  real `connect_over_cdp` → `page.goto(wait_until="networkidle")` → `page.content()`
+  path).
+- **Case not handled:** the US15 real E2E confirmed the classify/dispatch, the
+  proxy-bypass fix (ws now connects), the quarantine branch (a non-conforming CDP
+  endpoint quarantined cleanly with a distinct reason, exit 0, no file), and
+  idempotency — but the **happy-path save through a genuine dev-mode Chrome** could
+  not run: the environment had no real Chrome to attach to (the CDP server that
+  answered `:9222` was not a full Chrome — `Browser context management is not
+  supported`), and `browser-up` needs a real Chrome + display. The save path is
+  covered only by unit + BDD with an injected renderer.
+- **Trigger to fix:** the first run on a machine where `browser-up` has a real
+  dev-mode Chrome up. Run `browser-fetch` against a genuinely bot-walled URL,
+  confirm the rendered HTML is saved and `convert-html` consumes it; `networkidle`
+  + the fixed 30s timeout may also surface a page (persistent websocket/polling)
+  that never idles and quarantines as a nav timeout — retune the wait then.
+- **Status:** RESOLVED (2026-07-04). Ran against a **real** dev-mode Chrome on
+  `:9222` (a genuine `browser-up`-style Chrome on `.browser-profile`): `browser-fetch`
+  connected over CDP, navigated, and saved a 939 KB rendered HTML with a `saved`
+  manifest record (exit 0); a second run was idempotent (existing path printed, no
+  duplicate manifest row). The earlier "context management not supported" was a
+  non-Chrome CDP server transiently on `:9222`, not this code — a direct playwright
+  `connect_over_cdp` → `new_page` → `goto` → `content()` against the real Chrome
+  works. Two residuals stay open as their own flags: the saved page was a Cloudflare
+  wall (see wall-as-paper flag above), and `convert-html` consumption + the
+  `networkidle` timeout retune are still worth a pass on a logged-in fetch.
+  NB: a second Chrome cannot launch on a `--user-data-dir` a first Chrome already
+  holds (profile lock) — matches the `browser_up` locked-profile deferred flag;
+  reuse the running endpoint instead.
 
 ## resolve_oa — single OA source (Unpaywall); OpenAlex/CORE not cross-checked
 
