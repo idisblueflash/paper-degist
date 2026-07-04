@@ -17,6 +17,7 @@ _STEPS = [
     ("browser-up", "Launch/reuse a dev-mode Chrome for the browser lane (US18)."),
     ("browser-fetch", "Fetch a bot-walled page through a dev-mode Chrome over CDP (US15)."),
     ("render-pdf", "Render a PDF into one PNG per page for the OCR bench (US19)."),
+    ("ocr-page", "OCR one page image with one registered vision model (US20)."),
 ]
 
 app = typer.Typer(
