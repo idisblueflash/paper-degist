@@ -771,3 +771,28 @@ location, the case not yet handled, and the trigger that should make us fix it.
   papers. Carry the full source page path into the output (or into a sidecar) so
   the join is exact, driven by a failing test with two same-stem pages.
 - **Status:** OPEN (low priority — current single-paper layout has unique stems).
+
+## score_ocr — dup_pct is line-level; an intra-line (single-line) loop reads as 0 (US21)
+
+- **Where:** `src/paper_degist/score_ocr.py::dup_pct` / `_substantive_lines`
+  (`text.splitlines()`).
+- **Case not handled:** `dup_pct` counts duplicate *lines* (the shape AC2 scoped:
+  `unlimited-ocr`'s loop put each repeat on its own line → ~95%). A model that
+  degenerates into **one physical line with no newlines** repeats phrases
+  *within* that single line, so there is exactly one substantive line, `unique ==
+  total`, and `dup_pct == 0.0` — the metric is blind to it. Surfaced by the US21
+  real E2E: `out/deepseek-ocr/p0001.md` is a single unbroken line of ~100
+  near-identical `"The sum of two numbers is $-N$ and their difference is $0$…"`
+  sentences (a fluent runaway), yet scored `dup_pct: 0.0`. That page is **not**
+  missed overall — the manifest-joined `completion_tokens: 2301` (vs qwen's 167)
+  still flags the runaway — but the *duplication* dimension itself understates it.
+- **Trigger to fix:** the first degenerated page whose repetition is intra-line
+  (a single-line or few-line blob) that we want `dup_pct` to catch. Add a
+  phrase/n-gram-level repetition signal (e.g. a duplicate-sentence or repeated
+  n-gram ratio), or normalize a runaway single line into sentences before the dup
+  count — driven by a **failing test on a captured `deepseek-ocr/p0001.md`-style
+  fixture**. Keep the line-level metric too (it catches the `unlimited-ocr`
+  shape); this is a second, complementary dimension, not a replacement.
+- **Status:** OPEN (line-level dup — the AC2 shape — is encoded; intra-line
+  degeneration deferred, and already covered at the scorecard level by the
+  completion_tokens signal).
