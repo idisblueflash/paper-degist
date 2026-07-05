@@ -136,6 +136,17 @@ Once the PR merges on the remote, sync local and prune the branch in this
 4. **`git push origin --delete <branch>`** — only if GitHub's "delete branch on
    merge" did not already remove the remote branch.
 
+**Stacked PRs and the base-branch delete.** If a follow-up PR B is *stacked* on
+this PR (B's base is this feature branch, not `master`), merging this PR with
+"delete branch on merge" **auto-closes B** — GitHub does not retarget it — and a
+closed PR whose base branch is gone **cannot be reopened or retargeted**
+(`gh pr edit --base` / `gh pr reopen` both refuse), so the only recovery is a
+*fresh* PR from B's head to `master`. Avoid the whole trap: **retarget B to
+`master` before merging its base** (`gh pr edit <B> --base master`), or don't
+stack — hold the follow-up on its own branch off `master` until the base merges
+(prefer this for a spec-only follow-up, which needs no code from the unmerged
+base).
+
 The branch list stays scoped to live work and local `master` never lags the
 remote, so the next story branches off the real tip instead of a stale one.
 
