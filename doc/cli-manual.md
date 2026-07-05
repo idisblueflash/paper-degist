@@ -494,7 +494,9 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
 - **Output**: the saved Markdown path on stdout —
   `out/<model-slug>/<page>.md` (`qwen/qwen3-vl-4b` → `out/qwen_qwen3-vl-4b/`) —
   plus an `ocr` provenance record in the manifest (`stage`, `page`, `model`,
-  `latency`, `finish_reason`, `completion_tokens`).
+  `host`, `latency`, `finish_reason`, `completion_tokens`). `host` is the
+  producing machine (`platform.node()`) — `latency` is machine-dependent, so the
+  host is recorded to keep a mixed-machine bench attributable (see DEVLOG).
 - **Registered models** (the `(prompt, post-processor)` registry):
   - `qwen/qwen3-vl-4b` — a plain "Convert the document to markdown." instruction;
     output is unwrapped from the ```` ```markdown ```` fence it comes in.
@@ -531,7 +533,7 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
 uv run ocr-page pages/WordCraft_Scaffolding_the_Keyword_Method/p0002.png qwen/qwen3-vl-4b
 #   -> out/qwen_qwen3-vl-4b/p0002.md  (path printed)
 #   -> manifest: {"stage":"ocr-page","page":"pages/…/p0002.png","model":"qwen/qwen3-vl-4b",
-#                 "latency":20.8,"finish_reason":"stop","completion_tokens":167}
+#                 "host":"mac-mini.local","latency":20.8,"finish_reason":"stop","completion_tokens":167}
 
 # The same page through DeepSeek-OCR is just a different registered id
 uv run ocr-page pages/Attention_Is_All_You_Need/p0001.png deepseek-ocr
@@ -641,8 +643,9 @@ uv run score-ocr <output.md> [--scores scores.jsonl] [--manifest manifest.jsonl]
   to; default `manifest.jsonl`).
 - **Output**: a `<model>/<page> -> <scores>` note on stdout, plus one appended
   `scores.jsonl` row carrying every reference-free dimension **joined** with the
-  per-call fields `ocr-page` recorded (`finish_reason`, `latency`,
-  `completion_tokens`):
+  per-call fields `ocr-page` recorded (`host`, `finish_reason`, `latency`,
+  `completion_tokens` — `host` travels with the row so a mixed-machine
+  `scores.jsonl` stays attributable, since `latency` is machine-dependent):
   - `dup_pct` — percentage of substantive lines that repeat an earlier one (the
     metric that flagged `unlimited-ocr`'s 95 % loop); markdown rules (`---`) and
     blank lines are excluded so legitimate boilerplate does not inflate it. When a
@@ -671,7 +674,7 @@ uv run score-ocr out/qwen_qwen3-vl-4b/p0001.md
 #   -> stdout: qwen_qwen3-vl-4b/p0001 -> scores.jsonl
 #   -> scores.jsonl: {"model":"qwen_qwen3-vl-4b","page":"p0001","dup_pct":0.0,
 #        "hyphen_artifacts":0,"citation_groups":0,"cjk_present":false,
-#        "finish_reason":"stop","latency":9.378,"completion_tokens":167}
+#        "host":"mac-mini.local","finish_reason":"stop","latency":9.378,"completion_tokens":167}
 
 # The same page's DeepSeek output is just a different output path. A fluent
 # hallucination shows up here as a runaway completion_tokens (2301 vs 167),
@@ -853,8 +856,13 @@ uv run ocr-report [scores.jsonl] [--report report.md] [--manifest manifest.jsonl
     → a representative **median** (one busy page does not skew it);
   - ratio/score numbers (`dup_pct`, `text_edit_distance`, `teds`, `latency`)
     → their **mean**;
-  - categorical strings/bools (`finish_reason`, `cjk_present`) → their **dominant
-    value**.
+  - categorical strings/bools (`finish_reason`, `cjk_present`, `host`) → their
+    **dominant value**.
+  - The `host` column (the machine that produced each row) makes a mixed-machine
+    `scores.jsonl` visible in the scorecard, but the report does **not** yet
+    segment `latency` by host — a scorecard pooled across machines still compares
+    `latency` measured on different hardware (see the DEVLOG flag; host-aware
+    aggregation is deferred to its own US23 follow-up).
 - **Composite `accuracy` column** — a derived, higher-is-better roll-up of the two
   gold-referenced accuracy dimensions onto one 0–1 axis: `mean(teds, 1 −
   text_edit_distance)` (`teds` is already higher-is-better; `text_edit_distance` is
