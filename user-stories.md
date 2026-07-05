@@ -40,6 +40,8 @@ timeless spec and carry no status marker.
 | [US 25](user-stories/us-25-discover-candidates.md) | Discover candidate papers by topic (arXiv / Semantic Scholar) | `discover`      | ✅ Done         |
 | [US 26](user-stories/us-26-abstract-filter-embedding.md) | Filter candidates by abstract similarity (deterministic + embedding) | `abstract-filter` | —            |
 | [US 27](user-stories/us-27-serpapi-google-scholar.md) | Discover via SerpAPI Google Scholar (topic + author, direct PDF links) | `discover`      | —              |
+| [US 29](user-stories/us-29-openalex-discover.md) | Discover via OpenAlex (keyless, DOI-bearing, OA PDF links) | `discover`      | —              |
+| [US 30](user-stories/us-30-expand-citations.md) | Expand candidates along the citation graph (references + citers) | `expand-citations` | —          |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
