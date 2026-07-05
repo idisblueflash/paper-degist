@@ -501,9 +501,13 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
   - `deepseek-ocr` — the `<|grounding|>Convert the document to markdown.` prompt
     (the literal `<image>` token **omitted**, or LM Studio 400s on a double
     image); the grounding markup is decoded to plain Markdown.
-  - `deepseek-ocr-2`, `deepseek-ocr@8bit` — DeepSeek OCR variants, each the same
-    grounding prompt + decode as `deepseek-ocr` (a variant is one registry entry,
-    not a branch). On a RAM-constrained host load **one model at a time** (e.g.
+  - `deepseek-ocr-2`, `deepseek-ocr@8bit` — DeepSeek-OCR-2 (and its 8-bit quant):
+    the same grounding prompt as `deepseek-ocr`, but its `<|ref|>` slot holds a
+    layout *category* (`text`/`title`/`sub_title`/`table`/…) rather than the text,
+    so it takes a distinct decode that **drops** the label and keeps the content
+    line (which already carries `##` headings / `<table>` HTML) — a variant is one
+    registry entry, not a branch. On a RAM-constrained host load **one model at a
+    time** (e.g.
     `lms unload --all && lms load deepseek-ocr-2`) and drive with
     `ocr-batch --model <one>` — co-loaded vision models can exhaust RAM and crash
     the worker (see DEVLOG).
