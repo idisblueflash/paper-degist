@@ -1,0 +1,786 @@
+{
+  "meta": {
+    "count": 1775
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2606780347",
+      "doi": "https://doi.org/10.48550/arxiv.1704.01212",
+      "title": "Neural Message Passing for Quantum Chemistry",
+      "publication_date": "2017-04-04",
+      "cited_by_count": 3010,
+      "authorships": [
+        {
+          "author": {
+            "display_name": "Justin Gilmer"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Samuel S. Schoenholz"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Patrick Riley"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Oriol Vinyals"
+          }
+        },
+        {
+          "author": {
+            "display_name": "George E. Dahl"
+          }
+        }
+      ],
+      "abstract_inverted_index": {
+        "Supervised": [
+          0
+        ],
+        "learning": [
+          1
+        ],
+        "on": [
+          2,
+          128,
+          147
+        ],
+        "molecules": [
+          3,
+          151
+        ],
+        "has": [
+          4
+        ],
+        "incredible": [
+          5
+        ],
+        "potential": [
+          6
+        ],
+        "to": [
+          7,
+          27,
+          47,
+          63,
+          76
+        ],
+        "be": [
+          8
+        ],
+        "useful": [
+          9
+        ],
+        "in": [
+          10,
+          34
+        ],
+        "chemistry,": [
+          11
+        ],
+        "drug": [
+          12
+        ],
+        "discovery,": [
+          13
+        ],
+        "and": [
+          14,
+          20,
+          44,
+          73,
+          111
+        ],
+        "materials": [
+          15
+        ],
+        "science.": [
+          16
+        ],
+        "Luckily,": [
+          17
+        ],
+        "several": [
+          18
+        ],
+        "promising": [
+          19
+        ],
+        "closely": [
+          21
+        ],
+        "related": [
+          22
+        ],
+        "neural": [
+          23
+        ],
+        "network": [
+          24
+        ],
+        "models": [
+          25,
+          38,
+          98
+        ],
+        "invariant": [
+          26
+        ],
+        "molecular": [
+          28,
+          131
+        ],
+        "symmetries": [
+          29
+        ],
+        "have": [
+          30
+        ],
+        "already": [
+          31
+        ],
+        "been": [
+          32
+        ],
+        "described": [
+          33
+        ],
+        "the": [
+          35,
+          59,
+          87,
+          90,
+          125
+        ],
+        "literature.": [
+          36
+        ],
+        "These": [
+          37
+        ],
+        "learn": [
+          39
+        ],
+        "a": [
+          40,
+          49,
+          65,
+          100
+        ],
+        "message": [
+          41
+        ],
+        "passing": [
+          42
+        ],
+        "algorithm": [
+          43
+        ],
+        "aggregation": [
+          45
+        ],
+        "procedure": [
+          46
+        ],
+        "compute": [
+          48
+        ],
+        "function": [
+          50
+        ],
+        "of": [
+          51,
+          69,
+          89,
+          124
+        ],
+        "their": [
+          52
+        ],
+        "entire": [
+          53
+        ],
+        "input": [
+          54
+        ],
+        "graph.": [
+          55
+        ],
+        "At": [
+          56
+        ],
+        "this": [
+          57,
+          70,
+          93,
+          117
+        ],
+        "point,": [
+          58
+        ],
+        "next": [
+          60
+        ],
+        "step": [
+          61
+        ],
+        "is": [
+          62
+        ],
+        "find": [
+          64
+        ],
+        "particularly": [
+          66
+        ],
+        "effective": [
+          67
+        ],
+        "variant": [
+          68
+        ],
+        "general": [
+          71
+        ],
+        "approach": [
+          72
+        ],
+        "apply": [
+          74
+        ],
+        "it": [
+          75
+        ],
+        "chemical": [
+          77
+        ],
+        "prediction": [
+          78,
+          133
+        ],
+        "benchmarks": [
+          79
+        ],
+        "until": [
+          80
+        ],
+        "we": [
+          81,
+          95,
+          104,
+          121,
+          141
+        ],
+        "either": [
+          82
+        ],
+        "solve": [
+          83
+        ],
+        "them": [
+          84
+        ],
+        "or": [
+          85,
+          152
+        ],
+        "reach": [
+          86
+        ],
+        "limits": [
+          88
+        ],
+        "approach.": [
+          91
+        ],
+        "In": [
+          92
+        ],
+        "paper,": [
+          94
+        ],
+        "reformulate": [
+          96
+        ],
+        "existing": [
+          97
+        ],
+        "into": [
+          99
+        ],
+        "single": [
+          101
+        ],
+        "common": [
+          102
+        ],
+        "framework": [
+          103
+        ],
+        "call": [
+          105
+        ],
+        "Message": [
+          106
+        ],
+        "Passing": [
+          107
+        ],
+        "Neural": [
+          108
+        ],
+        "Networks": [
+          109
+        ],
+        "(MPNNs)": [
+          110
+        ],
+        "explore": [
+          112
+        ],
+        "additional": [
+          113
+        ],
+        "novel": [
+          114
+        ],
+        "variations": [
+          115
+        ],
+        "within": [
+          116
+        ],
+        "framework.": [
+          118
+        ],
+        "Using": [
+          119
+        ],
+        "MPNNs": [
+          120
+        ],
+        "demonstrate": [
+          122
+        ],
+        "state": [
+          123
+        ],
+        "art": [
+          126
+        ],
+        "results": [
+          127,
+          136
+        ],
+        "an": [
+          129
+        ],
+        "important": [
+          130
+        ],
+        "property": [
+          132
+        ],
+        "benchmark;": [
+          134
+        ],
+        "these": [
+          135
+        ],
+        "are": [
+          137
+        ],
+        "strong": [
+          138
+        ],
+        "enough": [
+          139
+        ],
+        "that": [
+          140
+        ],
+        "believe": [
+          142
+        ],
+        "future": [
+          143
+        ],
+        "work": [
+          144
+        ],
+        "should": [
+          145
+        ],
+        "focus": [
+          146
+        ],
+        "datasets": [
+          148
+        ],
+        "with": [
+          149
+        ],
+        "larger": [
+          150
+        ],
+        "more": [
+          153
+        ],
+        "accurate": [
+          154
+        ],
+        "ground": [
+          155
+        ],
+        "truth": [
+          156
+        ],
+        "labels.": [
+          157
+        ]
+      },
+      "best_oa_location": {
+        "pdf_url": "https://arxiv.org/pdf/1704.01212",
+        "landing_page_url": "http://arxiv.org/abs/1704.01212"
+      },
+      "oa_locations": []
+    },
+    {
+      "id": "https://openalex.org/W3110901318",
+      "doi": "https://doi.org/10.1016/j.ddtec.2020.11.009",
+      "title": "A compact review of molecular property prediction with graph neural networks",
+      "publication_date": "2020-12-01",
+      "cited_by_count": 519,
+      "authorships": [
+        {
+          "author": {
+            "display_name": "Oliver Wieder"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Stefan M. Kohlbacher"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Mélaine A. Kuenemann"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Arthur Garon"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Ducrot Pierre"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Thomas Seidel"
+          }
+        },
+        {
+          "author": {
+            "display_name": "Thierry Langer"
+          }
+        }
+      ],
+      "abstract_inverted_index": {
+        "As": [
+          0
+        ],
+        "graph": [
+          1
+        ],
+        "neural": [
+          2
+        ],
+        "networks": [
+          3
+        ],
+        "are": [
+          4,
+          21
+        ],
+        "becoming": [
+          5
+        ],
+        "more": [
+          6,
+          8,
+          106
+        ],
+        "and": [
+          7,
+          10,
+          80,
+          96
+        ],
+        "powerful": [
+          9
+        ],
+        "useful": [
+          11
+        ],
+        "in": [
+          12,
+          24,
+          55,
+          81
+        ],
+        "the": [
+          13,
+          41,
+          51,
+          71
+        ],
+        "field": [
+          14,
+          91
+        ],
+        "of": [
+          15,
+          43,
+          50,
+          66,
+          73,
+          77,
+          92
+        ],
+        "drug": [
+          16,
+          57
+        ],
+        "discovery,": [
+          17
+        ],
+        "many": [
+          18,
+          74
+        ],
+        "pharmaceutical": [
+          19
+        ],
+        "companies": [
+          20
+        ],
+        "getting": [
+          22
+        ],
+        "interested": [
+          23
+        ],
+        "utilizing": [
+          25
+        ],
+        "these": [
+          26,
+          64
+        ],
+        "methods": [
+          27
+        ],
+        "for": [
+          28,
+          37
+        ],
+        "their": [
+          29
+        ],
+        "own": [
+          30
+        ],
+        "in-house": [
+          31
+        ],
+        "frameworks.": [
+          32
+        ],
+        "This": [
+          33
+        ],
+        "is": [
+          34,
+          47
+        ],
+        "especially": [
+          35
+        ],
+        "compelling": [
+          36
+        ],
+        "tasks": [
+          38,
+          54
+        ],
+        "such": [
+          39
+        ],
+        "as": [
+          40
+        ],
+        "prediction": [
+          42
+        ],
+        "molecular": [
+          44,
+          109
+        ],
+        "properties": [
+          45,
+          110
+        ],
+        "which": [
+          46
+        ],
+        "often": [
+          48
+        ],
+        "one": [
+          49
+        ],
+        "most": [
+          52
+        ],
+        "crucial": [
+          53
+        ],
+        "computer-aided": [
+          56
+        ],
+        "discovery": [
+          58
+        ],
+        "workflows.": [
+          59
+        ],
+        "The": [
+          60
+        ],
+        "immense": [
+          61
+        ],
+        "hype": [
+          62
+        ],
+        "surrounding": [
+          63
+        ],
+        "kinds": [
+          65
+        ],
+        "algorithms": [
+          67
+        ],
+        "has": [
+          68
+        ],
+        "led": [
+          69
+        ],
+        "to": [
+          70,
+          86,
+          104
+        ],
+        "development": [
+          72
+        ],
+        "different": [
+          75,
+          113
+        ],
+        "types": [
+          76
+        ],
+        "promising": [
+          78
+        ],
+        "architectures": [
+          79
+        ],
+        "this": [
+          82,
+          88
+        ],
+        "review": [
+          83
+        ],
+        "we": [
+          84
+        ],
+        "try": [
+          85
+        ],
+        "structure": [
+          87
+        ],
+        "highly": [
+          89
+        ],
+        "dynamic": [
+          90
+        ],
+        "AI-research": [
+          93
+        ],
+        "by": [
+          94
+        ],
+        "collecting": [
+          95
+        ],
+        "classifying": [
+          97
+        ],
+        "80": [
+          98
+        ],
+        "GNNs": [
+          99
+        ],
+        "that": [
+          100
+        ],
+        "have": [
+          101
+        ],
+        "been": [
+          102
+        ],
+        "used": [
+          103
+        ],
+        "predict": [
+          105
+        ],
+        "than": [
+          107
+        ],
+        "20": [
+          108
+        ],
+        "using": [
+          111
+        ],
+        "48": [
+          112
+        ],
+        "datasets.": [
+          114
+        ]
+      },
+      "best_oa_location": {
+        "pdf_url": null,
+        "landing_page_url": "https://doi.org/10.1016/j.ddtec.2020.11.009"
+      },
+      "oa_locations": []
+    }
+  ]
+}
