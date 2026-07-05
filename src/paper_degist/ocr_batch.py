@@ -86,13 +86,22 @@ def ocr_batch(
     hit_server = False  # a prior pair contacted the server → cool down before the next
     for page in sorted(pages_dir.glob("p*.png")):
         for model_id in model_ids:
+            # Classify in ocr-page's own layer order (rule 02): the registry check
+            # comes *before* the idempotency skip, so an unknown model is never
+            # short-circuited into "cached" by a stale output file — it dispatches
+            # and ocr-page quarantines it (unknown model), before any network.
+            registered = model_id in registry
             target = output_path(page, model_id, out_dir)
-            if target.exists():
+            if registered and target.exists():
                 saved.append(target)  # idempotent skip — no network, no recovery gap
                 continue
-            if hit_server:
+            # Only a registered pair with no cached output will hit the server; an
+            # unknown model quarantines in ocr-page without a network call, so it is
+            # neither preceded by a recovery gap nor counted as a prior server hit.
+            if registered and hit_server:
                 sleep(gap)  # recovery gap before a fresh server-hitting pair
-            hit_server = True
+            if registered:
+                hit_server = True
             result = ocr(
                 page,
                 model_id,

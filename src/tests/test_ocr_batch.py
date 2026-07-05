@@ -147,6 +147,35 @@ def test_a_fully_cached_grid_waits_no_gap(tmp_path):
     assert sleep.calls == []
 
 
+# --- unregistered model: classify like ocr-page (registry first, then skip) ---
+
+
+def test_a_stale_output_for_an_unregistered_model_is_not_treated_as_cached(tmp_path):
+    # ocr-page checks the registry *before* the idempotency skip, quarantining an
+    # unknown model before any network — the batch must not short-circuit that on a
+    # stale file, so it dispatches (ocr-page then quarantines) rather than skipping.
+    pages = _pages(tmp_path, ("p0001.png",))
+    stale = output_path(pages / "p0001.png", "vision-unregistered", tmp_path / "out")
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale output for a model no longer registered", encoding="utf-8")
+    ocr = _fake_ocr()
+    ocr_batch(pages, models=["vision-unregistered"], out_dir=tmp_path / "out",
+              registry=FAKE_REGISTRY, ocr=ocr, sleep=_fake_sleep(),
+              manifest_path=tmp_path / "manifest.jsonl")
+    assert ("p0001.png", "vision-unregistered") in ocr.calls
+
+
+def test_an_unregistered_model_does_not_charge_the_next_pair_a_gap(tmp_path):
+    # An unknown model quarantines in ocr-page without touching the server, so it is
+    # not a "prior server hit" — the next real pair must not wait a recovery gap.
+    pages = _pages(tmp_path, ("p0001.png",))
+    ocr, sleep = _fake_ocr(), _fake_sleep()
+    ocr_batch(pages, models=["vision-unregistered", "vision-alpha"],
+              out_dir=tmp_path / "out", registry=FAKE_REGISTRY, ocr=ocr, sleep=sleep,
+              manifest_path=tmp_path / "manifest.jsonl")
+    assert sleep.calls == []
+
+
 # --- AC4: one quarantined pair never aborts the batch ---
 
 

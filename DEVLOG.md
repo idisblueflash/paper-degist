@@ -1236,22 +1236,26 @@ location, the case not yet handled, and the trigger that should make us fix it.
   never-concurrent invariant for the default path.
 - **Status:** OPEN (deliberate — sequential by design for US28).
 
-## ocr_batch — a no-network quarantine still charges the next pair a recovery gap (US28)
+## ocr_batch — unregistered-model classify ordering (Codex US28 review)
 
-- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the `hit_server = True`
-  set unconditionally after a dispatch).
-- **Case not handled:** the recovery gap is gated on `hit_server`, which the
-  driver sets whenever it *dispatches* a missing-output pair — but `ocr_page` can
-  return without touching the network (an **unknown model**, or a **missing page
-  file** on the direct-library path both quarantine before any POST). After such
-  a pair the driver still waits a gap before the next real call — a harmless
-  wasted sleep, reachable only when a caller passes an unregistered `--model`
-  (the default grid enumerates the registry, so every default pair is a real
-  call). The idempotent-skip path is already precise (no gap); only the
-  no-network *quarantine* over-charges.
-- **Trigger to fix:** the first run that pairs an unregistered `--model` with a
-  large grid and the wasted gaps matter. Have `ocr_page` report whether it
-  contacted the server (or pre-filter `--model` against the registry in the
-  driver), so the gap follows only genuine server hits, driven by a failing test.
-- **Status:** OPEN (low priority — only a rare misconfigured `--model` over-waits;
-  correctness and the never-rapid-fire guarantee are unaffected).
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the per-pair classify).
+- **Case (two, both surfaced by Codex's US28 review):** (1) the batch's
+  idempotency skip originally ran on `output_path(...).exists()` **before**
+  checking model registration, so a **stale output for an unregistered model**
+  was returned as a "cached" success — diverging from `ocr_page`, whose layer-1
+  classify checks the registry *first* and quarantines an unknown model before
+  the existence check. (2) The recovery gap's `hit_server` flag was set on every
+  dispatch, including an unknown-model quarantine that never touches the network,
+  so the next real pair over-waited a gap.
+- **Status:** RESOLVED (US28 Codex follow-up). The batch now classifies in
+  ocr-page's own order: `registered = model_id in registry` gates both the skip
+  (`registered and target.exists()`) and the gap (`registered and hit_server`;
+  `hit_server` set only when `registered`). An unregistered model therefore
+  dispatches to `ocr_page` — which quarantines it (unknown model) regardless of a
+  stale file — and never counts as a server hit. Pinned by
+  `test_a_stale_output_for_an_unregistered_model_is_not_treated_as_cached` and
+  `test_an_unregistered_model_does_not_charge_the_next_pair_a_gap`. (Codex also
+  noted a library caller passing `models=[]` is a silent no-op; kept deliberate —
+  an explicit empty selection parallels an empty page directory, both clean
+  no-ops, and the CLI cannot produce it: omitting `--model` yields the whole
+  registry.)
