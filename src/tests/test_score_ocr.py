@@ -33,6 +33,27 @@ def test_dup_pct_flags_a_repetition_loop_high():
     assert dup_pct(text) == 95.0
 
 
+def test_dup_pct_flags_a_loop_emitted_on_a_single_line():
+    # A model that emits the whole page on one line (no newlines) defeats
+    # line-based duplication detection; the loop must still be caught by falling
+    # back to sentence segmentation. 20 identical sentences on one line → 95%.
+    text = " ".join(["The model looped this sentence."] * 20)
+    assert dup_pct(text) == 95.0
+
+
+def test_dup_pct_does_not_false_positive_on_abbreviations_in_a_single_line():
+    # The single-line fallback segments on sentence enders, but academic
+    # abbreviations (`Fig.`, `et al.`, `e.g.`) are not sentence breaks — splitting
+    # on them would turn repeated `See Fig.` fragments into false duplicates and
+    # inflate dup_pct on a distinct single-line output. All five clauses are
+    # distinct, so a correct segmentation scores 0.0, not a false positive.
+    text = (
+        "See Fig. 1 for the design. As Smith et al. showed, the effect holds. "
+        "See Fig. 2 for results. Other work, e.g. Jones, agrees. See Fig. 3 next."
+    )
+    assert dup_pct(text) == 0.0
+
+
 def test_dup_pct_excludes_repeated_horizontal_rules():
     # `---` rules are legitimate repeated boilerplate: repeating them must NOT
     # inflate the score (the report's known false positive).

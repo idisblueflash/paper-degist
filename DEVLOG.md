@@ -806,9 +806,20 @@ location, the case not yet handled, and the trigger that should make us fix it.
   count — driven by a **failing test on a captured `deepseek-ocr/p0001.md`-style
   fixture**. Keep the line-level metric too (it catches the `unlimited-ocr`
   shape); this is a second, complementary dimension, not a replacement.
-- **Status:** OPEN (line-level dup — the AC2 shape — is encoded; intra-line
-  degeneration deferred, and already covered at the scorecard level by the
-  completion_tokens signal).
+- **Status:** RESOLVED (full golden run, PR pending). The trigger fired: the
+  45-page gold batch produced `out/deepseek-ocr/…-j.mseb.2009.12.004.pdf_2.md`, a
+  single-line runaway that repeats one sentence 10× (60% sentence-level dup) yet
+  scored `dup_pct: 0.0`. `dup_pct` now dispatches through `_dup_units`: >1
+  substantive line keeps the exact line-level metric (the AC2 shape, `unlimited-ocr`
+  loop, no recalibration); a lone-line blob falls back to sentence segmentation
+  (`_SENTENCE_SPLIT_RE`) so the intra-line loop is caught (`mseb` → 60.0). A
+  single-line *non-repetitive* hallucination stays 0.0 (`…1528-1167…_3` — 429
+  unique sentences, correctly not a dup defect; its fabrication is score-gold's
+  lane). The sentence split skips known abbreviation dots (`Fig.`, `et al.`,
+  `e.g.` via `_ABBREVIATIONS`) so repeated `See Fig.` fragments do not read as
+  false duplicates on a distinct single line (Codex review). Pinned by
+  `test_dup_pct_flags_a_loop_emitted_on_a_single_line` and
+  `test_dup_pct_does_not_false_positive_on_abbreviations_in_a_single_line`.
 
 ## score_gold — dataset is research-only; not vendored, operator supplies it (US22)
 

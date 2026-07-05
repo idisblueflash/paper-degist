@@ -635,7 +635,10 @@ uv run score-ocr <output.md> [--scores scores.jsonl] [--manifest manifest.jsonl]
   `completion_tokens`):
   - `dup_pct` — percentage of substantive lines that repeat an earlier one (the
     metric that flagged `unlimited-ocr`'s 95 % loop); markdown rules (`---`) and
-    blank lines are excluded so legitimate boilerplate does not inflate it.
+    blank lines are excluded so legitimate boilerplate does not inflate it. When a
+    model emits the whole page on **one line** (no newlines), it falls back to
+    sentence segmentation, so an intra-line repetition loop is still caught rather
+    than scoring a false 0.
   - `hyphen_artifacts` — count of `word- word` dehyphenation breaks (the
     `"low- quality"` leak that separated `deepseek-ocr@8bit` from qwen).
   - `citation_groups` — count of inline numeric citation lists (`[51,53,75,82]`),
