@@ -193,14 +193,17 @@ def render_scorecard(records: list) -> str:
     records = _last_wins(records)
     model_ids = models(records)
     # The stored dimensions, then the derived composite as a trailing column — it
-    # summarizes the two accuracy columns, so it reads last, after them.
-    dims = dimensions(records) + [ACCURACY]
+    # summarizes the two accuracy columns, so it reads last, after them. Any stray
+    # stored ``accuracy`` key is dropped from the stored set so the derived column
+    # owns that header once (no duplicate column, no header/cell misalignment).
+    stored_dims = [dim for dim in dimensions(records) if dim != ACCURACY]
+    dims = stored_dims + [ACCURACY]
 
     header = "| Model | " + " | ".join(dims) + " |"
     divider = "| --- | " + " | ".join("---" for _ in dims) + " |"
     rows = [header, divider]
     for model in model_ids:
-        cells = [summarize_cell(_cell_values(records, model, dim)) for dim in dimensions(records)]
+        cells = [summarize_cell(_cell_values(records, model, dim)) for dim in stored_dims]
         cells.append(_render_accuracy(records, model))
         rows.append("| " + model + " | " + " | ".join(cells) + " |")
 

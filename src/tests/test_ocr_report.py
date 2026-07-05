@@ -189,6 +189,15 @@ def test_render_verdict_ranks_accuracy():
     assert "accuracy" in verdict
 
 
+def test_render_accuracy_column_not_duplicated_by_a_stray_key():
+    # The derived composite owns the "accuracy" column: a stray stored "accuracy"
+    # key in scores.jsonl must not surface a *second* identical column (which would
+    # also misalign every row's cells against the header).
+    records = _scores() + [{"model": "deepseek-ocr_8bit", "page": "p09", "accuracy": 0.5}]
+    header = render_scorecard(records).splitlines()[2]  # the header row
+    assert header.count("accuracy") == 1
+
+
 # --- ocr_report: read scores.jsonl, write the report, quarantine the unplaceable ---
 
 
