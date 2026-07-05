@@ -914,7 +914,12 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when duplicate re-run rows become noise for US23. Add a
   read-back-and-skip or a last-wins compaction in the aggregator. Pairs with the
   US21 score_ocr append-only dup flag.
-- **Status:** OPEN (deliberate — append-only results log, consistent with US21).
+- **Status:** ADDRESSED at the aggregator (US23). The append is still last-wins on
+  disk (score-ocr/score-gold still append, deliberate), but `ocr-report`'s
+  `_last_wins` collapses re-scored rows to the newest per (model, page, tier)
+  before aggregating, so a re-scored page is counted once — the "US23 aggregator
+  takes the last row per (model, page)" expectation this flag named is now met.
+  The writers' append-only dup remains OPEN by design (results-log contract).
 
 ## score_gold — model-table extraction is regex-based; nested tables mis-split (US22)
 
@@ -990,3 +995,53 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `OSError` into a `TransportError`, and `ocr_page` guards a **missing page** file
   with a distinct `page image not found` quarantine before any network call (the
   Typer CLI already rejects it up front; this guards direct library callers).
+
+## ocr_report — verdict ranks only dimensions with a known direction (US23)
+
+- **Where:** `src/paper_degist/ocr_report.py::_HIGHER_IS_BETTER` /
+  `_LOWER_IS_BETTER` and `_leader` / `_verdicts`.
+- **Case not handled (deliberate):** the models × dimensions **table** is fully
+  data-driven — any dimension present in `scores.jsonl` gets a column summarized
+  by value-kind, so a new metric or a new model appears with no code edit (AC3).
+  The per-model **verdict** ("leads: …"), however, can only rank a dimension
+  whose *direction of better* is encoded in the two frozensets. A brand-new
+  dimension, or a neutral one (`completion_tokens`), still shows in the table but
+  is silently absent from every verdict until its direction is taught. Categorical
+  dimensions (`finish_reason`, `cjk_present`) are never leader-ranked by design.
+- **Trigger to fix:** the first time a newly added dimension matters for the
+  "which model wins" call — add its name to `_HIGHER_IS_BETTER` or
+  `_LOWER_IS_BETTER` (a one-line change, per rule 02: the encoded case becomes a
+  code branch). Test-first with a verdict scenario over that dimension.
+- **Status:** OPEN (deliberate — the table is data-driven; the verdict's
+  direction knowledge is per-dimension and grows one line at a time).
+
+## ocr_report — dimensions deferred by the story's "Later stages" (US23)
+
+- **Where:** `src/paper_degist/ocr_report.py` (`_verdicts` presents dimensions
+  side by side; no cross-run history is read).
+- **Case not handled (deferred by spec):** (1) **a single headline score /
+  ranking** — weighting the dimensions into one ordering is a policy decision
+  deferred until the dimension panel stabilizes; the verdict names per-dimension
+  leaders, not one winner. (2) **trend across runs** — the report is a snapshot of
+  the current `scores.jsonl`; comparing today's card to a prior run needs run
+  history. (3) **feeding US3** — the card *informs* which model US3 "Converting
+  PDF" adopts, but wiring the chosen model into the conversion is US3's story.
+- **Trigger to fix:** (1) when the dimension panel is stable enough to defend a
+  weighting; (2) when a regression-across-runs view is wanted (persist dated
+  cards, diff); (3) when US3 is built.
+- **Status:** OPEN (all three are the story's explicit "Later stages").
+
+## ocr_report — count-like dimensions summarized by median, ratios by mean (US23)
+
+- **Where:** `src/paper_degist/ocr_report.py::aggregate`.
+- **Case not handled:** the summarizer is chosen by the *value kind* — pure-int
+  dimensions (`hyphen_artifacts`, `citation_groups`, `completion_tokens`) get a
+  representative **median** (a busy page does not skew it); any-float dimensions
+  (`dup_pct`, `text_edit_distance`, `teds`, `latency`) get the **mean**;
+  strings/bools get the dominant value. This matches the report's buckets, but a
+  count-like dimension that happens to arrive as a float (e.g. an averaged count
+  upstream) would be meaned, not medianed. No per-dimension override exists.
+- **Trigger to fix:** the first dimension whose kind is mis-inferred from its
+  value type — add an explicit dimension→summarizer mapping then, test-first.
+- **Status:** OPEN (deliberate — value-kind dispatch keeps the aggregator
+  data-driven; a name-based override is only worth it once a real dimension needs it).
