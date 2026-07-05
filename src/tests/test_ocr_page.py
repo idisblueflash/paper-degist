@@ -16,6 +16,7 @@ from paper_degist.ocr_page import (
     DEFAULT_ENDPOINT,
     REGISTRY,
     ClientRequestError,
+    ModelSpec,
     OcrResponse,
     TransportError,
     _decode_grounding,
@@ -64,16 +65,23 @@ def test_deepseek_prompt_omits_the_literal_image_token():
     assert "<image>" not in REGISTRY["deepseek-ocr"].prompt
 
 
-def test_deepseek_ocr_2_is_registered():
-    # A DeepSeek OCR variant loaded in LM Studio; registered so the bench can
-    # score it (a new model is one registry entry, not a branch — rule 02).
-    assert "deepseek-ocr-2" in REGISTRY
+def test_deepseek_ocr_2_registered_with_grounding_spec():
+    # A DeepSeek OCR variant; registered with the grounding prompt + decode. Assert
+    # the whole ModelSpec (one logical fact) so a prompt typo / wrong postprocessor
+    # can't slip past a mere key-presence check (Codex review; rule 05).
+    assert REGISTRY["deepseek-ocr-2"] == ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    )
 
 
-def test_deepseek_ocr_8bit_is_registered():
-    # The 8-bit quantization variant; its id carries an '@' that _model_slug
-    # leaves in the output dir path (that punctuation is a separate DEVLOG flag).
-    assert "deepseek-ocr@8bit" in REGISTRY
+def test_deepseek_ocr_8bit_registered_with_grounding_spec():
+    # The 8-bit quant variant; same spec. Its id keeps the '@' in the output dir
+    # slug (_model_slug only rewrites '/') — a separate DEVLOG flag.
+    assert REGISTRY["deepseek-ocr@8bit"] == ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    )
 
 
 # --- output_path: the single source of truth for out/<model>/<page>.md ---
