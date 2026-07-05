@@ -11,6 +11,7 @@ from pathlib import Path
 
 from paper_degist.ocr_report import (
     GAP,
+    composite_accuracy,
     dimensions,
     models,
     ocr_report,
@@ -141,6 +142,51 @@ def test_render_re_scored_page_counts_once_last_wins():
     ]
     cells = [cell.strip() for cell in _row(render_scorecard(records), "qwen_qwen3-vl-4b").split("|")]
     assert "0" in cells and "45" not in cells
+
+
+# --- composite accuracy: a derived, higher-is-better roll-up of the two gold
+# accuracy metrics (teds ↑ and 1 - text_edit_distance ↑) onto one 0–1 axis ---
+
+
+def test_composite_accuracy_averages_teds_and_flipped_edit_distance():
+    # deepseek's gold page: teds 0.91 (table) and text_edit_distance 0.4 (text).
+    # accuracy = mean(0.91, 1 - 0.4) = mean(0.91, 0.6) = 0.755 — both halves on a
+    # single higher-is-better axis.
+    assert composite_accuracy(_scores(), "deepseek-ocr_8bit") == 0.755
+
+
+def test_composite_accuracy_is_none_without_both_components():  # AC4-style gap
+    # qwen's gold page has no table (teds null), so the table half is missing —
+    # the composite is not-applicable (None → a gap), never a half-score.
+    assert composite_accuracy(_scores(), "qwen_qwen3-vl-4b") is None
+
+
+def test_render_shows_the_accuracy_column():
+    # the derived roll-up appears as its own scorecard column (the header row).
+    assert "accuracy" in render_scorecard(_scores()).splitlines()[2]
+
+
+def test_render_accuracy_cell_is_the_composite_score():
+    # deepseek's trailing accuracy cell is its composite 0.755.
+    report = render_scorecard(_scores())
+    cells = [cell.strip() for cell in _row(report, "deepseek-ocr_8bit").split("|")]
+    assert "0.755" in cells
+
+
+def test_render_accuracy_cell_is_a_gap_when_not_computable():  # AC4
+    # qwen cannot form a composite (no table) → its accuracy cell is a gap, the
+    # trailing column, not a false score.
+    report = render_scorecard(_scores())
+    cells = [cell.strip() for cell in _row(report, "qwen_qwen3-vl-4b").split("|")[1:-1]]
+    assert cells[-1] == GAP
+
+
+def test_render_verdict_ranks_accuracy():
+    # deepseek is the only model with a computable accuracy, so it leads it — the
+    # composite is ranked in the verdict like a real directional dimension.
+    report = render_scorecard(_scores())
+    verdict = next(line for line in report.splitlines() if "deepseek-ocr_8bit" in line and "leads" in line)
+    assert "accuracy" in verdict
 
 
 # --- ocr_report: read scores.jsonl, write the report, quarantine the unplaceable ---

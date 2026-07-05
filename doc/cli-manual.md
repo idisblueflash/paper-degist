@@ -855,6 +855,13 @@ uv run ocr-report [scores.jsonl] [--report report.md] [--manifest manifest.jsonl
     → their **mean**;
   - categorical strings/bools (`finish_reason`, `cjk_present`) → their **dominant
     value**.
+- **Composite `accuracy` column** — a derived, higher-is-better roll-up of the two
+  gold-referenced accuracy dimensions onto one 0–1 axis: `mean(teds, 1 −
+  text_edit_distance)` (`teds` is already higher-is-better; `text_edit_distance` is
+  flipped so a lower distance reads as a higher score). It is **computed** from
+  those two aggregates, not a stored `scores.jsonl` dimension, so it renders as a
+  trailing column after them and is ranked in the verdict. A model missing either
+  half (e.g. no gold table, so no `teds`) shows a `—` gap, never a half-score.
 - **Gap, never a false zero** (AC4). A (model, dimension) cell with no measurement
   — a metric that was not-applicable (`teds: null` on a text-only page) or a model
   that was never scored on that dimension — renders an explicit `—`, *not* `0`
@@ -865,8 +872,10 @@ uv run ocr-report [scores.jsonl] [--report report.md] [--manifest manifest.jsonl
   **last-wins** per (model, page, gold-tier), so a re-run does not double-weight a
   page.
 - **Verdict**: a per-model line naming the directional dimensions that model leads
-  (strictly best; ties lead nobody). The dimensions are presented side by side —
-  a single weighted ranking is deferred (see DEVLOG / the story's "Later stages").
+  (strictly best; ties lead nobody) — including the derived `accuracy` composite.
+  The dimensions are presented side by side; a single weighted ranking *across all*
+  dimensions is still deferred (see DEVLOG / the story's "Later stages"), the
+  `accuracy` roll-up being scoped to the two gold-accuracy metrics only.
 - **Quarantine, not a crash** (rule 02). A record with no `model` cannot be placed
   in the grid → it lands in the manifest (`stage: "ocr-report"`) and is skipped;
   a malformed (non-JSON) line is skipped; the report still generates.

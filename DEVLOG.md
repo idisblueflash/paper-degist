@@ -1118,16 +1118,23 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Where:** `src/paper_degist/ocr_report.py` (`_verdicts` presents dimensions
   side by side; no cross-run history is read).
 - **Case not handled (deferred by spec):** (1) **a single headline score /
-  ranking** — weighting the dimensions into one ordering is a policy decision
-  deferred until the dimension panel stabilizes; the verdict names per-dimension
-  leaders, not one winner. (2) **trend across runs** — the report is a snapshot of
-  the current `scores.jsonl`; comparing today's card to a prior run needs run
-  history. (3) **feeding US3** — the card *informs* which model US3 "Converting
-  PDF" adopts, but wiring the chosen model into the conversion is US3's story.
+  ranking across _all_ dimensions** — weighting every dimension into one ordering
+  is a policy decision deferred until the dimension panel stabilizes; the verdict
+  names per-dimension leaders, not one winner. A **partial** roll-up now exists —
+  the derived `accuracy` composite (`mean(teds, 1 − text_edit_distance)`) scoped to
+  the two gold-referenced accuracy metrics — but it deliberately does **not** fold
+  in the reference-free (`dup_pct`, `hyphen_artifacts`) or machine-dependent
+  (`latency`) dimensions, so it is an accuracy roll-up, not the headline score. (2)
+  **trend across runs** — the report is a snapshot of the current `scores.jsonl`;
+  comparing today's card to a prior run needs run history. (3) **feeding US3** — the
+  card *informs* which model US3 "Converting PDF" adopts, but wiring the chosen
+  model into the conversion is US3's story.
 - **Trigger to fix:** (1) when the dimension panel is stable enough to defend a
-  weighting; (2) when a regression-across-runs view is wanted (persist dated
-  cards, diff); (3) when US3 is built.
-- **Status:** OPEN (all three are the story's explicit "Later stages").
+  weighting over *all* dimensions (the `accuracy` composite is the first step);
+  (2) when a regression-across-runs view is wanted (persist dated cards, diff);
+  (3) when US3 is built.
+- **Status:** OPEN (headline-across-all, trend, and US3 remain the story's explicit
+  "Later stages"; the gold-accuracy composite is done).
 
 ## ocr_report — count-like dimensions summarized by median, ratios by mean (US23)
 
