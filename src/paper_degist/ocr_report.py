@@ -31,6 +31,7 @@ Runnable from the command line (rule 03):
 """
 
 import json
+import math
 import statistics
 from pathlib import Path
 from typing import Annotated
@@ -94,7 +95,15 @@ def aggregate(values: list):
     never a false ``0`` — AC4). Returns the raw value so the verdict can rank the
     numeric ones without re-parsing the rendered cell.
     """
-    present = [value for value in values if value is not None]
+    # Drop nulls and any non-finite number (a NaN/inf from a corrupted or
+    # hand-edited scores file): neither is a measurement, and a NaN would poison a
+    # mean into the nonsense cell "nan" (Codex US23 review). An all-null/all-NaN
+    # dimension then falls through to a gap, never a false value.
+    present = [
+        value
+        for value in values
+        if value is not None and not (isinstance(value, float) and not math.isfinite(value))
+    ]
     if not present:
         return None
     if all(isinstance(value, int) and not isinstance(value, bool) for value in present):
@@ -264,9 +273,21 @@ def _load_records(scores_path: Path, manifest_path: Path) -> list:
             continue
         if not isinstance(record, dict):
             continue
-        if "model" not in record:
+        # The model keys a scorecard row (and is string-concatenated into it) and
+        # the page keys the last-wins dedup tuple, so both must be well-typed: a
+        # null/typed model would crash `sorted(models)`, a list page would be an
+        # unhashable dedup key (Codex US23 review). A record that fails either is
+        # unplaceable → quarantine it, never crash (rule 02).
+        model = record.get("model")
+        if not isinstance(model, str):
             _manifest.append(
-                manifest_path, stage="ocr-report", record=record, reason="score record has no model"
+                manifest_path, stage="ocr-report", record=record, reason="score record has no string model"
+            )
+            continue
+        page = record.get("page")
+        if page is not None and not isinstance(page, str):
+            _manifest.append(
+                manifest_path, stage="ocr-report", record=record, reason="score record has a non-string page"
             )
             continue
         records.append(record)

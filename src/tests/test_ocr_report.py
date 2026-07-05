@@ -175,6 +175,34 @@ def test_ocr_report_quarantines_a_record_with_no_model(tmp_path: Path):
     assert _only_manifest_record(manifest)["stage"] == "ocr-report"
 
 
+def test_ocr_report_quarantines_a_non_string_model_without_crashing(tmp_path: Path):
+    # A null/typed model can't key a scorecard row — quarantine it, never let it
+    # reach the sorted-models crash (Codex US23 review).
+    scores = _write_scores(tmp_path, [{"model": None, "page": "p01", "dup_pct": 0.9}])
+    manifest = tmp_path / "manifest.jsonl"
+    ocr_report(scores, report_path=tmp_path / "report.md", manifest_path=manifest)
+    assert _only_manifest_record(manifest)["stage"] == "ocr-report"
+
+
+def test_ocr_report_quarantines_a_non_string_page_without_crashing(tmp_path: Path):
+    # A list/typed page is unhashable in the last-wins dedup key — quarantine it,
+    # never let it reach the unhashable-key crash (Codex US23 review).
+    scores = _write_scores(tmp_path, [{"model": "qwen_qwen3-vl-4b", "page": ["p01"], "dup_pct": 0.9}])
+    manifest = tmp_path / "manifest.jsonl"
+    ocr_report(scores, report_path=tmp_path / "report.md", manifest_path=manifest)
+    assert _only_manifest_record(manifest)["stage"] == "ocr-report"
+
+
+def test_ocr_report_non_finite_value_renders_a_gap_not_nan(tmp_path: Path):
+    # A NaN/inf from a corrupted scores file is not a measurement — the cell is a
+    # gap, never the nonsense string "nan" (Codex US23 review).
+    scores = _write_scores(tmp_path, [{"model": "qwen_qwen3-vl-4b", "page": "p01", "dup_pct": float("nan")}])
+    report = tmp_path / "report.md"
+    ocr_report(scores, report_path=report, manifest_path=tmp_path / "manifest.jsonl")
+    body = report.read_text(encoding="utf-8")
+    assert "nan" not in body and GAP in body
+
+
 def test_ocr_report_rejects_a_non_utf8_file_with_a_clean_error(tmp_path: Path):
     # Pointing at the wrong file (a binary PDF) is a whole-file usage error, not a
     # per-record quarantine — it surfaces as a ValueError, never a decode traceback.
