@@ -44,6 +44,30 @@ The default source stays arXiv (US 25's bake-off verdict); OpenAlex is an opt-in
 abstract-present rate, OA-link rate, latency; no relevance ground truth to
 crown by accuracy) is run against real queries at build time and recorded here.
 
+## Phase-2 characterization (evidence)
+
+Ran two real topic queries through the OpenAlex Works endpoint (keyless, polite
+pool via `mailto=`), `sort=cited_by_count:desc`, first page of 5 (rule 06
+phase 2 — characterize, don't crown by accuracy):
+
+| Query | `meta.count` | Returned | Abstract-present | OA `pdf_url` | DOI | Latency |
+| ----- | ------------ | -------- | ---------------- | ------------ | --- | ------- |
+| `graph neural networks for molecular property prediction` | 1775 | 5 | 5/5 | 1/5 | 4/5 | ~1.1 s |
+| `sparse mixture-of-experts routing` | 1029 | 5 | 5/5 | 5/5 | 5/5 | ~1.0 s |
+| `qwertyuiop nonexistent topic zzzz asdfghjkl` (empty) | 0 | 0 | — | — | — | ~0.9 s |
+
+**Characterization (not a re-crowning — arXiv stays the default per US 25).**
+OpenAlex is keyless like arXiv, answers a first page in ~1 s, and carries a
+reconstructable abstract on **every** hit (`abstract_inverted_index` present
+5/5 on both queries — the inverted-index quirk this story encodes once). Its
+edge over arXiv is the up-front OA `pdf_url` (a directly fetchable copy on 1–5
+of 5 depending on topic) and the DOI most records carry (4–5/5, vs arXiv's
+0/25) — so a hit can short-circuit `resolve-oa`. `cited_by_count`-desc sorting
+surfaces the most-cited first (top gnn hit: 3010 citations). The empty query
+returned `meta.count: 0` with `results: []`, hitting the empty-result
+quarantine cleanly. Captured as `src/tests/samples/openalex-molecular-gnn.json`
+(the two gnn records that differ on OA `pdf_url`) and `openalex-empty.json`.
+
 ## Acceptance Criteria
 
 1. Given a topic query and `--source openalex`
