@@ -742,6 +742,91 @@ scores, joining the manifest row `ocr-page` wrote for the same call). It scores
 one output per run; the gold-referenced accuracy tier is US22 (`score-gold`), and
 aggregating a cross-model scorecard from these rows is US23 (`ocr-report`).
 
+## `ocr-report` — aggregate the stored scores into one scorecard (US23)
+
+The **aggregation** tier of the OCR bench: `score-ocr` (US21) and `score-gold`
+(US22) fill `scores.jsonl` with one row per (model, page); on their own they are
+a pile of rows. `ocr-report` summarizes them into a single **models × dimensions
+scorecard** — one row per model, one column per scored dimension, plus a short
+verdict per model — so comparing models is one regenerated report, not a manual
+re-read of raw outputs. It **reads only the stored scores**: no model call, no
+score computed here, so it runs offline and regenerates in seconds.
+
+```
+uv run ocr-report [scores.jsonl] [--report report.md] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `scores` — the results log written by `score-ocr` / `score-gold`
+  (default `scores.jsonl`; a missing file exits 2, and a non-text file — the
+  wrong path, e.g. a PDF — exits 2 with a clear message, never a decode traceback).
+- **Options**: `--report` (where the Markdown scorecard is written; default
+  `report.md`), `--manifest` (where unplaceable records quarantine; default
+  `manifest.jsonl`).
+- **What it does** (classify-then-dispatch, rule 02): groups the rows by model and
+  by dimension. **Both axes are derived from the records, never hard-coded** — a
+  newly scored model or a new dimension appears with no code change (register +
+  score + regenerate). Each dimension is summarized by a summarizer chosen from
+  the *kind* of its values:
+  - count-like ints (`hyphen_artifacts`, `citation_groups`, `completion_tokens`)
+    → a representative **median** (one busy page does not skew it);
+  - ratio/score numbers (`dup_pct`, `text_edit_distance`, `teds`, `latency`)
+    → their **mean**;
+  - categorical strings/bools (`finish_reason`, `cjk_present`) → their **dominant
+    value**.
+- **Gap, never a false zero** (AC4). A (model, dimension) cell with no measurement
+  — a metric that was not-applicable (`teds: null` on a text-only page) or a model
+  that was never scored on that dimension — renders an explicit `—`, *not* `0`
+  (a false zero reads as "scored badly" rather than "not measured").
+- **Deterministic** (AC2). The report is a pure function of `scores.jsonl` (sorted
+  axes, no timestamp in the body), so regenerating with no new scores is
+  byte-identical — the artifact is stable to diff. Re-scored rows collapse
+  **last-wins** per (model, page, gold-tier), so a re-run does not double-weight a
+  page.
+- **Verdict**: a per-model line naming the directional dimensions that model leads
+  (strictly best; ties lead nobody). The dimensions are presented side by side —
+  a single weighted ranking is deferred (see DEVLOG / the story's "Later stages").
+- **Quarantine, not a crash** (rule 02). A record with no `model` cannot be placed
+  in the grid → it lands in the manifest (`stage: "ocr-report"`) and is skipped;
+  a malformed (non-JSON) line is skipped; the report still generates.
+
+### Examples
+
+```bash
+# Happy path — aggregate every stored score into the scorecard
+uv run ocr-report scores.jsonl --report report.md
+#   -> stdout: scorecard -> report.md
+#   -> report.md:
+#      # OCR Model Scorecard
+#
+#      | Model | citation_groups | dup_pct | teds | text_edit_distance |
+#      | --- | --- | --- | --- | --- |
+#      | deepseek-ocr | 0 | 0 | 0.91 | 0.4 |
+#      | qwen_qwen3-vl-4b | 6 | 0 | — | 0.05 |     # teds n/a: its gold page had no table
+#
+#      ## Verdict
+#
+#      - **deepseek-ocr** — leads: teds
+#      - **qwen_qwen3-vl-4b** — leads: citation_groups, text_edit_distance
+
+# Deterministic — regenerating with no new scores is byte-identical
+uv run ocr-report scores.jsonl --report report.md   # same bytes as the run above
+
+# A newly scored model needs no code change — just its rows in scores.jsonl
+uv run score-ocr out/unlimited-ocr_v3/p0001.md      # register + score it (US20/US21)
+uv run ocr-report scores.jsonl --report report.md   # it appears as a new row + verdict
+
+# Quarantine — a score row with no model can't be placed; report still generates
+uv run ocr-report scores.jsonl --manifest manifest.jsonl
+#   -> manifest: {"stage":"ocr-report","record":{"page":"p0001","dup_pct":3.0},
+#                 "reason":"score record has no model"}
+```
+
+`ocr-report` is the **last step of the OCR bench** and closes the
+`render-pdf → ocr-page → score-ocr / score-gold → ocr-report` chain: it turns the
+accumulated `scores.jsonl` into the comparison that informs which model the PDF
+path (US3) should adopt. Adding a model to the comparison is pure data — score it,
+regenerate — never a code edit.
+
 ---
 
 ## End-to-end (no AI in the loop)
