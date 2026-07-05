@@ -1422,3 +1422,30 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (server lifecycle is the operator's job today — see the
   `ocr_page — server lifecycle … operator's job` flag; this records the concrete
   400-not-502 wrinkle the bench surfaced).
+
+## ocr_page / ocr_report — latency is scored across machines; host recorded, not segmented
+
+- **Where:** `src/paper_degist/ocr_page.py` (the success `_manifest.append`) →
+  `src/paper_degist/score_ocr.py` (`_MANIFEST_FIELDS`) →
+  `src/paper_degist/ocr_report.py` (`_LOWER_IS_BETTER` includes `latency`).
+- **Case not handled:** `latency` is a machine-dependent metric — the same model
+  on the mac mini vs. the MBA (rule 09: two machines, both serving `localhost:1234`)
+  produces different numbers — yet US23's scorecard ranks models on it and the
+  verdict can name a `latency` leader. `ocr-page` now records the producing
+  machine as `host` (`platform.node()`), so a row is *attributable*; but the
+  aggregation still pools every row regardless of host, so a scorecard built from a
+  mixed-host `scores.jsonl` silently compares latencies measured on different
+  hardware. The other dimensions (`teds`, `dup_pct`, `finish_reason`,
+  `completion_tokens`, …) are machine-independent, so only latency is affected.
+  A remote `--endpoint` is a second wrinkle: `platform.node()` records the *client*
+  host, not the server that actually ran the model, so `host` only identifies the
+  producing machine under the documented localhost-serving pattern.
+- **Trigger to fix:** the first time a `scores.jsonl` legitimately mixes hosts and
+  a latency verdict is drawn from it. Segment or annotate latency by `host` in
+  US23 (group rows by host, or drop `latency` from the cross-machine verdict and
+  rank it only within a host) — a spec decision for its own story, driven by a
+  failing `ocr_report` test on a two-host `scores.jsonl`. For the remote-endpoint
+  case, derive `host` from the endpoint netloc instead of `platform.node()`.
+- **Status:** PARTIAL — host is now captured at `ocr-page` and carried into
+  `scores.jsonl` (this change); host-aware aggregation in US23 remains OPEN.
+
