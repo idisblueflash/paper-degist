@@ -1,0 +1,36 @@
+{
+  "total": 2,
+  "offset": 0,
+  "data": [
+    {
+      "paperId": "0b3f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
+      "title": "Programmable base editing of A•T to G•C in genomic DNA without DNA cleavage",
+      "abstract": "The spontaneous deamination of cytosine is a major source of transitions from C to T in the genome. Here we describe adenine base editors that mediate the conversion of A•T to G•C in genomic DNA.",
+      "url": "https://www.semanticscholar.org/paper/0b3f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
+      "publicationDate": "2017-11-23",
+      "externalIds": {"DOI": "10.1038/nature24644", "ArXiv": null},
+      "authors": [
+        {"authorId": "2064792", "name": "Nicole M. Gaudelli"},
+        {"authorId": "3921561", "name": "Alexis C. Komor"},
+        {"authorId": "144273955", "name": "David R. Liu"}
+      ],
+      "tldr": {
+        "model": "tldr@v2.0.0",
+        "text": "Adenine base editors are described that convert A•T to G•C in genomic DNA without double-strand breaks, expanding the scope of base editing."
+      }
+    },
+    {
+      "paperId": "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b",
+      "title": "Genome-wide specificities of CRISPR-Cas Cpf1 nucleases in human cells",
+      "abstract": null,
+      "url": "https://www.semanticscholar.org/paper/9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b",
+      "publicationDate": "2016-06-06",
+      "externalIds": {"DOI": "10.1038/nbt.3609"},
+      "authors": [
+        {"authorId": "40518488", "name": "Daesik Kim"},
+        {"authorId": "5124370", "name": "Jin-Soo Kim"}
+      ],
+      "tldr": null
+    }
+  ]
+}

@@ -22,6 +22,7 @@ _STEPS = [
     ("score-ocr", "Score a saved OCR output on reference-free defect metrics (US21)."),
     ("score-gold", "Score a model against an OmniDocBench gold subset (US22)."),
     ("embed-text", "Embed one text with one registered local embedding model (US24)."),
+    ("discover", "Discover candidate papers by topic from arXiv or Semantic Scholar (US25)."),
 ]
 
 app = typer.Typer(

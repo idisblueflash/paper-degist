@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <link xmlns="http://www.w3.org/2005/Atom" href="http://arxiv.org/api/query?search_query%3Dsparse%20mixture-of-experts%20routing" rel="self" type="application/atom+xml"/>
+  <title xmlns="http://www.w3.org/2005/Atom" type="html">ArXiv Query: search_query=sparse mixture-of-experts routing</title>
+  <id xmlns="http://www.w3.org/2005/Atom">http://arxiv.org/api/query</id>
+  <opensearch:totalResults xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">2</opensearch:totalResults>
+  <opensearch:startIndex xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">0</opensearch:startIndex>
+  <opensearch:itemsPerPage xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">10</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2101.03961v1</id>
+    <updated>2021-01-11T18:41:03Z</updated>
+    <published>2021-01-11T18:41:03Z</published>
+    <title>Switch Transformers: Scaling to Trillion Parameter Models with
+Simple and Efficient Sparsity</title>
+    <summary>  In deep learning, models typically reuse the same parameters for all
+inputs. Mixture of Experts (MoE) models defy this and instead select different
+parameters for each incoming example, routing tokens sparsely.
+</summary>
+    <author>
+      <name>William Fedus</name>
+    </author>
+    <author>
+      <name>Barret Zoph</name>
+    </author>
+    <author>
+      <name>Noam Shazeer</name>
+    </author>
+    <link href="http://arxiv.org/abs/2101.03961v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2101.03961v1" rel="related" type="application/pdf"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1701.06538v1</id>
+    <updated>2017-01-23T18:57:47Z</updated>
+    <published>2017-01-23T18:57:47Z</published>
+    <title>Outrageously Large Neural Networks: The Sparsely-Gated
+Mixture-of-Experts Layer</title>
+    <summary>  The capacity of a neural network to absorb information is limited by its
+number of parameters. Conditional computation, where parts of the network are
+active on a per-example basis, has been proposed as a way to increase model
+capacity without a proportional increase in computation.
+</summary>
+    <author>
+      <name>Noam Shazeer</name>
+    </author>
+    <author>
+      <name>Azalia Mirhoseini</name>
+    </author>
+    <link href="http://arxiv.org/abs/1701.06538v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/1701.06538v1" rel="related" type="application/pdf"/>
+  </entry>
+</feed>
