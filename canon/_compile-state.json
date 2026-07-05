@@ -1,8 +1,13 @@
 {
   "compiled": [
     "5a774313-8a20-4405-8679-3b563de41dd4",
-    "6225f110-7e1f-4ca2-bd51-2a6e883dd259"
+    "6225f110-7e1f-4ca2-bd51-2a6e883dd259",
+    "1b5c077d-35f7-4a56-b23d-67b58a663d65",
+    "35d1a354-a3d8-45f7-b8ff-bddc86d9cf55",
+    "6b2b71c9-76ea-46dc-94d9-5755c4ed11e4",
+    "6e18c177-4542-45e6-aadc-d8b575a1d307",
+    "a8521e68-7693-4af4-9f5e-d179bf13c735"
   ],
-  "updated": "2026-07-04",
-  "note": "Scoped browser-lane compile: US18 browser-up design + US15 browser-fetch build. Remaining logbook sessions stay un-compiled for a future full pass."
+  "updated": "2026-07-05",
+  "note": "Full pass over the substantive uncompiled minutes: US16 warm-batch build (35d1a354, folded into the browser-lane page), the Unpaywall email-via-envvar decision + its env-leaky CLI test (6b2b71c9, 6e18c177), the second-workspace full-clone practice (6e18c177), and the VMark markdown-corruption root cause (a8521e68). 1b5c077d (US18 spec design) reviewed — its durable claims already live on the browser-up/browser-lane pages from 5a774313. The remaining logbook entries are mechanical SessionEnd stubs (no filed content) and stay un-compiled. Not yet compiled: the OCR bench (US19-23) — those sessions were never filed as rich minutes, so run bureau:file-session before a bench compile."
 }

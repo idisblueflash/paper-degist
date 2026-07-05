@@ -63,6 +63,15 @@ detecting wall-vs-paper is deferred (see `DEVLOG.md`).
 **Scope edges.** Reusing one warm connection across a batch is US 16; routing `blocked_by` /
 `resolve-oa` records into `browser-fetch` is US 17; in-script auth is deferred.
 
+**Warm-batch reuse (US 16).** `browser_fetch_batch` factors the single fetch into shared
+primitives — `_cdp_context` (connect-once, **detach-not-close**), `_fetch_on_new_tab`
+(tab-per-URL, closes the tab, keeps the context), `_dispatch_url` — probing **once** at the
+batch boundary and returning saved paths in first-seen order; the single-URL path is
+unchanged. A warm session that fails to *open* after the probe passed quarantines the
+unreached URLs with a distinct `browser session failed to open` reason (a never-crash
+regression caught in self-review), so one bad endpoint never crashes the batch.
+
 **Sources.** [[session 5a774313-8a20-4405-8679-3b563de41dd4]] (browser-up design),
-[[session 6225f110-7e1f-4ca2-bd51-2a6e883dd259]] (browser-fetch build + real E2E). Related:
+[[session 6225f110-7e1f-4ca2-bd51-2a6e883dd259]] (browser-fetch build + real E2E),
+[[session 35d1a354-a3d8-45f7-b8ff-bddc86d9cf55]] (US 16 warm-batch build + live E2E). Related:
 [[browser-up keeps no state file]].

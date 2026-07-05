@@ -6,5 +6,17 @@
   "browser-up keeps no state file": {
     "artifact": "src/paper_degist/browser_up.py",
     "hash": "9d7b1f834f0f0a04c79037ab81fd8f6d6bb12ef4fe6e04c29b015084e9f38435"
+  },
+  "Unpaywall contact email comes from an env var, never hardcoded": {
+    "artifact": "src/paper_degist/resolve_oa.py",
+    "hash": "9aae629ed5aca6348b9ec17f41db5b575d3598963325f9920133ea9efe36a476"
+  },
+  "UNPAYWALL_EMAIL leaks into the resolve-oa CLI test": {
+    "artifact": "src/tests/test_cli.py",
+    "hash": "5aa6fc6f79897397094ab721e333babd7a71d70c384a8497caa338c016775276"
+  },
+  "VMark.app corrupts Markdown by re-serializing open files on save": {
+    "artifact": "user-stories/us-15-browser-fetch-bot-walled.md",
+    "hash": "94033d2c89ac13bec88bc74ddaa23a92d9f567dfa880660590ad7b87f6646a4f"
   }
 }
