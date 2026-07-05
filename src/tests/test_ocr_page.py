@@ -16,6 +16,7 @@ from paper_degist.ocr_page import (
     DEFAULT_ENDPOINT,
     REGISTRY,
     ClientRequestError,
+    ModelSpec,
     OcrResponse,
     TransportError,
     _decode_grounding,
@@ -62,6 +63,25 @@ def test_deepseek_prompt_omits_the_literal_image_token():
     # LM Studio 400s on a double image if the prompt carries a literal <image>;
     # the grounding prompt must not (report §3 / registry-encoded quirk).
     assert "<image>" not in REGISTRY["deepseek-ocr"].prompt
+
+
+def test_deepseek_ocr_2_registered_with_grounding_spec():
+    # A DeepSeek OCR variant; registered with the grounding prompt + decode. Assert
+    # the whole ModelSpec (one logical fact) so a prompt typo / wrong postprocessor
+    # can't slip past a mere key-presence check (Codex review; rule 05).
+    assert REGISTRY["deepseek-ocr-2"] == ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    )
+
+
+def test_deepseek_ocr_8bit_registered_with_grounding_spec():
+    # The 8-bit quant variant; same spec. Its id keeps the '@' in the output dir
+    # slug (_model_slug only rewrites '/') — a separate DEVLOG flag.
+    assert REGISTRY["deepseek-ocr@8bit"] == ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    )
 
 
 # --- output_path: the single source of truth for out/<model>/<page>.md ---

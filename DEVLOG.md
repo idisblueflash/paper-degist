@@ -676,6 +676,63 @@ location, the case not yet handled, and the trigger that should make us fix it.
   separate step, not a branch inside the loop.
 - **Status:** OPEN (deliberate — server lifecycle deferred by the US20 story).
 
+## ocr bench — co-loaded models exhaust RAM on a 16 GB box; bench one model at a time
+
+- **Where:** operational — `ocr-batch` / `ocr-page` against LM Studio on a 16 GB
+  Mac mini (the bench host, rule 09).
+- **Case:** LM Studio keeps every *used* model resident (JIT load, no auto-evict
+  by default). After a full-registry run the box held five OCR models at once
+  (`qwen/qwen3-vl-4b`, `deepseek-ocr`, `deepseek-ocr-2`, `deepseek-ocr@4bit`,
+  `unlimited-ocr-mlx`). On 16 GB that starves the MLX worker: decoding a
+  full-page image crashes it — a raw urllib POST to `deepseek-ocr-2` returned
+  **502 + BrokenPipe** (the worker fell over mid-request), and ocr-page's curl
+  path read the wedged server as a **400** and quarantined it. Confirmed it is
+  RAM, not a bad request: `deepseek-ocr@8bit` sent a byte-identical body and
+  returned 200 with faithful output, and intermittent 400s also crept into the
+  `@8bit` batch while the other models were co-resident. This is the concrete
+  cause behind the `qwen` "wedged model" reload earlier this session and the
+  400-fail-fast flag below.
+- **Trigger to fix / workaround:** on a RAM-constrained host, **load exactly one
+  model at a time** — in LM Studio set *Max loaded models = 1* (or enable JIT
+  auto-evict) and drive the bench with `ocr-batch --model <one>` per model, never
+  the whole-registry grid (which fans across co-loaded models). A future `ocr-up`
+  warm step (server-lifecycle flag above) could enforce single-model residency
+  before each per-model sweep. Long-term, a bigger-RAM host removes the limit.
+- **Status:** OPEN (operational — worked around by one-model-at-a-time benching;
+  no code change). **Confirmed on the Mac Mini:** loaded *alone*, `deepseek-ocr-2`
+  OCRs a page cleanly in ~13 s (the MBA "crash" was purely co-loaded-model RAM
+  pressure), and all three models benched 45/45 with zero 400s one-at-a-time.
+
+## score_ocr / ocr_page — deepseek-ocr-2 grounding emits type-labels; dup_pct is a formatting artifact (bench)
+
+- **Where:** `src/paper_degist/ocr_page.py::_decode_grounding` +
+  `REGISTRY["deepseek-ocr-2"].prompt`; surfaced by `score_ocr.dup_pct` on the
+  Mac Mini 3-model bench.
+- **Case:** with the `<|grounding|>Convert the document to markdown.` prompt,
+  `deepseek-ocr-2` emits DeepSeek layout triples
+  `<|ref|>text<|/ref|><|det|>[box]<|/det|>\n<content>` where the ref slot holds a
+  **layout category** (`text`/`title`/`sub_title`/…), not the text. `_decode_grounding`
+  strips the `<|ref|>`/`<|det|>` *markers* but keeps the word between them, so each
+  triple decodes to a bare `text`/`sub_title` line. These repeat down the page and
+  inflate `dup_pct` (deepseek-ocr-2 40%, deepseek-ocr@8bit 34% vs qwen 3%) — a
+  **formatting artifact, not content repetition** (the content lines are unique and
+  the edit-distance-to-gold is the *best* of the three at 0.127). NB base
+  `deepseek-ocr` uses the ref slot for the *actual text* (`test_decode_grounding_*`
+  asserts `<|ref|>Heading<|/ref|>` → `Heading`), so a single shared decode cannot be
+  right for both variants.
+- **Trigger to fix (follow-up branch):** switch `deepseek-ocr-2` to upstream's
+  clean-text prompt **`Free OCR.`** (DeepSeek-OCR-2 README), which emits no
+  markup/labels and transcribes *more* accurately in a spot check (correct
+  "goniometers" where grounding misread "ionometers") — at the cost of `##`
+  markdown headings, so expect `text_edit_distance` to improve and `teds` to drop;
+  **re-bench to measure the tradeoff** before adopting. Alternatively give
+  `deepseek-ocr-2` its own postprocess that drops the ref-*category* (opposite of
+  base deepseek-ocr's keep-ref decode). Prefer the prompt fix (root cause, one-line
+  `ModelSpec` data change) over a regex that could delete a legitimate "Title"
+  heading.
+- **Status:** OPEN (deferred by the "ship now, prompt-tune as follow-up" call — the
+  current bench uses the grounding prompt; the `Free OCR.` A/B is its own branch).
+
 ## ocr_page — registry holds one DeepSeek entry; loaded variants not registered (US20)
 
 - **Where:** `src/paper_degist/ocr_page.py::REGISTRY`.
@@ -689,7 +746,13 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when the bench compares the DeepSeek quantizations (or the
   `unlimited-ocr` model). Add a `ModelSpec` per variant — most reuse the
   `<|grounding|>…` prompt + `_decode_grounding`, so it is a one-line data add.
-- **Status:** OPEN (deliberate — registry is data; add entries on demand).
+- **Status:** PARTIALLY ADDRESSED. The bench now compares the DeepSeek quants, so
+  `deepseek-ocr-2` and `deepseek-ocr@8bit` are registered — each a one-line
+  `ModelSpec` reusing the `<|grounding|>…` prompt + `_decode_grounding` (pinned by
+  `test_deepseek_ocr_2_is_registered` / `test_deepseek_ocr_8bit_is_registered`).
+  `deepseek-ocr@4bit` and `unlimited-ocr-mlx` are **deliberately left out** (the
+  operator scoped this bench to the two above); they remain quarantined as
+  "unknown model" until a run wants them — still one data add each.
 
 ## ocr_page — model-slug output dir only rewrites '/', not other id punctuation (US20)
 
@@ -1310,3 +1373,34 @@ location, the case not yet handled, and the trigger that should make us fix it.
   an explicit empty selection parallels an empty page directory, both clean
   no-ops, and the CLI cannot produce it: omitting `--model` yields the whole
   registry.)
+
+## ocr_page — a wedged server's 400 fail-fasts like a real bad request (bench run)
+
+- **Where:** `src/paper_degist/ocr_page.py` (the `ClientRequestError` branch,
+  ~`:64`/`:208`/`:325`) — a 4xx raises `ClientRequestError`, which the retry loop
+  deliberately does **not** retry (retrying a rejected request "only burns the
+  recovery budget and mislabels a rejected request as an unreachable server").
+- **Case not handled:** the fail-fast rests on "a 4xx is deterministic". A
+  **crashed-but-`loaded`** LM Studio model violates that — it returned **400** on
+  some pages (and 502 on others) purely because the runtime was wedged, not
+  because the request was malformed. Those 400s hit the fail-fast path and
+  quarantined immediately, while the 502s were retried/recovered. Confirmed on the
+  90-output OmniDocBench bench: `qwen/qwen3-vl-4b` quarantined three pages
+  (`…j.jcrimjus.2010.04.003.pdf_8`, `…j.mseb.2009.12.004.pdf_2`,
+  `scihub_j.1528-1167.2008.01552.x.pdf_3`) with `reason: "request rejected: server
+  returned 400"`. After the operator reloaded the model, the **exact same request**
+  for `…jcrimjus…_8` returned a clean 200 (114-line transcription, 3227 tokens) —
+  so the 400 was a transient symptom of the wedged server, indistinguishable at
+  the HTTP layer from a legitimate bad request.
+- **Trigger to fix:** if a healthy-server run still shows spurious 400
+  quarantines, or the bench wants unattended recovery from a wedged runtime. Note
+  the tension: blanket-retrying 4xx would defeat the intentional fail-fast (a
+  *real* bad body — e.g. DeepSeek's double-`<image>` token — should still quarantine
+  fast, not burn the budget). A safer fix pairs with the deferred `ocr-up`/warm
+  step (server-lifecycle flag above): detect a wedged-but-`loaded` model out of
+  band and restart/warm it, rather than teaching the per-request loop to retry a
+  400. Driven by a test that distinguishes a wedged-server 400 from a malformed-body
+  400 (e.g. by whether a reload clears it) before changing the retry contract.
+- **Status:** OPEN (server lifecycle is the operator's job today — see the
+  `ocr_page — server lifecycle … operator's job` flag; this records the concrete
+  400-not-502 wrinkle the bench surfaced).

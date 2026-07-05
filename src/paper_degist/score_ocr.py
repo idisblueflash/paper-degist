@@ -23,7 +23,7 @@ never sent to an LLM — so a batch still finishes.
 Runnable from the command line (rule 03):
 
     uv run score-ocr out/qwen_qwen3-vl-4b/p02.md
-    uv run score-ocr out/deepseek-ocr_8bit/p02.md --scores scores.jsonl
+    uv run score-ocr out/deepseek-ocr@8bit/p02.md --scores scores.jsonl
 """
 
 import json
