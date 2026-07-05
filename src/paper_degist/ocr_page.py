@@ -232,6 +232,16 @@ def _model_slug(model_id: str) -> str:
     return model_id.replace("/", "_")
 
 
+def output_path(page_path: Path, model_id: str, out_dir: Path = Path("out")) -> Path:
+    """Where ``ocr_page`` saves ``page_path`` under ``model_id``: ``out/<model>/<page>.md``.
+
+    The single source of truth for the target path, so a batch driver (US28) can
+    test "already OCR'd?" with exactly the same path ``ocr_page`` skips on — the
+    idempotency check must not drift between the step and its driver.
+    """
+    return Path(out_dir) / _model_slug(model_id) / (Path(page_path).stem + ".md")
+
+
 def _quarantine(manifest_path: Path, *, page: str, model: str, reason: str) -> None:
     """Append one unhandled-case record to the manifest, so the batch finishes."""
     _manifest.append(manifest_path, stage="ocr-page", page=page, model=model, reason=reason)
@@ -282,7 +292,7 @@ def ocr_page(
         )
         return None
 
-    target = out_dir / _model_slug(model_id) / (page_path.stem + ".md")
+    target = output_path(page_path, model_id, out_dir)
     if target.exists():
         return target  # idempotent skip — the model call is the expensive, flaky resource
 

@@ -23,6 +23,7 @@ from paper_degist.ocr_page import (
     _parse_response,
     _strip_markdown_fence,
     ocr_page,
+    output_path,
 )
 
 
@@ -61,6 +62,15 @@ def test_deepseek_prompt_omits_the_literal_image_token():
     # LM Studio 400s on a double image if the prompt carries a literal <image>;
     # the grounding prompt must not (report §3 / registry-encoded quirk).
     assert "<image>" not in REGISTRY["deepseek-ocr"].prompt
+
+
+# --- output_path: the single source of truth for out/<model>/<page>.md ---
+
+
+def test_output_path_slugs_the_model_and_keeps_the_page_stem():
+    assert output_path(Path("pages/WordCraft/p02.png"), "qwen/qwen3-vl-4b", Path("out")) == (
+        Path("out/qwen_qwen3-vl-4b/p02.md")
+    )
 
 
 # --- orchestrator: shared arrange/act (rule 05 — factor setup into helpers) ---
