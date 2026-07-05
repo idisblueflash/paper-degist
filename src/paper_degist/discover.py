@@ -51,6 +51,8 @@ S2_ENDPOINT = "https://api.semanticscholar.org/graph/v1/paper/search"
 # The Semantic Scholar fields we ask for — the common-schema inputs plus tldr.
 S2_FIELDS = "title,abstract,authors,externalIds,url,publicationDate,tldr"
 
+OPENALEX_ENDPOINT = "https://api.openalex.org/works"
+
 # The Atom namespace every arXiv feed element lives under.
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
@@ -62,7 +64,10 @@ class Candidate:
     ``abstract`` may be ``None`` (some records carry no abstract); the emitted
     record still carries it with an ``abstract_present`` flag so US26 can drop it
     cheaply rather than discovery dropping it (AC3 — discovery casts wide).
-    ``doi`` and ``tldr`` are emitted only when the record actually has them.
+    ``doi``, ``tldr``, ``pdf_url`` and ``cited_by`` are emitted only when the
+    record actually carries them — ``pdf_url`` is OpenAlex's up-front open-access
+    copy (directly fetchable by ``fetch-one``, US29 AC3) and ``cited_by`` its
+    citation count.
     """
 
     title: str
@@ -74,9 +79,11 @@ class Candidate:
     source_id: str
     doi: Optional[str] = None
     tldr: Optional[str] = None
+    pdf_url: Optional[str] = None
+    cited_by: Optional[int] = None
 
     def to_record(self) -> dict:
-        """The JSONL record: always-present fields, plus doi/tldr when carried."""
+        """The JSONL record: always-present fields, plus the optional ones."""
         record: dict = {
             "title": self.title,
             "authors": list(self.authors),
@@ -91,6 +98,10 @@ class Candidate:
             record["doi"] = self.doi
         if self.tldr:
             record["tldr"] = self.tldr
+        if self.pdf_url:
+            record["pdf_url"] = self.pdf_url
+        if self.cited_by is not None:
+            record["cited_by"] = self.cited_by
         return record
 
 
@@ -105,6 +116,25 @@ def _clean(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None
     return " ".join(text.split())
+
+
+def reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
+    """Rebuild plain-text abstract from OpenAlex's inverted index (rule 02).
+
+    OpenAlex ships the abstract as ``abstract_inverted_index`` — a
+    ``{token: [positions]}`` map — never plain text. Placing each token at each
+    of its positions and reading them in position order reconstructs the
+    original abstract. A null / empty index means the work carries no abstract
+    (US29 AC5) → ``None``, so the record is flagged ``abstract_present: false``
+    rather than dropped.
+    """
+    if not inverted_index:
+        return None
+    positioned: dict[int, str] = {}
+    for token, positions in inverted_index.items():
+        for position in positions:
+            positioned[position] = token
+    return " ".join(positioned[i] for i in sorted(positioned)) or None
 
 
 def parse_arxiv_atom(xml_text: str) -> list[Candidate]:
@@ -194,6 +224,88 @@ def parse_s2_json(data: dict) -> list[Candidate]:
     return candidates
 
 
+def _bare_openalex_id(entity_url: Optional[str]) -> str:
+    """``https://openalex.org/W2606780347`` → ``W2606780347`` (the bare key)."""
+    return (entity_url or "").rsplit("/", 1)[-1]
+
+
+def _bare_doi(doi_url: Optional[str]) -> Optional[str]:
+    """``https://doi.org/10.1038/nature24644`` → the bare DOI (common schema).
+
+    OpenAlex reports the DOI as a resolver URL; the common schema (like S2's
+    ``externalIds.DOI``) carries the bare DOI, so strip the resolver prefix.
+    """
+    if not doi_url:
+        return None
+    lowered = doi_url.lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi.org/"):
+        if lowered.startswith(prefix):
+            return doi_url[len(prefix):]
+    return doi_url
+
+
+def _openalex_pdf_url(work: dict) -> Optional[str]:
+    """The directly fetchable OA PDF: ``best_oa_location`` then ``oa_locations``.
+
+    OpenAlex's ``best_oa_location.pdf_url`` is the preferred open copy; when it
+    has none (an OA landing page with no direct PDF, or a closed work), fall back
+    to the first ``oa_locations[]`` entry that carries a ``pdf_url`` (US29 AC3).
+    A work with no OA PDF anywhere yields ``None`` — still emitted, just without a
+    ``pdf_url``.
+    """
+    best = work.get("best_oa_location") or {}
+    if best.get("pdf_url"):
+        return best["pdf_url"]
+    for location in work.get("oa_locations") or []:
+        if isinstance(location, dict) and location.get("pdf_url"):
+            return location["pdf_url"]
+    return None
+
+
+def parse_openalex_json(data: dict) -> list[Candidate]:
+    """Map an OpenAlex Works response into Candidates (rule 02 — quirks once).
+
+    OpenAlex's fixed quirks, encoded here so no other stage repeats them: the
+    abstract arrives as ``abstract_inverted_index`` (reconstructed to plain text,
+    ``None`` when absent — AC2/AC5); the DOI and the work id arrive as resolver
+    URLs (reduced to the bare DOI / bare ``W…`` id); and the open-access PDF lives
+    under ``best_oa_location``/``oa_locations`` (extracted as ``pdf_url`` — AC3).
+    ``cited_by_count`` carries the citation count. A result with no identity at
+    all (no id, url, or DOI) is unfetchable junk and skipped, mirroring the
+    arXiv/S2 parsers.
+    """
+    candidates: list[Candidate] = []
+    for work in data.get("results") or []:
+        source_id = _bare_openalex_id(work.get("id"))
+        doi = _bare_doi(work.get("doi"))
+        # url is the canonical human landing page: the DOI resolver when the work
+        # has a DOI, else the OpenAlex entity page — always something fetchable.
+        url = work.get("doi") or work.get("id") or ""
+        if not (url or doi):
+            continue
+        authors = [
+            name
+            for authorship in (work.get("authorships") or [])
+            if isinstance(authorship, dict)
+            and (name := (authorship.get("author") or {}).get("display_name"))
+        ]
+        candidates.append(
+            Candidate(
+                title=work.get("title") or "",
+                authors=authors,
+                abstract=reconstruct_abstract(work.get("abstract_inverted_index")),
+                url=url,
+                published=work.get("publication_date"),
+                source="openalex",
+                source_id=source_id,
+                doi=doi,
+                pdf_url=_openalex_pdf_url(work),
+                cited_by=work.get("cited_by_count"),
+            )
+        )
+    return candidates
+
+
 def _arxiv_search(max_results: int) -> Search:
     """Build the real arXiv adapter: query the Atom API, parse into Candidates."""
 
@@ -209,6 +321,40 @@ def _arxiv_search(max_results: int) -> Search:
         )
         resp.raise_for_status()
         return parse_arxiv_atom(resp.text)
+
+    return search
+
+
+def _openalex_search(max_results: int, email: Optional[str]) -> Search:
+    """Build the real OpenAlex adapter: query the Works API, parse into Candidates.
+
+    OpenAlex is **keyless** (like arXiv). Politeness is the *polite pool*
+    convention — send a contact ``mailto=`` for the faster shared pool. Absent,
+    the query still runs on the common pool (US29 AC4 — the missing-email warning
+    is the CLI's job); the ``mailto`` param is simply omitted. The query filters
+    ``title_and_abstract.search`` and sorts ``cited_by_count:desc`` so the wide
+    net surfaces the most-cited first.
+    """
+
+    def search(query: str) -> list[Candidate]:
+        import httpx
+
+        params = {
+            "filter": f"title_and_abstract.search:{query}",
+            "sort": "cited_by_count:desc",
+            "per-page": max_results,
+        }
+        if email:
+            params["mailto"] = email
+        resp = httpx.get(
+            OPENALEX_ENDPOINT,
+            params=params,
+            headers={"User-Agent": "paper-degist/0.1 (https://github.com/idisblueflash/paper-degist)"},
+            timeout=30.0,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        return parse_openalex_json(resp.json())
 
     return search
 
@@ -320,11 +466,14 @@ app = typer.Typer(
 )
 
 
-def _build_registry(max_results: int, s2_api_key: Optional[str]) -> dict[str, Search]:
+def _build_registry(
+    max_results: int, s2_api_key: Optional[str], email: Optional[str]
+) -> dict[str, Search]:
     """The source registry (rule 02: a new source is one entry, not a branch)."""
     return {
         "arxiv": _arxiv_search(max_results),
         "s2": _s2_search(max_results, s2_api_key),
+        "openalex": _openalex_search(max_results, email),
     }
 
 
@@ -333,7 +482,7 @@ def run(
     query: Annotated[str, typer.Argument(help="the topic query to search for")],
     source: Annotated[
         str,
-        typer.Option(help="which scholarly API to search: arxiv or s2"),
+        typer.Option(help="which scholarly API to search: arxiv, s2, or openalex"),
     ] = "arxiv",
     max_results: Annotated[
         int,
@@ -343,17 +492,33 @@ def run(
         Optional[str],
         typer.Option(envvar="S2_API_KEY", help="optional Semantic Scholar API key"),
     ] = None,
+    email: Annotated[
+        Optional[str],
+        typer.Option(
+            envvar="OPENALEX_EMAIL",
+            help="contact email for OpenAlex's faster polite pool (keyless without it)",
+        ),
+    ] = None,
     manifest: Annotated[
         Path,
         typer.Option(help="manifest of discover runs and quarantined queries"),
     ] = Path("manifest.jsonl"),
 ) -> None:
     """Search the source; print each candidate as one JSONL line, or a note."""
+    if source == "openalex" and not email:
+        # AC4: OpenAlex serves keyless traffic, so a missing contact email is
+        # *politeness*, not an access requirement — warn and downgrade to the
+        # common pool rather than quarantine (contrast US27's hard SerpAPI key).
+        typer.echo(
+            "warning: no OpenAlex contact email (--email / OPENALEX_EMAIL); "
+            "using the slower common pool — set one for the polite pool.",
+            err=True,
+        )
     records = discover(
         query,
         source,
         manifest_path=manifest,
-        registry=_build_registry(max_results, s2_api_key),
+        registry=_build_registry(max_results, s2_api_key, email),
     )
     if records is None:
         # Quarantine is an expected outcome, not a crash: note it and exit clean.

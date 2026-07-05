@@ -3,8 +3,11 @@ import tempfile
 from pathlib import Path
 
 from behave import given, then, when
+from typer.testing import CliRunner
 
-from paper_degist.discover import Candidate, discover
+import paper_degist.discover as discover_mod
+from paper_degist.discover import Candidate, discover, parse_openalex_json
+from paper_degist.discover import app as discover_app
 
 
 def _root(context):
@@ -69,6 +72,87 @@ def step_source_empty(context, source):
 def step_source_rate_limited(context, source):
     error = RuntimeError("HTTP 429 Too Many Requests")
     context.registry = {source: _recording_search(context, error=error)}
+
+
+@given('an "{source}" work whose abstract arrives as an inverted index')
+def step_openalex_inverted_index(context, source):
+    # A raw OpenAlex Works response — the adapter reconstructs the abstract from
+    # the {token: [positions]} map (US29 AC2), so parse it through the real parser.
+    raw = {
+        "results": [
+            {
+                "id": "https://openalex.org/W2606780347",
+                "doi": "https://doi.org/10.48550/arxiv.1704.01212",
+                "title": "Neural Message Passing for Quantum Chemistry",
+                "abstract_inverted_index": {
+                    "Graph": [0],
+                    "neural": [1],
+                    "networks": [2],
+                    "predict": [3],
+                    "molecular": [4],
+                    "properties": [5],
+                },
+            }
+        ]
+    }
+    candidates = parse_openalex_json(raw)
+    context.registry = {source: _recording_search(context, candidates=candidates)}
+
+
+@given('an "{source}" source whose candidate carries a pdf_url "{pdf_url}"')
+def step_openalex_pdf_url(context, source, pdf_url):
+    candidate = _candidate(source)
+    candidate = Candidate(**{**candidate.__dict__, "pdf_url": pdf_url})
+    context.registry = {source: _recording_search(context, candidates=[candidate])}
+
+
+@when('discover runs the openalex CLI with no contact email')
+def step_openalex_cli_no_email(context):
+    # Exercise the real CLI path (where the missing-email warning lives), with a
+    # stubbed registry so no network is touched. AC4: warn, do not quarantine.
+    import os
+
+    root = _root(context)
+    context.searched = []
+
+    def search(query):
+        context.searched.append(query)
+        return [_candidate("openalex")]
+
+    os.environ.pop("OPENALEX_EMAIL", None)
+    original_build_registry = discover_mod._build_registry
+    discover_mod._build_registry = lambda mr, key, email: {"openalex": search}
+    try:
+        context.cli_result = CliRunner().invoke(
+            discover_app,
+            [context.query, "--source", "openalex", "--manifest", str(root / "manifest.jsonl")],
+        )
+    finally:
+        discover_mod._build_registry = original_build_registry
+
+
+@then('the emitted record abstract reads "{abstract}"')
+def step_record_abstract(context, abstract):
+    assert context.result is not None, "expected records, got a quarantine"
+    assert context.result[0]["abstract"] == abstract, context.result[0]["abstract"]
+
+
+@then('the emitted record carries the pdf_url "{pdf_url}"')
+def step_record_pdf_url(context, pdf_url):
+    assert context.result is not None, "expected records, got a quarantine"
+    assert context.result[0].get("pdf_url") == pdf_url, context.result[0].get("pdf_url")
+
+
+@then('a polite-pool warning is emitted')
+def step_polite_pool_warning(context):
+    assert "polite pool" in context.cli_result.output, context.cli_result.output
+
+
+@then('the openalex search is still run')
+def step_openalex_search_run(context):
+    # AC4: the missing email downgrades to the common pool, it does NOT block —
+    # the adapter was actually called.
+    assert context.searched, "the openalex adapter was not invoked"
 
 
 @when('discover searches the "{source}" source')

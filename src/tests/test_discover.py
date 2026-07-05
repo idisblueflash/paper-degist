@@ -17,10 +17,35 @@ from paper_degist.discover import (
     Candidate,
     discover,
     parse_arxiv_atom,
+    parse_openalex_json,
     parse_s2_json,
+    reconstruct_abstract,
 )
 
 SAMPLES = Path(__file__).parent / "samples"
+
+
+# --- OpenAlex abstract_inverted_index reconstruction (US29 AC2, rule 02) ---
+
+
+def test_reconstruct_orders_tokens_by_position():
+    # OpenAlex ships {token: [positions]}, not plain text; reconstruction orders
+    # each token by its position so the abstract reads in its original order.
+    index = {"Graph": [0], "neural": [1], "networks": [2], "predict": [3]}
+    assert reconstruct_abstract(index) == "Graph neural networks predict"
+
+
+def test_reconstruct_places_a_repeated_token_at_each_position():
+    # A token that recurs carries a position list with more than one index;
+    # every occurrence must land, not just the first.
+    index = {"the": [0, 2], "graph": [1], "model": [3]}
+    assert reconstruct_abstract(index) == "the graph the model"
+
+
+def test_reconstruct_null_index_is_none():
+    # A work with no abstract carries a null inverted index (AC5) → None, so the
+    # record is kept and flagged abstract_present false rather than dropped.
+    assert reconstruct_abstract(None) is None
 
 
 # --- arXiv Atom parser: map the feed into the common schema (AC1) ---
@@ -98,6 +123,104 @@ def test_arxiv_skips_an_entry_with_no_id():
     )
     ids = [c.source_id for c in parse_arxiv_atom(feed)]
     assert ids == ["2401.00001v1"]
+
+
+# --- OpenAlex JSON parser: common schema + reconstructed abstract, pdf_url ---
+
+
+def _openalex_data() -> dict:
+    return json.loads((SAMPLES / "openalex-molecular-gnn.json").read_text(encoding="utf-8"))
+
+
+def test_openalex_parses_one_candidate_per_result():
+    assert len(parse_openalex_json(_openalex_data())) == 2
+
+
+def test_openalex_reconstructs_the_abstract_from_the_inverted_index():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.abstract.startswith("Supervised learning on molecules has incredible")
+
+
+def test_openalex_extracts_author_display_names():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.authors == [
+        "Justin Gilmer",
+        "Samuel S. Schoenholz",
+        "Patrick Riley",
+        "Oriol Vinyals",
+        "George E. Dahl",
+    ]
+
+
+def test_openalex_source_id_is_the_bare_work_id():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.source_id == "W2606780347"
+
+
+def test_openalex_doi_is_stripped_to_the_bare_doi():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.doi == "10.48550/arxiv.1704.01212"
+
+
+def test_openalex_tags_the_source():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.source == "openalex"
+
+
+def test_openalex_extracts_the_cited_by_count():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.cited_by == 3010
+
+
+# --- AC3: an OA pdf_url is carried when present, absent otherwise ---
+
+
+def test_openalex_carries_the_oa_pdf_url_when_present():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.pdf_url == "https://arxiv.org/pdf/1704.01212"
+
+
+def test_openalex_pdf_url_is_none_when_no_oa_copy():
+    # The second gnn record is OA-indexed but carries no direct pdf_url — it is
+    # still emitted (AC3), just without a fetchable PDF link.
+    second = parse_openalex_json(_openalex_data())[1]
+    assert second.pdf_url is None
+
+
+def test_openalex_pdf_url_record_omits_it_when_absent():
+    second = parse_openalex_json(_openalex_data())[1]
+    assert "pdf_url" not in second.to_record()
+
+
+def test_openalex_pdf_url_record_includes_it_when_present():
+    first = parse_openalex_json(_openalex_data())[0]
+    assert first.to_record()["pdf_url"] == "https://arxiv.org/pdf/1704.01212"
+
+
+# --- AC5: a null inverted index → kept, flagged abstract_present false ---
+
+
+def test_openalex_null_abstract_index_stays_none():
+    # A work whose abstract_inverted_index is null is kept (title + DOI still
+    # feed the chain), not dropped.
+    data = {"results": [{"id": "https://openalex.org/W123", "doi": "https://doi.org/10.1/x", "title": "No abstract", "abstract_inverted_index": None}]}
+    assert parse_openalex_json(data)[0].abstract is None
+
+
+def test_openalex_null_abstract_record_flags_abstract_present_false():
+    data = {"results": [{"id": "https://openalex.org/W123", "title": "No abstract", "abstract_inverted_index": None}]}
+    assert parse_openalex_json(data)[0].to_record()["abstract_present"] is False
+
+
+# --- OpenAlex robustness: a result with no identity is skipped ---
+
+
+def test_openalex_skips_a_result_with_no_identity():
+    # No id, no doi → unfetchable, undedupable junk; skipped like arXiv/S2. A
+    # well-formed sibling still comes through.
+    data = {"results": [{"title": "Nameless"}, {"id": "https://openalex.org/W9", "title": "Has id"}]}
+    ids = [c.source_id for c in parse_openalex_json(data)]
+    assert ids == ["W9"]
 
 
 # --- Semantic Scholar JSON parser: same schema, plus tldr + doi (AC2) ---

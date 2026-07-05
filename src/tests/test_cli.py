@@ -671,7 +671,7 @@ def test_discover_cli_hits_print_one_jsonl_line_per_candidate(tmp_path: Path, mo
         source_id="2101.03961v1",
     )
     monkeypatch.setattr(
-        discover_mod, "_build_registry", lambda mr, key: {"arxiv": lambda q: [candidate]}
+        discover_mod, "_build_registry", lambda mr, key, email: {"arxiv": lambda q: [candidate]}
     )
     result = runner.invoke(
         discover_app,
@@ -679,6 +679,61 @@ def test_discover_cli_hits_print_one_jsonl_line_per_candidate(tmp_path: Path, mo
     )
     line = result.stdout.strip()
     assert json.loads(line)["title"] == "Switch Transformers"
+
+
+# --- discover openalex CLI: a missing contact email warns, does not block (US29 AC4) ---
+
+
+def _discover_openalex_no_email(tmp_path: Path, monkeypatch, search):
+    """Run `discover --source openalex` with no --email, injecting `search`.
+
+    `_build_registry` is stubbed so the CLI never touches the network; the fake
+    `search` stands in for the OpenAlex adapter.
+    """
+    monkeypatch.delenv("OPENALEX_EMAIL", raising=False)
+    monkeypatch.setattr(
+        discover_mod, "_build_registry", lambda mr, key, email: {"openalex": search}
+    )
+    return runner.invoke(
+        discover_app,
+        ["graph neural networks for molecular property prediction",
+         "--source", "openalex", "--manifest", str(tmp_path / "m.jsonl")],
+    )
+
+
+def test_discover_openalex_missing_email_warns(tmp_path: Path, monkeypatch):
+    result = _discover_openalex_no_email(tmp_path, monkeypatch, lambda q: [])
+    assert "polite pool" in result.output
+
+
+def test_discover_openalex_missing_email_still_runs(tmp_path: Path, monkeypatch):
+    # AC4: no email downgrades to the common pool — it must NOT quarantine as a
+    # hard requirement (contrast US27's SerpAPI key). A hits search still emits.
+    candidate = Candidate(
+        title="Neural Message Passing for Quantum Chemistry",
+        authors=["Justin Gilmer"],
+        abstract="Supervised learning on molecules.",
+        url="https://doi.org/10.48550/arxiv.1704.01212",
+        published="2017-04-04",
+        source="openalex",
+        source_id="W2606780347",
+    )
+    result = _discover_openalex_no_email(tmp_path, monkeypatch, lambda q: [candidate])
+    assert json.loads(result.stdout.strip().splitlines()[-1])["source_id"] == "W2606780347"
+
+
+def test_discover_openalex_with_email_does_not_warn(tmp_path: Path, monkeypatch):
+    # The polite-pool warning is conditional: supplying --email suppresses it.
+    monkeypatch.setattr(
+        discover_mod, "_build_registry", lambda mr, key, email: {"openalex": lambda q: []}
+    )
+    result = runner.invoke(
+        discover_app,
+        ["graph neural networks for molecular property prediction",
+         "--source", "openalex", "--email", "RogersD1983@protonmail.com",
+         "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert "polite pool" not in result.output
 
 
 def test_root_signpost_lists_discover():
