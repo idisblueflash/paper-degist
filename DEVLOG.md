@@ -1204,6 +1204,23 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
 
+## ocr_batch — page discovery only matched `p*.png`, skipping `.jpg` gold pages (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the page-walk glob).
+- **Case (surfaced running the golden set):** discovery was
+  `pages_dir.glob("p*.png")` — correct for render-pdf's `pNNNN.png` output, but
+  the OmniDocBench gold subset ships pages as `.jpg` (39 of 45 in-subset pages;
+  the other 6 are `page-*.png`). So pointing `ocr-batch` at the gold image
+  directory silently OCR'd only the 6 `.png` and skipped all 39 `.jpg` — 86% of
+  the subset — with no error.
+- **Status:** RESOLVED (golden-run batch-of-1). Page discovery is now
+  `_page_images`: every file whose suffix is in `_PAGE_SUFFIXES`
+  (`.png`/`.jpg`/`.jpeg`, lowercase — uppercase would double-match on a
+  case-insensitive FS), sorted in page order, and a missing directory yields no
+  pages rather than raising (rule 02, preserving the never-crash contract). Pinned
+  by `test_ocrs_a_jpg_page`; the missing-dir guard keeps
+  `test_missing_page_directory_returns_no_paths` green.
+
 ## ocr_batch — one page directory per run; no corpus-across-papers driver (US28)
 
 - **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (one `pages_dir`).

@@ -101,6 +101,13 @@ def test_returns_the_saved_path_for_every_pair(tmp_path):
     ]
 
 
+def test_ocrs_a_jpg_page(tmp_path):
+    # The gold set (OmniDocBench) ships pages as .jpg, not render-pdf's pNNNN.png;
+    # page discovery must find them or 86% of the gold subset is silently skipped.
+    _, ocr, _ = _run(tmp_path, page_names=("docstructbench_ajhb.10190.pdf_5.jpg",))
+    assert ("docstructbench_ajhb.10190.pdf_5.jpg", "vision-alpha") in ocr.calls
+
+
 # --- AC2: recovery gap between consecutive server-hitting pairs ---
 
 
