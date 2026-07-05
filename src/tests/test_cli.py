@@ -230,8 +230,12 @@ def test_resolve_oa_cli_slug_url_resolves_via_title_lookup(tmp_path: Path, monke
     assert result.stdout.strip() == "https://oa.org/p.pdf"
 
 
-def test_resolve_oa_cli_missing_email_exits_two(tmp_path: Path):
-    # Unpaywall needs a contact email; the option is required.
+def test_resolve_oa_cli_missing_email_exits_two(monkeypatch):
+    # Unpaywall needs a contact email; the option is required. Clear the
+    # UNPAYWALL_EMAIL env fallback so the run cannot satisfy --email from the
+    # ambient environment — otherwise the required-option gate never triggers
+    # and this test's result depends on the shell it runs in (DEVLOG flag).
+    monkeypatch.delenv("UNPAYWALL_EMAIL", raising=False)
     result = runner.invoke(resolve_oa_app, ["https://doi.org/10.1191/x"])
     assert result.exit_code == 2
 
