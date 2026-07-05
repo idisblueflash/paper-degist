@@ -54,6 +54,20 @@ def test_dup_pct_does_not_false_positive_on_abbreviations_in_a_single_line():
     assert dup_pct(text) == 0.0
 
 
+def test_dup_pct_excludes_repeated_figure_panel_labels():
+    # A grounding/layout decode emits figure-panel labels (`A`, `B`) as their own
+    # single-character lines; the same page repeats them per subfigure. They are
+    # legitimate repeated boilerplate — counting a bare `A` twice as a duplicate
+    # inflated dup_pct on deepseek-ocr-2's real output (the panel-label false
+    # positive). All prose lines here are distinct, so a correct scorer reads 0.0.
+    text = (
+        "A\n\nFig. 4. Estimation of CTB bound per well.\n\nB\n\n"
+        "Fig. 5. Detection of CTB in cocultures of V. cholerae.\n\nA\n\nB\n\n"
+        "We found that BEGs were well suited to detecting secreted CTB."
+    )
+    assert dup_pct(text) == 0.0
+
+
 def test_dup_pct_excludes_repeated_horizontal_rules():
     # `---` rules are legitimate repeated boilerplate: repeating them must NOT
     # inflate the score (the report's known false positive).

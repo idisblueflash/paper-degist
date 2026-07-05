@@ -44,6 +44,15 @@ from paper_degist.ocr_page import _model_slug
 # positive). Excluding it is encoded knowledge, not a per-run judgement.
 _RULE_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 
+# A bare figure-panel label emitted on its own line (`A`, `(B)`, `C.`): a
+# grounding/layout decode (deepseek-ocr-2) puts each subfigure's label on its own
+# single-character line, so a multi-panel figure repeats `A`/`B` per page. Like a
+# rule, that is legitimate repeated boilerplate, not a repetition loop — counting a
+# second bare `A` as a duplicate inflated dup_pct on a distinct output. Optional
+# wrapping parens/brackets and a trailing `.`/`)` are stripped so `(A)` and `A.`
+# match too; a single letter only, so a one-word line of real prose is untouched.
+_PANEL_LABEL_RE = re.compile(r"^\s*[(\[]?[A-Za-z][)\].]?\s*$")
+
 # Sentence boundary — an end punctuation (`.?!`) followed by whitespace. Used
 # only as the unlined-output fallback for `dup_pct`: a model that emits the whole
 # page on one line (no newlines) has one substantive "line", so a line-based
@@ -82,14 +91,15 @@ _CJK_RE = re.compile(r"[㐀-䶿一-鿿ɐ-ʯ]")
 def _substantive_lines(text: str) -> list[str]:
     """The lines that count toward duplication: non-blank, non-horizontal-rule.
 
-    Blank lines and markdown rules (``---``) are legitimate repeated boilerplate;
-    counting them as duplicates inflates ``dup_pct`` on clean output, so they are
-    excluded before the ratio is taken (the report's known false positive).
+    Blank lines, markdown rules (``---``), and bare figure-panel labels (``A``,
+    ``(B)``) are legitimate repeated boilerplate; counting them as duplicates
+    inflates ``dup_pct`` on clean output, so they are excluded before the ratio is
+    taken (the report's known false positives).
     """
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or _RULE_RE.match(line):
+        if not stripped or _RULE_RE.match(line) or _PANEL_LABEL_RE.match(line):
             continue
         lines.append(stripped)
     return lines
