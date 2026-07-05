@@ -35,7 +35,7 @@ timeless spec and carry no status marker.
 | [US 20](user-stories/us-20-ocr-one-page-registry.md) | OCR one page with a registered model (stable transport) | `ocr-page`      | ✅ Done         |
 | [US 21](user-stories/us-21-reference-free-scorers.md) | Score OCR output with reference-free defect metrics | `score-ocr`     | ✅ Done         |
 | [US 22](user-stories/us-22-omnidocbench-gold-accuracy.md) | Score accuracy against an OmniDocBench gold subset | `score-gold`    | ✅ Done         |
-| [US 23](user-stories/us-23-aggregate-scorecard-report.md) | Aggregate a model comparison scorecard | `ocr-report`    | —              |
+| [US 23](user-stories/us-23-aggregate-scorecard-report.md) | Aggregate a model comparison scorecard | `ocr-report`    | ✅ Done         |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
