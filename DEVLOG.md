@@ -1204,6 +1204,41 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
 
+## ocr_batch — page discovery only matched `p*.png`, skipping `.jpg` gold pages (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the page-walk glob).
+- **Case (surfaced running the golden set):** discovery was
+  `pages_dir.glob("p*.png")` — correct for render-pdf's `pNNNN.png` output, but
+  the OmniDocBench gold subset ships pages as `.jpg` (39 of 45 in-subset pages;
+  the other 6 are `page-*.png`). So pointing `ocr-batch` at the gold image
+  directory silently OCR'd only the 6 `.png` and skipped all 39 `.jpg` — 86% of
+  the subset — with no error.
+- **Status:** RESOLVED (golden-run batch-of-1). Page discovery is now
+  `_page_images`: every file whose suffix is in `_PAGE_SUFFIXES`
+  (`.png`/`.jpg`/`.jpeg`, lowercase — uppercase would double-match on a
+  case-insensitive FS), sorted in page order, and a missing directory yields no
+  pages rather than raising (rule 02, preserving the never-crash contract), and an
+  `is_file()` filter (Codex, PR #40) drops a subdirectory that happens to end in a
+  page suffix. Pinned by `test_ocrs_a_jpg_page` and
+  `test_a_subdirectory_named_like_a_page_is_not_ocrd`; the missing-dir guard keeps
+  `test_missing_page_directory_returns_no_paths` green.
+
+## ocr_batch — page order is lexical, wrong for unpadded numeric stems (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::_page_images` (`sorted(...)`).
+- **Case not handled (Codex, PR #40):** pages are sorted lexically by path, so
+  an unpadded numeric stem orders `..._10.jpg` **before** `..._5.jpg`. render-pdf
+  zero-pads (`pNNNN.png`) so its order is correct; the OmniDocBench gold pages are
+  each a standalone page from a different paper scored independently by stem
+  (`out/<model>/<stem>.md`), so their processing order has **no effect on
+  outputs** — only on the recovery-gap sequence and the stdout listing. Harmless
+  today; a real bug only for a *single* multi-page document with unpadded,
+  order-significant page numbers fed as one directory.
+- **Trigger to fix:** the first input whose page order matters *and* whose stems
+  are unpadded integers. Add a natural-sort key (split trailing digits) driven by
+  a test with `_5`/`_10` stems.
+- **Status:** OPEN (deliberate — no consumer depends on gold page order).
+
 ## ocr_batch — one page directory per run; no corpus-across-papers driver (US28)
 
 - **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (one `pages_dir`).

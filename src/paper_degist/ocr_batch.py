@@ -51,6 +51,28 @@ from paper_degist.ocr_page import (
 # real curl-to-LM-Studio transport — the ocr-page shape (rule 02).
 OcrStep = Callable[..., Optional[Path]]
 
+# Page-image extensions this driver walks. render-pdf emits ``pNNNN.png``, but a
+# gold set (OmniDocBench) ships pages as ``.jpg`` — so discovery is by image
+# extension, not a ``p*`` name prefix, or 86% of the gold subset is silently
+# skipped. Lowercase only (the real data is lowercase); adding uppercase variants
+# would double-match on a case-insensitive filesystem.
+_PAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg"})
+
+
+def _page_images(pages_dir: Path) -> list[Path]:
+    """The page images in ``pages_dir``, in page order (render-pdf's or a gold set's).
+
+    A missing directory yields no pages rather than raising — the batch never
+    crashes on a bad path (rule 02); the CLI validates ``exists=True`` up front.
+    """
+    if not pages_dir.is_dir():
+        return []
+    return sorted(
+        p
+        for p in pages_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in _PAGE_SUFFIXES
+    )
+
 
 def ocr_batch(
     pages_dir: Path,
@@ -67,8 +89,9 @@ def ocr_batch(
 ) -> list[Path]:
     """OCR every page in ``pages_dir`` with every model in ``models``.
 
-    Walks the directory's ``pNNNN.png`` pages (render-pdf's output) in page order
-    then model order, calling ``ocr`` per pair. ``models`` defaults to the whole
+    Walks the directory's page images (render-pdf's ``pNNNN.png`` or a gold set's
+    ``.jpg``/``.jpeg``) in page order then model order, calling ``ocr`` per pair.
+    ``models`` defaults to the whole
     registry — a newly registered model joins the grid with no change here
     (rule 02). Returns the saved ``out/<model>/<page>.md`` paths (including the
     already-saved ones a re-run skips), omitting only quarantined pairs.
@@ -84,7 +107,7 @@ def ocr_batch(
 
     saved: list[Path] = []
     hit_server = False  # a prior pair contacted the server → cool down before the next
-    for page in sorted(pages_dir.glob("p*.png")):
+    for page in _page_images(pages_dir):
         for model_id in model_ids:
             # Classify in ocr-page's own layer order (rule 02): the registry check
             # comes *before* the idempotency skip, so an unknown model is never
@@ -131,7 +154,7 @@ def run(
             exists=True,
             file_okay=False,
             readable=True,
-            help="directory of rendered page PNGs (e.g. pages/<paper>/ from render-pdf)",
+            help="directory of page images (render-pdf's pages/<paper>/ PNGs, or a gold set's .jpg pages)",
         ),
     ],
     model: Annotated[

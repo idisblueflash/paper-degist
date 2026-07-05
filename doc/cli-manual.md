@@ -558,9 +558,11 @@ uv run ocr-batch <pages-dir> [--model ID ]... [--out-dir out] [--endpoint URL]
                  [--attempts 3] [--gap 7.0] [--manifest manifest.jsonl]
 ```
 
-- **Argument**: `pages_dir` — a directory of rendered page PNGs (validated up
-  front — a missing directory exits 2), e.g. `pages/<paper>/` from `render-pdf`.
-  The `pNNNN.png` pages are walked in page order.
+- **Argument**: `pages_dir` — a directory of page images (validated up front — a
+  missing directory exits 2), e.g. `pages/<paper>/` from `render-pdf`, or a gold
+  set's image directory. Every `.png`/`.jpg`/`.jpeg` file is walked in page order
+  — so render-pdf's `pNNNN.png` and OmniDocBench's `.jpg` gold pages are both
+  covered.
 - **Options**: `--model` (repeatable; restrict to these **registered** model ids;
   omit for the **whole registry** — a new registered model joins the grid with no
   flag change), `--out-dir`, `--endpoint`, `--attempts`, `--gap` (recovery seconds
