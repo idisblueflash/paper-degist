@@ -44,6 +44,14 @@ from paper_degist.ocr_page import _model_slug
 # positive). Excluding it is encoded knowledge, not a per-run judgement.
 _RULE_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 
+# Sentence boundary — an end punctuation (`.?!`) followed by whitespace. Used
+# only as the unlined-output fallback for `dup_pct`: a model that emits the whole
+# page on one line (no newlines) has one substantive "line", so a line-based
+# duplicate count is blind to an intra-line repetition loop (deepseek-ocr did
+# this on a gold page — a real loop that scored 0). Segmenting that lone line
+# into sentences restores the signal without touching line-structured output.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.?!])\s+")
+
 # A `word- word` dehyphenation artifact: a letter/digit, a hyphen, then a space
 # before the next word (the `"low- quality"` / `"L1- Chinese"` leak that
 # separated @8bit from qwen). The word chars are matched with zero-width
@@ -78,18 +86,34 @@ def _substantive_lines(text: str) -> list[str]:
     return lines
 
 
+def _dup_units(text: str) -> list[str]:
+    """The units duplication is measured over: substantive lines, or — when the
+    output is unlined (one substantive line for the whole page) — its sentences.
+
+    Classify-then-dispatch (rule 02): line-structured output keeps the exact
+    line-based behavior (no recalibration of existing scores); only the degenerate
+    single-line blob falls back to sentence segmentation, so a repetition loop a
+    model emitted without newlines is still caught instead of scoring 0.
+    """
+    lines = _substantive_lines(text)
+    if len(lines) > 1:
+        return lines
+    return [s.strip() for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
+
+
 def dup_pct(text: str) -> float:
-    """Percentage of substantive lines that repeat an earlier substantive line.
+    """Percentage of substantive units that repeat an earlier one.
 
     A degenerated repetition loop (``unlimited-ocr``'s 95 % loop) scores high; a
     clean page with distinct lines scores ~0. Boilerplate rules/blank lines are
     excluded (see ``_substantive_lines``) so legitimate repetition does not
-    inflate the score.
+    inflate the score. Units are substantive lines, falling back to sentences for
+    unlined output (see ``_dup_units``) so a one-line blob's loop is not missed.
     """
-    lines = _substantive_lines(text)
-    if not lines:
+    units = _dup_units(text)
+    if not units:
         return 0.0
-    return round(100 * (len(lines) - len(set(lines))) / len(lines), 1)
+    return round(100 * (len(units) - len(set(units))) / len(units), 1)
 
 
 def hyphen_artifacts(text: str) -> int:
