@@ -31,6 +31,7 @@ from paper_degist.discover import Candidate
 from paper_degist.discover import app as discover_app
 from paper_degist.embed_text import app as embed_text_app
 from paper_degist.fetch_one import app as fetch_one_app
+from paper_degist.ocr_batch import app as ocr_batch_app
 from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
 from paper_degist.recover_blocked import app as recover_blocked_app
@@ -525,6 +526,50 @@ def test_ocr_page_cli_missing_page_exits_two(tmp_path: Path):
     # Typer validates the page argument up front (exists=True) — clean exit 2.
     result = runner.invoke(ocr_page_app, [str(tmp_path / "absent.png"), "qwen/qwen3-vl-4b"])
     assert result.exit_code == 2
+
+
+# --- ocr-batch CLI (US28): a grid of unknown-model pairs quarantines offline ---
+
+
+def _ocr_batch_unknown_model(tmp_path: Path):
+    """Run `ocr-batch` over a page dir, restricted to an unregistered model.
+
+    Every pair takes ocr-page's unknown-model branch, which quarantines before
+    any network contact — so the batch CLI is exercisable offline, no transport.
+    """
+    pages = tmp_path / "pages" / "SpacedRepetition"
+    pages.mkdir(parents=True)
+    (pages / "p0001.png").write_bytes(b"\x89PNG page bytes")
+    out_dir = tmp_path / "out"
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        ocr_batch_app,
+        [str(pages), "--model", "some-unregistered-ocr", "--out-dir", str(out_dir),
+         "--manifest", str(manifest)],
+    )
+    return result, out_dir, manifest
+
+
+def test_ocr_batch_cli_quarantine_exits_zero(tmp_path: Path):
+    # every pair quarantined is an expected outcome, not a crash
+    result, _, _ = _ocr_batch_unknown_model(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_ocr_batch_cli_quarantine_writes_manifest(tmp_path: Path):
+    _, _, manifest = _ocr_batch_unknown_model(tmp_path)
+    assert manifest.exists()
+
+
+def test_ocr_batch_cli_missing_dir_exits_two(tmp_path: Path):
+    # Typer validates the pages_dir argument up front (exists=True) — clean exit 2.
+    result = runner.invoke(ocr_batch_app, [str(tmp_path / "absent-pages")])
+    assert result.exit_code == 2
+
+
+def test_root_signpost_lists_ocr_batch():
+    result = runner.invoke(root_app, [])
+    assert "ocr-batch" in result.stdout
 
 
 def test_root_signpost_lists_embed_text():
