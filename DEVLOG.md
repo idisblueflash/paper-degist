@@ -327,6 +327,8 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the first paper wrongly reported closed that has an OA copy
   elsewhere. Add an OpenAlex/CORE fallback lookup (same injected shape) and take
   the union of OA locations, driven by a failing test.
+- **Story:** specced as [US 30](user-stories/us-30-openalex-oa-fallback.md)
+  (OpenAlex fallback; CORE deferred as a later third index).
 - **Status:** OPEN.
 
 ## resolve_oa — "OA but no PDF link" shares the "closed access" reason
