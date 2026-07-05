@@ -820,6 +820,77 @@ by cosine similarity — a deterministic, offline signal, no LLM in the loop. It
 does one text per run; the batch driver that walks an abstract list, keeping the
 sequential-with-gap rule, is that filter's job.
 
+## `discover` — find candidate papers by topic (US25)
+
+The pipeline's **upstream front**: given a topic query, search a free scholarly
+API and emit each candidate paper (with its abstract) as one JSONL record — a
+drop-in to the filter → fetch chain, so you stop pasting URLs by hand. It is
+deliberately **coarse and high-recall** (find everything that might be relevant);
+narrowing is US26's job. Sources are a **registry**, not a per-source branch
+(rule 02): a new API is one adapter entry.
+
+```
+uv run discover <query> [--source arxiv|s2] [--max-results 25]
+                [--s2-api-key KEY] [--manifest manifest.jsonl]
+```
+
+- **Argument**: the topic `query` (quote it — it is one string).
+- **`--source`** selects the adapter: `arxiv` (default — no key, an Atom feed,
+  100 % abstract-present) or `s2` (Semantic Scholar — a JSON API that adds a
+  `tldr` one-line summary US26 can pre-filter on). The phase-2 bake-off made
+  arXiv the default: keyless and reliable, where S2's free tier **without a key
+  is rate-limited to 429** (see the story). An unknown source (e.g. `pubmed`)
+  quarantines **offline**, without touching the network.
+- **Options**: `--max-results` (cap on the first page requested; default `25`),
+  `--s2-api-key` (optional Semantic Scholar key, or the `S2_API_KEY` env var —
+  raises the rate limit), `--manifest`.
+- **Output**: one JSONL record per hit on stdout, in a **common schema** across
+  sources — `title`, `authors`, `abstract`, `abstract_present`, `url`,
+  `published`, `source`, `source_id`, plus `doi` and `tldr` **only when the
+  record carries them**. A run also appends a `discover` provenance record to the
+  manifest (`stage`, `source`, `query`, `result_count`).
+- **No abstract is kept, not dropped** (AC3). A hit with no abstract is still
+  emitted with `abstract: null` and `abstract_present: false`, so US26 can drop
+  it cheaply — discovery casts wide; filtering is downstream.
+- **Quarantine, not a crash** (rule 02). Three cases land in the manifest with a
+  **distinct** reason and exit cleanly (exit 0):
+  - `unknown source: '…' not in registry` — the `--source` is not an adapter; the
+    network is **never touched**.
+  - `empty-result: the search returned no candidates` — the query matched nothing.
+  - `api-error: <Type>: …` — the API errored / rate-limited (e.g. S2's keyless
+    `429`); the diagnostic is included.
+
+### Examples
+
+```bash
+# Happy path — search arXiv for a topic; each hit is one JSONL line
+uv run discover "sparse mixture-of-experts routing" --source arxiv --max-results 5
+#   -> {"title":"Task-Conditioned Routing Signatures …","authors":[…],
+#       "abstract":"Sparse Mixture-of-Experts …","abstract_present":true,
+#       "url":"http://arxiv.org/abs/2510.…","published":"2025-…","source":"arxiv",
+#       "source_id":"2510.…"}    (× up to --max-results)
+#   -> manifest: {"stage":"discover","source":"arxiv","query":"sparse …","result_count":5}
+
+# Pipe the candidates straight into the fetch chain (parse the url field)
+uv run discover "graph neural network expressivity" --source arxiv \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+
+# Semantic Scholar (needs a key for a usable rate) — carries a tldr signal
+uv run discover "CRISPR base editing off-target effects" --source s2 --s2-api-key "$S2_API_KEY"
+
+# An unknown source quarantines without touching the network
+uv run discover "single-cell RNA sequencing" --source pubmed
+#   -> stderr: quarantined (see manifest.jsonl): pubmed + 'single-cell RNA sequencing'
+#   -> manifest: {"stage":"discover","source":"pubmed","query":"single-cell …",
+#                 "reason":"unknown source: 'pubmed' not in registry"}
+```
+
+`discover` is the entry point the US26 abstract filter composes: it emits a
+wide-net candidate list (one source per run), and the filter narrows it by
+abstract similarity. Merging both sources into one deduped union (reusing US14's
+DOI normalization) is a deferred driver built on top of this step, not baked in.
+
 ---
 
 ## End-to-end (no AI in the loop)

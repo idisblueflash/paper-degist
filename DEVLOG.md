@@ -1055,3 +1055,89 @@ location, the case not yet handled, and the trigger that should make us fix it.
   per model id (and/or the long `text-embedding-…` id as its own key), driven by
   a failing test — a one-line data add, not a branch.
 - **Status:** OPEN (deliberate — registry is data; add entries on demand).
+
+## discover — arXiv now 301-redirects HTTP→HTTPS (fixed in the US25 E2E)
+
+- **Where:** `src/paper_degist/discover.py` (`ARXIV_ENDPOINT`, `_arxiv_search`).
+- **Case:** the first US25 real E2E hit
+  `http://export.arxiv.org/api/query` and got a `301 Moved Permanently` to the
+  `https://` host. httpx does **not** follow redirects by default, so the 301
+  raised `HTTPStatusError` and quarantined every arXiv query as an `api-error` —
+  a perfectly reachable API read as broken.
+- **Status:** RESOLVED (2026-07-05). `ARXIV_ENDPOINT` is now the `https://` host
+  and both adapters pass `follow_redirects=True`, so a future host/path move
+  survives. Confirmed live: the same query then returned 25 real candidates.
+
+## discover — Semantic Scholar keyless free tier is 429-rate-limited (US25)
+
+- **Where:** `src/paper_degist/discover.py::_s2_search` (the `x-api-key` header is
+  set only when `--s2-api-key`/`S2_API_KEY` is supplied).
+- **Case not handled:** the US25 phase-2 bake-off found S2's shared keyless pool
+  returns `429 Too Many Requests` on essentially every call from this
+  environment — so `--source s2` is effectively unusable without a key (it
+  cleanly quarantines as `api-error`, never crashes, but yields no candidates).
+  This is *why arXiv is the default*; S2's `tldr` signal + biomedical coverage
+  only pay off with a key. discover does not retry-after-`Retry-After` or back
+  off on a 429 (a single call per run, quarantine on error).
+- **Trigger to fix:** when the filter wants S2 candidates unattended. Add an
+  `S2_API_KEY` to the environment (documented), and/or a `429`-aware
+  retry-with-backoff honoring the `Retry-After` header, driven by a failing test.
+- **Status:** OPEN (deliberate — key is the operator's to supply; the
+  quarantine-on-429 behavior is correct today).
+
+## discover — arXiv `all:` field match is coarse; no fielded/exact query (US25)
+
+- **Where:** `src/paper_degist/discover.py::_arxiv_search`
+  (`{"search_query": f"all:{query}"}`).
+- **Case not handled:** the query is sent to arXiv's `all:` field (title +
+  abstract + authors + …), which matches loosely on partial tokens — the US25
+  E2E found a gibberish query `"zzqqxx nonexistent gibberish topic wwvv"` still
+  returned 25 hits (the token `topic` alone matches thousands). This is *by
+  design* for a high-recall wide net (US25 is deliberately coarse; US26
+  narrows), but there is no option to scope to `ti:`/`abs:` or an exact phrase
+  for a tighter query. A single truly-nonsense token (`"xqzptvwklmn"`) does hit
+  the real `empty-result` branch.
+- **Trigger to fix:** when a caller wants a precise arXiv query (a fielded or
+  quoted-phrase search) rather than the wide net. Add a `--field`/exact-phrase
+  option that composes the `search_query`, driven by a failing test.
+- **Status:** OPEN (deliberate — wide-net recall is the US25 job).
+
+## discover — one source per run; no query-both-and-merge driver (US25)
+
+- **Where:** `src/paper_degist/discover.py` (one `--source` per invocation).
+- **Case not handled:** discover queries exactly one source per run. A driver
+  that fans a query across both adapters and merges + dedups the union (reusing
+  US14's DOI normalization) is composed from this step — deferred to keep each
+  adapter simple, and named in the US25 "Later stages".
+- **Trigger to fix:** when the topic review wants the union of arXiv + S2 in one
+  list. Add a fan-out/merge driver that calls `discover` per source and dedups by
+  normalized DOI (and title fallback), driven by a test.
+- **Status:** OPEN (deliberate — single-source like the sibling steps).
+
+## discover — first page only; deep pagination deferred (US25)
+
+- **Where:** `src/paper_degist/discover.py` (`start: 0` / `limit` — one page).
+- **Case not handled:** discover returns the API's first page (up to
+  `--max-results`). Deep paging for exhaustive recall (walking `start`/`offset`
+  across pages, honoring arXiv's `ARXIV_MIN_INTERVAL` ~3 s inter-call delay — the
+  constant is encoded but unused until a batch needs it) is a later option, gated
+  on the bake-off showing the first page is too shallow.
+- **Trigger to fix:** the first topic whose relevant papers fall past page one.
+  Add a paginating loop that spaces arXiv calls by `ARXIV_MIN_INTERVAL`, driven
+  by a test that asserts the sequencing.
+- **Status:** OPEN (deliberate — named in the US25 "Later stages").
+
+## discover — manifest is append-only; a re-run duplicates the discover row (US25)
+
+- **Where:** `src/paper_degist/discover.py::discover` / `_manifest.append`.
+- **Case not handled:** each run appends one `discover` record with no
+  already-run skip, so re-running the same query appends a second row. Consistent
+  with the append-only manifest contract (and the resolve-oa / score-ocr re-run
+  dup flags) — a consolidated per-query rollup is the shared read-side follow-up,
+  not a change to the write path.
+- **Trigger to fix:** when duplicate re-run rows become noise, or a reader wants
+  one row per query. Build the read-only rollup over the manifest (never
+  collapsing the append-only write path), driven by a test. Pairs with the
+  resolve-oa / score-ocr per-item rollup deferrals.
+- **Status:** OPEN (deliberate — append-only manifest, consistent with the
+  pipeline).

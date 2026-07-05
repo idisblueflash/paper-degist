@@ -30,6 +30,27 @@ emits candidates as JSONL to stdout (drop-in to the filter → fetch chain) and
 records the run to `manifest.jsonl`. It does **not** rank or judge relevance
 (US 26), fetch full text (`fetch-one`), or merge across sources (deferred).
 
+## Phase-2 bake-off (evidence)
+
+Ran both example queries through both adapters on a keyless machine (rule 06
+phase 2 — characterize, don't crown by accuracy):
+
+| Source | Query | Count | Abstract-present | Authors | Published | DOI | Latency |
+| ------ | ----- | ----- | ---------------- | ------- | --------- | --- | ------- |
+| arXiv | `sparse mixture-of-experts routing` | 25 | 25/25 | 25/25 | 25/25 | 0/25 | ~1.5 s |
+| arXiv | `CRISPR base editing off-target effects` | 25 | 25/25 | 25/25 | 25/25 | 0/25 | ~2.5 s |
+| s2 | either query | — | — | — | — | — | **429 rate-limited** |
+
+**Verdict: arXiv is the default.** Keyless, reliable, 100 % abstract-present
+(arXiv always carries a `<summary>`), full author/date metadata, ~1.5–2.5 s per
+first page of 25. arXiv never carries a DOI (the abs `url` is the identifier).
+Semantic Scholar's free tier **without an API key is unusable here** — every
+call returned `429 Too Many Requests` (the shared keyless pool), which correctly
+hit discover's `api-error` quarantine. S2's edge (a `tldr` pre-filter signal, and
+better biomedical coverage than arXiv) only pays off once an `S2_API_KEY` is
+supplied, so it stays an opt-in `--source s2`, not the default. There is no
+relevance ground truth, so this characterizes; it does not rank by accuracy.
+
 ## Acceptance Criteria
 
 1. Given a topic query and `--source arxiv`
