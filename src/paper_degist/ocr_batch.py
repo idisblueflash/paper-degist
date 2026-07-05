@@ -67,7 +67,11 @@ def _page_images(pages_dir: Path) -> list[Path]:
     """
     if not pages_dir.is_dir():
         return []
-    return sorted(p for p in pages_dir.iterdir() if p.suffix.lower() in _PAGE_SUFFIXES)
+    return sorted(
+        p
+        for p in pages_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in _PAGE_SUFFIXES
+    )
 
 
 def ocr_batch(

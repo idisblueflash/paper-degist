@@ -108,6 +108,17 @@ def test_ocrs_a_jpg_page(tmp_path):
     assert ("docstructbench_ajhb.10190.pdf_5.jpg", "vision-alpha") in ocr.calls
 
 
+def test_a_subdirectory_named_like_a_page_is_not_ocrd(tmp_path):
+    # Discovery matches on suffix, so a *directory* named `thumbnails.png` matches —
+    # it must be filtered as not-a-file, never handed to ocr-page as a page image.
+    pages = _pages(tmp_path, ("p0001.png",))
+    (pages / "thumbnails.png").mkdir()
+    ocr = _fake_ocr()
+    ocr_batch(pages, out_dir=tmp_path / "out", registry=FAKE_REGISTRY, ocr=ocr,
+              sleep=_fake_sleep(), manifest_path=tmp_path / "manifest.jsonl")
+    assert ("thumbnails.png", "vision-alpha") not in ocr.calls
+
+
 # --- AC2: recovery gap between consecutive server-hitting pairs ---
 
 
