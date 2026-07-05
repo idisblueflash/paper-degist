@@ -39,6 +39,7 @@ timeless spec and carry no status marker.
 | [US 24](user-stories/us-24-embed-text-registry.md) | Embed one text with a registered local model (LM Studio transport) | `embed-text`    | ✅ Done         |
 | [US 25](user-stories/us-25-discover-candidates.md) | Discover candidate papers by topic (arXiv / Semantic Scholar) | `discover`      | ✅ Done         |
 | [US 26](user-stories/us-26-abstract-filter-embedding.md) | Filter candidates by abstract similarity (deterministic + embedding) | `abstract-filter` | —            |
+| [US 27](user-stories/us-27-serpapi-google-scholar.md) | Discover via SerpAPI Google Scholar (topic + author, direct PDF links) | `discover`      | —              |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
