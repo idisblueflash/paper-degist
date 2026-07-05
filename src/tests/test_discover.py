@@ -77,6 +77,29 @@ def test_arxiv_empty_feed_yields_no_candidates():
     assert parse_arxiv_atom(empty) == []
 
 
+# --- arXiv robustness: a structurally broken entry is skipped, not emitted ---
+
+
+def _arxiv_feed_with(entries: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom">' + entries + "</feed>"
+    )
+
+
+def test_arxiv_skips_an_entry_with_no_id():
+    # An arXiv paper without its <id> (its primary key) is a malformed feed
+    # entry with no url/source_id — skip it rather than emit an unfetchable junk
+    # record. A well-formed sibling entry is still returned.
+    feed = _arxiv_feed_with(
+        "<entry><title>No id here</title><summary>orphan</summary></entry>"
+        "<entry><id>http://arxiv.org/abs/2401.00001v1</id>"
+        "<title>Has an id</title><summary>ok</summary></entry>"
+    )
+    ids = [c.source_id for c in parse_arxiv_atom(feed)]
+    assert ids == ["2401.00001v1"]
+
+
 # --- Semantic Scholar JSON parser: same schema, plus tldr + doi (AC2) ---
 
 
@@ -116,6 +139,31 @@ def test_s2_tags_the_source():
 def test_s2_source_id_is_the_paper_id():
     first = parse_s2_json(_s2_data())[0]
     assert first.source_id == "0b3f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+
+
+# --- S2 robustness: tolerate partial/null nested items, synthesize identity ---
+
+
+def test_s2_tolerates_a_null_author_item():
+    # A partial S2 response with a null (or non-object) author item must not
+    # crash the parser; the good author names still come through.
+    data = {"data": [{"paperId": "p1", "url": "https://s2/p1", "authors": [None, {"name": "Jane Roe"}]}]}
+    assert parse_s2_json(data)[0].authors == ["Jane Roe"]
+
+
+def test_s2_synthesizes_the_url_from_paper_id_when_missing():
+    # S2's paper URL is deterministic from the paperId, so a record missing the
+    # url field is repaired rather than emitted with an empty, unfetchable url.
+    data = {"data": [{"paperId": "abc123", "title": "No url field"}]}
+    assert parse_s2_json(data)[0].url == "https://www.semanticscholar.org/paper/abc123"
+
+
+def test_s2_skips_a_record_with_no_identity():
+    # A record with no paperId, no url, and no DOI cannot be fetched or deduped —
+    # it is structurally unidentifiable junk, dropped by the parser (not a
+    # relevance filter, which is US26's job).
+    data = {"data": [{"title": "Nameless, unfetchable, undedupable"}]}
+    assert parse_s2_json(data) == []
 
 
 # --- AC3: a record with no abstract is kept, flagged, not dropped ---

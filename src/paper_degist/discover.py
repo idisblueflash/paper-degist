@@ -119,6 +119,11 @@ def parse_arxiv_atom(xml_text: str) -> list[Candidate]:
     candidates: list[Candidate] = []
     for entry in root.findall(f"{_ATOM}entry"):
         entry_id = (entry.findtext(f"{_ATOM}id") or "").strip()
+        if not entry_id:
+            # An arXiv paper without its <id> (its primary key) is a malformed
+            # feed entry — no url, no source_id — so it is unfetchable junk, not
+            # a candidate. Skip it rather than emit an empty-identity record.
+            continue
         source_id = entry_id.rsplit("/abs/", 1)[-1] if "/abs/" in entry_id else entry_id
         url = entry_id
         for link in entry.findall(f"{_ATOM}link"):
@@ -152,18 +157,36 @@ def parse_s2_json(data: dict) -> list[Candidate]:
     """
     candidates: list[Candidate] = []
     for item in data.get("data") or []:
-        authors = [a["name"] for a in (item.get("authors") or []) if a.get("name")]
+        # Tolerate a partial response: a null / non-object author item must not
+        # crash the parser (rule 02) — keep only the well-formed named authors.
+        authors = [
+            a["name"]
+            for a in (item.get("authors") or [])
+            if isinstance(a, dict) and a.get("name")
+        ]
         doi = (item.get("externalIds") or {}).get("DOI")
         tldr_obj = item.get("tldr") or {}
+        paper_id = item.get("paperId") or ""
+        # S2's paper URL is deterministic from the paperId, so repair a missing
+        # url rather than emit an empty, unfetchable one.
+        url = item.get("url") or (
+            f"https://www.semanticscholar.org/paper/{paper_id}" if paper_id else ""
+        )
+        if not (url or paper_id or doi):
+            # No url, no paperId, no DOI — the record cannot be fetched or
+            # deduped. It is structurally unidentifiable junk, not a candidate
+            # (dropping it here is a parser-quality concern, not the relevance
+            # filtering that is US26's job). Skip it.
+            continue
         candidates.append(
             Candidate(
                 title=item.get("title") or "",
                 authors=authors,
                 abstract=item.get("abstract"),
-                url=item.get("url") or "",
+                url=url,
                 published=item.get("publicationDate"),
                 source="s2",
-                source_id=item.get("paperId") or "",
+                source_id=paper_id,
                 doi=doi,
                 tldr=tldr_obj.get("text"),
             )
@@ -277,14 +300,18 @@ def discover(
         )
         return None
 
+    # Build the emitted records *before* writing the success record, so a
+    # success row is never written for a run that then failed to serialize its
+    # candidates (rule 02 — the manifest reflects only what actually succeeded).
+    records = [c.to_record() for c in candidates]
     _manifest.append(
         manifest_path,
         stage="discover",
         source=source,
         query=query,
-        result_count=len(candidates),
+        result_count=len(records),
     )
-    return [c.to_record() for c in candidates]
+    return records
 
 
 app = typer.Typer(
