@@ -1422,3 +1422,35 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (server lifecycle is the operator's job today — see the
   `ocr_page — server lifecycle … operator's job` flag; this records the concrete
   400-not-502 wrinkle the bench surfaced).
+
+## score_ocr — panel-label exclusion can mask a single-character loop
+
+- **Where:** `src/paper_degist/score_ocr.py` (`_PANEL_LABEL_RE`, `_substantive_lines`).
+- **Case not handled:** bare single-letter lines (`A`, `(B)`, `c.`) are excluded
+  as figure-panel labels so repeated subfigure labels do not inflate `dup_pct`.
+  Excluding a line can only *lower* the ratio, so a genuine degeneration into
+  single-character lines (`A\nA\nA…`) would be masked to ~0 instead of flagged,
+  and a legitimate one-letter prose line (a standalone `I`) is dropped from the
+  denominator. Both are accepted today: real panel labels are far commoner than
+  either, and the horizontal-rule exclusion carries the same theoretical property.
+- **Trigger to fix:** the first time a model degenerates into a single-character
+  repetition loop and `dup_pct` reads ~0 on it. Guard the exclusion (e.g. only
+  drop panel labels when they are a minority of the substantive lines) with a
+  failing test built from that output.
+- **Status:** OPEN (accepted tradeoff; `test_dup_pct_excludes_repeated_figure_panel_labels`
+  pins the intended exclusion).
+
+## ocr_page — deepseek-ocr-2 grounding decode leaks bare layout labels
+
+- **Where:** the deepseek-ocr-2 layout-label decode (US-of the grounding decode),
+  surfaced by `score-ocr` on `out/deepseek-ocr-2/…j.ergon.2003.12.002.pdf_5.md`.
+- **Case not handled:** on that page the decode left its block-type layout labels
+  (`text`, `sub_title`) as bare standalone lines in the Markdown instead of
+  consuming them. They repeat per block, so `dup_pct` reads 44.4 on that one page
+  (of 45) — a *true positive*: the output is malformed, not a scorer false
+  positive, so `score_ocr` correctly counts them (unlike figure-panel labels).
+  Only deepseek-ocr-2 (which does grounding decode) shows this; `@8bit`/qwen do not.
+- **Trigger to fix:** fix belongs in the decode, not the scorer — make the
+  grounding decode consume `text`/`sub_title`/… layout labels so they never reach
+  the Markdown. Add a decode test from this page's raw grounding output first.
+- **Status:** OPEN.

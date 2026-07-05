@@ -68,6 +68,16 @@ def test_dup_pct_excludes_repeated_figure_panel_labels():
     assert dup_pct(text) == 0.0
 
 
+def test_dup_pct_panel_labels_do_not_leak_through_the_sentence_fallback():
+    # Excluding panel labels can drop a page to one substantive line, which trips
+    # the single-line sentence fallback. That fallback must segment the *cleaned*
+    # text, not the raw text — otherwise the excluded `A.` labels reappear as
+    # duplicate sentence units (Codex review). Only one real sentence remains, so a
+    # correct scorer reads 0.0 rather than counting the two stripped labels.
+    text = "A.\n\nA.\n\nOnly one real sentence remains once the labels are stripped."
+    assert dup_pct(text) == 0.0
+
+
 def test_dup_pct_excludes_repeated_horizontal_rules():
     # `---` rules are legitimate repeated boilerplate: repeating them must NOT
     # inflate the score (the report's known false positive).
