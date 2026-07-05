@@ -21,6 +21,7 @@ _STEPS = [
     ("ocr-page", "OCR one page image with one registered vision model (US20)."),
     ("score-ocr", "Score a saved OCR output on reference-free defect metrics (US21)."),
     ("score-gold", "Score a model against an OmniDocBench gold subset (US22)."),
+    ("ocr-report", "Aggregate the stored OCR scores into one Markdown scorecard (US23)."),
 ]
 
 app = typer.Typer(

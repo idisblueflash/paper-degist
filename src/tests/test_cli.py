@@ -29,6 +29,7 @@ from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
 from paper_degist.recover_blocked import app as recover_blocked_app
+from paper_degist.ocr_report import app as ocr_report_app
 from paper_degist.resolve_oa import app as resolve_oa_app
 
 runner = CliRunner()
@@ -573,3 +574,62 @@ def test_invoke_normalizes_non_integer_exit_code_to_one():
         raise SystemExit("kaboom")  # non-int payload — must not crash the wrapper
 
     assert invoke(app, []) == 1
+
+
+# --- ocr-report (US23): aggregate scores.jsonl into a Markdown scorecard ---
+
+
+def _ocr_report_run(tmp_path):
+    """Run `ocr-report` on a one-row scores.jsonl; return (result, report path)."""
+    scores = tmp_path / "scores.jsonl"
+    scores.write_text('{"model": "qwen_qwen3-vl-4b", "page": "p01", "dup_pct": 0.0}\n', encoding="utf-8")
+    report = tmp_path / "report.md"
+    result = runner.invoke(
+        ocr_report_app,
+        [str(scores), "--report", str(report), "--manifest", str(tmp_path / "manifest.jsonl")],
+    )
+    return result, report
+
+
+def test_ocr_report_cli_exits_zero_on_write(tmp_path: Path):
+    result, _ = _ocr_report_run(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_ocr_report_cli_prints_the_report_path(tmp_path: Path):
+    result, report = _ocr_report_run(tmp_path)
+    assert str(report) in result.stdout
+
+
+def test_ocr_report_cli_missing_scores_exits_two(tmp_path: Path):
+    result = runner.invoke(ocr_report_app, [str(tmp_path / "nope.jsonl")])
+    assert result.exit_code == 2
+
+
+def test_ocr_report_cli_non_text_scores_exits_two_without_traceback(tmp_path: Path):
+    # The wrong file (a binary) is a clean usage error, not a decode traceback.
+    scores = tmp_path / "not-scores.pdf"
+    scores.write_bytes(b"%PDF-\xc4\xff binary")
+    result = runner.invoke(ocr_report_app, [str(scores)])
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+def test_ocr_report_runs_as_a_script_via_the_main_guard(tmp_path: Path):
+    # Rule 03: the `python <module>` __main__ guard must actually work — a helper
+    # defined *after* the guard would NameError only on this path (CliRunner
+    # imports the module fully and hides it). Format a real number to exercise it.
+    import subprocess
+    import sys
+
+    scores = tmp_path / "scores.jsonl"
+    scores.write_text('{"model": "qwen_qwen3-vl-4b", "page": "p01", "dup_pct": 1.5}\n', encoding="utf-8")
+    module = Path("src/paper_degist/ocr_report.py").resolve()
+    result = subprocess.run(
+        [sys.executable, str(module), str(scores), "--report", str(tmp_path / "report.md"),
+         "--manifest", str(tmp_path / "manifest.jsonl")],
+        capture_output=True,
+        text=True,
+        cwd=Path.cwd(),
+    )
+    assert result.returncode == 0, result.stderr
