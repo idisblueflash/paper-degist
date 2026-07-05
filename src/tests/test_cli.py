@@ -7,6 +7,7 @@ traceback).
 """
 
 import io
+import json
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -25,6 +26,9 @@ from paper_degist._cli import invoke
 from paper_degist.browser_fetch import app as browser_fetch_app
 from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
+import paper_degist.discover as discover_mod
+from paper_degist.discover import Candidate
+from paper_degist.discover import app as discover_app
 from paper_degist.embed_text import app as embed_text_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.ocr_page import app as ocr_page_app
@@ -574,6 +578,62 @@ def test_embed_text_cli_missing_text_file_exits_two(tmp_path: Path):
     # Typer validates the text-file argument up front (exists=True) — clean exit 2.
     result = runner.invoke(embed_text_app, ["nomic-embed-text-v1.5", str(tmp_path / "absent.txt")])
     assert result.exit_code == 2
+
+
+# --- discover CLI: unknown source quarantines offline; hits print JSONL ---
+
+
+def _discover_unknown_source(tmp_path: Path):
+    """Run `discover --source pubmed`; return (result, manifest).
+
+    The unknown-source branch quarantines before any network contact, so the CLI
+    is exercisable offline with no injected registry.
+    """
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        discover_app,
+        ["gene therapy delivery vectors", "--source", "pubmed", "--manifest", str(manifest)],
+    )
+    return result, manifest
+
+
+def test_discover_cli_unknown_source_exits_zero(tmp_path: Path):
+    # quarantine is an expected outcome, not a crash
+    result, _ = _discover_unknown_source(tmp_path)
+    assert result.exit_code == 0
+
+
+def test_discover_cli_unknown_source_writes_manifest(tmp_path: Path):
+    _, manifest = _discover_unknown_source(tmp_path)
+    assert manifest.exists()
+
+
+def test_discover_cli_hits_print_one_jsonl_line_per_candidate(tmp_path: Path, monkeypatch):
+    # Inject a fake registry so the CLI never touches the network; assert the
+    # emitted stdout is one JSON object per hit (drop-in to the filter chain).
+    candidate = Candidate(
+        title="Switch Transformers",
+        authors=["William Fedus"],
+        abstract="Mixture of Experts models route tokens sparsely.",
+        url="http://arxiv.org/abs/2101.03961v1",
+        published="2021-01-11T18:41:03Z",
+        source="arxiv",
+        source_id="2101.03961v1",
+    )
+    monkeypatch.setattr(
+        discover_mod, "_build_registry", lambda mr, key: {"arxiv": lambda q: [candidate]}
+    )
+    result = runner.invoke(
+        discover_app,
+        ["sparse mixture of experts", "--source", "arxiv", "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    line = result.stdout.strip()
+    assert json.loads(line)["title"] == "Switch Transformers"
+
+
+def test_root_signpost_lists_discover():
+    result = runner.invoke(root_app, [])
+    assert "discover" in result.stdout
 
 
 def test_root_signpost_lists_steps():
