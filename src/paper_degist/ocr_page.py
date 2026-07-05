@@ -106,6 +106,22 @@ _REF_RE = re.compile(r"<\|/?ref\|>")
 _REF_LABEL_RE = re.compile(r"<\|ref\|>[^<]*<\|/ref\|>")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
+# The layout categories DeepSeek-OCR-2 puts in the ref slot. Usually they arrive
+# ref-wrapped and _REF_LABEL_RE removes them whole; but on a degraded page the
+# model emits the category as a *bare* line with no <|ref|> markers, then the
+# content — those bare lines slip past the wrapped strip and repeat down the page,
+# the dup_pct artifact this decode exists to remove. Encoded knowledge (rule 02):
+# a new category that leaks is one entry here, not a new branch (DEVLOG flag).
+_LAYOUT_LABELS = frozenset(
+    {"text", "title", "sub_title", "table", "figure_title", "image", "image_caption"}
+)
+# A line that is *only* a bare layout label (optional surrounding whitespace). The
+# categories are lowercase snake_case tokens, so a real content line — prose, a
+# `##` heading, an HTML `<table>` — never matches; only the leaked label does.
+_BARE_LABEL_RE = re.compile(
+    r"^\s*(?:" + "|".join(re.escape(label) for label in sorted(_LAYOUT_LABELS)) + r")\s*$"
+)
+
 
 def _decode_grounding(text: str) -> str:
     """Strip DeepSeek-OCR grounding markup, keeping the referenced text.
@@ -135,6 +151,9 @@ def _decode_grounding_layout(text: str) -> str:
     text = _DET_RE.sub("", text)
     text = _REF_LABEL_RE.sub("", text)
     text = _REF_RE.sub("", text)  # sweep any stray/unpaired ref marker a malformed label left
+    # Drop bare (unwrapped) category lines the model emits on a degraded page; the
+    # wrapped strip above never leaves one, so this only catches the leaked labels.
+    text = "\n".join(line for line in text.split("\n") if not _BARE_LABEL_RE.match(line))
     text = _BLANK_LINES_RE.sub("\n\n", text)
     return text.strip()
 

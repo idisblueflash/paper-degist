@@ -506,7 +506,10 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
     layout *category* (`text`/`title`/`sub_title`/`table`/…) rather than the text,
     so it takes a distinct decode that **drops** the label and keeps the content
     line (which already carries `##` headings / `<table>` HTML) — a variant is one
-    registry entry, not a branch. On a RAM-constrained host load **one model at a
+    registry entry, not a branch. The decode drops the category whether it arrives
+    `<|ref|>`-wrapped or, on a degraded page, as a **bare** label line with no ref
+    markers (else those bare `text`/`sub_title` lines repeat down the page and
+    inflate the `dup_pct` score). On a RAM-constrained host load **one model at a
     time** (e.g.
     `lms unload --all && lms load deepseek-ocr-2`) and drive with
     `ocr-batch --model <one>` — co-loaded vision models can exhaust RAM and crash

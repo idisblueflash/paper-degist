@@ -19,6 +19,7 @@ from paper_degist.ocr_page import (
     ModelSpec,
     OcrResponse,
     TransportError,
+    _LAYOUT_LABELS,
     _decode_grounding,
     _decode_grounding_layout,
     _default_post,
@@ -87,6 +88,21 @@ def test_decode_grounding_layout_keeps_content_when_a_label_is_unclosed():
     assert _decode_grounding_layout(grounded) == "Alpha content\n\nBeta"
 
 
+def test_decode_grounding_layout_drops_a_bare_unwrapped_category_line():
+    # On some pages the model degrades and emits the layout category as a *bare*
+    # line with no <|ref|> wrapper, then the content — those bare `text`/`sub_title`
+    # lines slipped past the ref-only strip and became the dup_pct artifact
+    # (deepseek-ocr-2's j.ergon.2003.12.002.pdf_5 page). Drop the bare label too,
+    # keep the content, and collapse the gap it leaves.
+    grounded = (
+        "text\n(ii) Muscle activity was recorded bilaterally.\n\n"
+        "sub_title\n\n## 2.4.1. Electrogoniometry"
+    )
+    assert _decode_grounding_layout(grounded) == (
+        "(ii) Muscle activity was recorded bilaterally.\n\n## 2.4.1. Electrogoniometry"
+    )
+
+
 def test_decode_grounding_layout_normalizes_crlf_before_collapsing_gaps():
     # CRLF output must normalize like the qwen decode (_strip_markdown_fence) or the
     # \n{3,} collapse misses \r\n gaps and leaves a triple break (Codex review).
@@ -97,12 +113,9 @@ def test_decode_grounding_layout_normalizes_crlf_before_collapsing_gaps():
     assert _decode_grounding_layout(grounded) == "Alpha.\n\nBeta."
 
 
-# The layout labels DeepSeek-OCR-2 emits in the ref slot; kept by the old decode,
-# they became bare repeating lines that inflated dup_pct (the bug this fixes).
-_LAYOUT_LABELS = frozenset(
-    {"text", "title", "sub_title", "table", "figure_title", "image", "image_caption"}
-)
-
+# `_LAYOUT_LABELS` (the categories DeepSeek-OCR-2 emits in the ref slot) is imported
+# from the production module — one source of truth, so a category added there is
+# covered here without editing a second copy.
 _GROUNDING_PAGE = Path(__file__).parent / "samples" / "deepseek-ocr-2-grounding-page.txt"
 
 

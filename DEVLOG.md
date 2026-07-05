@@ -1453,4 +1453,10 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** fix belongs in the decode, not the scorer — make the
   grounding decode consume `text`/`sub_title`/… layout labels so they never reach
   the Markdown. Add a decode test from this page's raw grounding output first.
-- **Status:** OPEN.
+- **Status:** RESOLVED (this branch). `_decode_grounding_layout` now also strips
+  *bare* (unwrapped) layout-label lines via `_BARE_LABEL_RE` over the shared
+  `_LAYOUT_LABELS` set, not just `<|ref|>`-wrapped ones — the degraded page emitted
+  the categories with no ref markers, so they slipped past the wrapped strip.
+  Driven by `test_decode_grounding_layout_drops_a_bare_unwrapped_category_line`;
+  re-decoding the saved output drops `dup_pct` on that page 44.4 → 0.0 with the
+  content intact. A newly-seen category that leaks is one entry in `_LAYOUT_LABELS`.
