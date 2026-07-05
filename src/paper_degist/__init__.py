@@ -11,6 +11,7 @@ from paper_degist._cli import invoke
 
 _STEPS = [
     ("parse-url", "Extract http(s) URLs from a text blob (US1 AC1)."),
+    ("dedup-inputs", "Collapse inputs pointing at the same DOI down to one (US14)."),
     ("fetch-one", "Fetch one paper file from a URL, save under files/ (US2 AC2)."),
     ("convert-html", "Convert a saved HTML paper into files/<name>.md (US5)."),
     ("resolve-oa", "Check a failed URL/DOI for an open-access copy (US9)."),

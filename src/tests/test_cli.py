@@ -34,6 +34,7 @@ from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.ocr_batch import app as ocr_batch_app
 from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
+from paper_degist.dedup_inputs import app as dedup_inputs_app
 from paper_degist.recover_blocked import app as recover_blocked_app
 from paper_degist.ocr_report import app as ocr_report_app
 from paper_degist.resolve_oa import app as resolve_oa_app
@@ -83,6 +84,41 @@ def test_parse_url_missing_file_exits_two_without_traceback(tmp_path: Path):
     assert result.exit_code == 2  # Click's usage/validation exit code
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "Traceback" not in result.output
+
+
+def _dedup_inputs_run(tmp_path: Path):
+    """Run `dedup-inputs` on a file: a doi.org link then its bare DOI dup."""
+    inputs = tmp_path / "inputs.txt"
+    inputs.write_text(
+        "https://doi.org/10.1016/j.learninstruc.2007.02.008\n"
+        "10.1016/j.learninstruc.2007.02.008\n",
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        dedup_inputs_app, [str(inputs), "--manifest", str(manifest)]
+    )
+    return result, manifest
+
+
+def test_dedup_inputs_cli_prints_only_the_first_of_a_dup(tmp_path: Path):
+    result, _ = _dedup_inputs_run(tmp_path)
+    assert result.exit_code == 0
+    assert result.stdout == "https://doi.org/10.1016/j.learninstruc.2007.02.008\n"
+
+
+def test_dedup_inputs_cli_records_the_dropped_duplicate(tmp_path: Path):
+    _, manifest = _dedup_inputs_run(tmp_path)
+    (line,) = manifest.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["stage"] == "dedup-inputs"
+
+
+def test_dedup_inputs_cli_reads_stdin_when_no_file(tmp_path: Path):
+    result = runner.invoke(
+        dedup_inputs_app, input="https://pubmed.ncbi.nlm.nih.gov/2303742/\n"
+    )
+    assert result.exit_code == 0
+    assert result.stdout == "https://pubmed.ncbi.nlm.nih.gov/2303742/\n"
 
 
 def _fetch_one_save(tmp_path, monkeypatch):
