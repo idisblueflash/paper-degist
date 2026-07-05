@@ -75,6 +75,28 @@ def test_decode_grounding_layout_separates_blocks_with_one_blank_line():
     assert _decode_grounding_layout(grounded) == "First paragraph.\n\nSecond paragraph."
 
 
+def test_decode_grounding_layout_keeps_content_when_a_label_is_unclosed():
+    # A malformed <|ref|> opener (no closer) must not let the label strip run to
+    # the *next* block's <|/ref|> and delete the content in between (Codex review):
+    # never silently drop OCR'd text. The label region can't contain '<', so a
+    # runaway match is impossible; the stray marker is swept, the content stays.
+    grounded = (
+        "<|ref|>Alpha content\n\n"
+        "<|ref|>text<|/ref|><|det|>[[1, 2, 3, 4]]<|/det|>\nBeta"
+    )
+    assert _decode_grounding_layout(grounded) == "Alpha content\n\nBeta"
+
+
+def test_decode_grounding_layout_normalizes_crlf_before_collapsing_gaps():
+    # CRLF output must normalize like the qwen decode (_strip_markdown_fence) or the
+    # \n{3,} collapse misses \r\n gaps and leaves a triple break (Codex review).
+    grounded = (
+        "<|ref|>text<|/ref|><|det|>[[1, 2, 3, 4]]<|/det|>\r\nAlpha.\r\n\r\n"
+        "<|ref|>text<|/ref|><|det|>[[5, 6, 7, 8]]<|/det|>\r\nBeta."
+    )
+    assert _decode_grounding_layout(grounded) == "Alpha.\n\nBeta."
+
+
 # The layout labels DeepSeek-OCR-2 emits in the ref slot; kept by the old decode,
 # they became bare repeating lines that inflated dup_pct (the bug this fixes).
 _LAYOUT_LABELS = frozenset(
@@ -97,6 +119,22 @@ def test_decode_grounding_layout_preserves_content_on_a_real_page():
     # under the <|ref|>table<|/ref|> label survives intact.
     decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
     assert "<table>" in decoded
+
+
+def test_decode_grounding_layout_leaves_no_grounding_markup_on_a_real_page():
+    # Beyond bare labels: no <|ref|>/<|det|> marker of any kind may survive, or a
+    # leaked token would ride into the Markdown undetected (Codex review).
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    residual = [m for m in ("<|ref|>", "<|/ref|>", "<|det|>", "<|/det|>") if m in decoded]
+    assert residual == []
+
+
+def test_decode_grounding_layout_keeps_content_after_the_table_on_a_real_page():
+    # The final figure caption sits *after* the big <|ref|>table<|/ref|> block; assert
+    # it survives, so an over-removal that deletes everything past the table cannot
+    # pass the preservation check silently (Codex review).
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    assert "Figure 1: Coverage as a function of the fraction of RBS variables" in decoded
 
 
 # --- the registry maps model ids to their (prompt, post-processor) entry ---

@@ -98,8 +98,12 @@ def _strip_markdown_fence(text: str) -> str:
 _DET_RE = re.compile(r"<\|det\|>.*?<\|/det\|>", re.DOTALL)
 _REF_RE = re.compile(r"<\|/?ref\|>")
 # The whole ref *pair* incl. the layout label inside it (deepseek-ocr-2 puts a
-# category there, not text) — dropped by _decode_grounding_layout.
-_REF_LABEL_RE = re.compile(r"<\|ref\|>.*?<\|/ref\|>", re.DOTALL)
+# category there, not text) — dropped by _decode_grounding_layout. The label is a
+# bare category word, so it holds no '<'; matching [^<]* (not .*?) means a
+# malformed unclosed <|ref|> can never run to the *next* block's <|/ref|> and
+# swallow the content in between — it just fails to match and leaks a marker the
+# _REF_RE sweep then removes (Codex review: never silently delete OCR'd text).
+_REF_LABEL_RE = re.compile(r"<\|ref\|>[^<]*<\|/ref\|>")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
@@ -127,8 +131,10 @@ def _decode_grounding_layout(text: str) -> str:
     (as ``_decode_grounding`` would) is what inflated ``dup_pct`` — the bare
     ``text``/``sub_title`` lines repeat down the page.
     """
+    text = text.replace("\r\n", "\n")  # normalize CRLF so the \n{3,} collapse matches
     text = _DET_RE.sub("", text)
     text = _REF_LABEL_RE.sub("", text)
+    text = _REF_RE.sub("", text)  # sweep any stray/unpaired ref marker a malformed label left
     text = _BLANK_LINES_RE.sub("\n\n", text)
     return text.strip()
 
