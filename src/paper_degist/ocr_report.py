@@ -60,6 +60,14 @@ _IDENTITY_KEYS = frozenset({"model", "page", "gold"})
 _HIGHER_IS_BETTER = frozenset({"teds", "citation_groups"})
 _LOWER_IS_BETTER = frozenset({"dup_pct", "hyphen_artifacts", "text_edit_distance", "latency"})
 
+# The composite accuracy column — a *derived*, higher-is-better roll-up of the
+# two gold-referenced accuracy dimensions put on one 0–1 axis: ``teds`` (higher =
+# better table) and ``1 - text_edit_distance`` (a lower distance = better text).
+# It is computed from those two aggregates, not stored per row, so it appears as
+# a trailing scorecard column and ranks in the verdict like a real dimension. A
+# model missing either half gets a gap, never a half-score (AC4).
+ACCURACY = "accuracy"
+
 
 def models(records: list) -> list:
     """The distinct model ids across the records, sorted (deterministic, AC2).
@@ -184,13 +192,19 @@ def render_scorecard(records: list) -> str:
     """
     records = _last_wins(records)
     model_ids = models(records)
-    dims = dimensions(records)
+    # The stored dimensions, then the derived composite as a trailing column — it
+    # summarizes the two accuracy columns, so it reads last, after them. Any stray
+    # stored ``accuracy`` key is dropped from the stored set so the derived column
+    # owns that header once (no duplicate column, no header/cell misalignment).
+    stored_dims = [dim for dim in dimensions(records) if dim != ACCURACY]
+    dims = stored_dims + [ACCURACY]
 
     header = "| Model | " + " | ".join(dims) + " |"
     divider = "| --- | " + " | ".join("---" for _ in dims) + " |"
     rows = [header, divider]
     for model in model_ids:
-        cells = [summarize_cell(_cell_values(records, model, dim)) for dim in dims]
+        cells = [summarize_cell(_cell_values(records, model, dim)) for dim in stored_dims]
+        cells.append(_render_accuracy(records, model))
         rows.append("| " + model + " | " + " | ".join(cells) + " |")
 
     verdicts = _verdicts(records, model_ids)
@@ -210,6 +224,51 @@ def _numeric_summary(records: list, model: str, dimension: str):
     return None
 
 
+def composite_accuracy(records: list, model: str):
+    """One model's composite accuracy: ``mean(teds, 1 - text_edit_distance)``.
+
+    Both gold-referenced accuracy metrics are put on one higher-is-better 0–1
+    axis — ``teds`` already is (1.0 = perfect table), and ``text_edit_distance``
+    is flipped (``1 - d``, so 1.0 = perfect text) — and averaged into a single
+    roll-up. Returns ``None`` when the model lacks *either* aggregate (e.g. no
+    gold table scored, so no ``teds``): a half-measured composite would mislead,
+    so it renders a gap instead (AC4). Reuses each dimension's own aggregate, so
+    the composite matches the two columns it summarizes.
+    """
+    teds = _numeric_summary(records, model, "teds")
+    text_distance = _numeric_summary(records, model, "text_edit_distance")
+    if teds is None or text_distance is None:
+        return None
+    return (teds + (1.0 - text_distance)) / 2.0
+
+
+def _render_accuracy(records: list, model: str) -> str:
+    """The composite accuracy cell: the formatted score, or a ``GAP`` if absent."""
+    score = composite_accuracy(records, model)
+    return GAP if score is None else _fmt_num(score)
+
+
+def _directional_value(records: list, model: str, dimension: str):
+    """The rankable numeric value for a dimension — real or the derived composite.
+
+    Dispatches the derived ``ACCURACY`` column to ``composite_accuracy`` and every
+    stored dimension to its ``_numeric_summary``, so the verdict ranks both by one
+    code path.
+    """
+    if dimension == ACCURACY:
+        return composite_accuracy(records, model)
+    return _numeric_summary(records, model, dimension)
+
+
+def _higher_is_better(dimension: str) -> bool:
+    """Whether a directional dimension's *larger* value is the better one.
+
+    The derived ``ACCURACY`` composite is higher-is-better by construction; the
+    stored dimensions consult the taught direction sets.
+    """
+    return dimension == ACCURACY or dimension in _HIGHER_IS_BETTER
+
+
 def _leader(records: list, model_ids: list, dimension: str):
     """The single model that is *strictly* best on one directional dimension.
 
@@ -218,11 +277,11 @@ def _leader(records: list, model_ids: list, dimension: str):
     ``None``), so the verdict never breaks a tie arbitrarily and stays
     deterministic (AC2).
     """
-    scored = [(model, _numeric_summary(records, model, dimension)) for model in model_ids]
+    scored = [(model, _directional_value(records, model, dimension)) for model in model_ids]
     scored = [(model, value) for model, value in scored if value is not None]
     if not scored:
         return None
-    best = (min if dimension in _LOWER_IS_BETTER else max)(value for _, value in scored)
+    best = (max if _higher_is_better(dimension) else min)(value for _, value in scored)
     winners = [model for model, value in scored if value == best]
     return winners[0] if len(winners) == 1 else None
 
@@ -236,6 +295,7 @@ def _verdicts(records: list, model_ids: list) -> str:
     reads ``leads: none``.
     """
     directional = [dim for dim in dimensions(records) if dim in _HIGHER_IS_BETTER or dim in _LOWER_IS_BETTER]
+    directional.append(ACCURACY)  # the derived composite is always ranked
     leaders = {dim: _leader(records, model_ids, dim) for dim in directional}
     lines = ["## Verdict", ""]
     for model in model_ids:
