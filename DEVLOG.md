@@ -616,7 +616,12 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when tightening the CLI gate to green. Monkeypatch
   `UNPAYWALL_EMAIL` out of the environment (`monkeypatch.delenv(...,
   raising=False)`) inside the test so it is hermetic.
-- **Status:** OPEN (pre-existing; out of scope for US19, logged on discovery).
+- **Status:** RESOLVED. The test now takes `monkeypatch` and calls
+  `monkeypatch.delenv("UNPAYWALL_EMAIL", raising=False)` before invoking the CLI,
+  so the required-option gate always triggers regardless of the ambient
+  environment — the exit-2 assertion is hermetic. Surfaced concretely this run:
+  the shell had `UNPAYWALL_EMAIL` set, so the test was red (exit 0) until the
+  delenv landed.
 
 ## fetch_one — filename↔title match is ASCII-slug only (US13)
 
