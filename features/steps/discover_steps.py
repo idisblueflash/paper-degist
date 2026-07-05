@@ -101,9 +101,22 @@ def step_openalex_inverted_index(context, source):
 
 @given('an "{source}" source whose candidate carries a pdf_url "{pdf_url}"')
 def step_openalex_pdf_url(context, source, pdf_url):
-    candidate = _candidate(source)
-    candidate = Candidate(**{**candidate.__dict__, "pdf_url": pdf_url})
-    context.registry = {source: _recording_search(context, candidates=[candidate])}
+    # Build a raw OpenAlex work whose best_oa_location has no pdf_url so the
+    # adapter must take the oa_locations[] fallback (US29 AC3), then run it
+    # through the real parser — this pins _openalex_pdf_url, not just to_record.
+    raw = {
+        "results": [
+            {
+                "id": "https://openalex.org/W2606780347",
+                "doi": "https://doi.org/10.48550/arxiv.1704.01212",
+                "title": "Neural Message Passing for Quantum Chemistry",
+                "best_oa_location": {"pdf_url": None, "landing_page_url": "http://arxiv.org/abs/1704.01212"},
+                "oa_locations": [{"pdf_url": pdf_url, "landing_page_url": "http://arxiv.org/abs/1704.01212"}],
+            }
+        ]
+    }
+    candidates = parse_openalex_json(raw)
+    context.registry = {source: _recording_search(context, candidates=candidates)}
 
 
 @when('discover runs the openalex CLI with no contact email')

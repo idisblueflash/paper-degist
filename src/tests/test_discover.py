@@ -187,6 +187,21 @@ def test_openalex_pdf_url_is_none_when_no_oa_copy():
     assert second.pdf_url is None
 
 
+def test_openalex_pdf_url_falls_back_to_oa_locations():
+    # AC3: when best_oa_location has no pdf_url, the first oa_locations[] entry
+    # that carries one is used — a repository copy the best-location field missed.
+    data = {"results": [{
+        "id": "https://openalex.org/W42",
+        "title": "Repository-hosted open copy",
+        "best_oa_location": {"pdf_url": None, "landing_page_url": "https://repo.example/abs/42"},
+        "oa_locations": [
+            {"pdf_url": None, "landing_page_url": "https://repo.example/abs/42"},
+            {"pdf_url": "https://repo.example/pdf/42"},
+        ],
+    }]}
+    assert parse_openalex_json(data)[0].pdf_url == "https://repo.example/pdf/42"
+
+
 def test_openalex_pdf_url_record_omits_it_when_absent():
     second = parse_openalex_json(_openalex_data())[1]
     assert "pdf_url" not in second.to_record()
