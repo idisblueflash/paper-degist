@@ -644,8 +644,16 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when US23 aggregates a scorecard across a corpus. Add a
   batch driver that iterates `(page, model)` pairs calling `ocr_page`, inserting
   the recovery gap between items, driven by a test that asserts the sequencing.
-- **Status:** OPEN (deliberate — kept single-input like the sibling steps; named
-  in the US20 "Later stages").
+- **Status:** RESOLVED by US28. `ocr-batch` walks a page directory across the
+  model registry, calling `ocr_page` per `(page, model)` pair and inserting the
+  report §3 recovery gap **between the pairs that actually hit the server** — the
+  inter-*item* gap this flag named, distinct from ocr-page's between-retries gap.
+  It classifies per pair on `output_path(...).exists()` (the shared SSOT extracted
+  into `ocr_page`): exists → idempotent skip, no network, **no gap**; missing →
+  dispatch to `ocr_page`. Sequencing pinned by
+  `test_waits_a_recovery_gap_between_server_hitting_pairs` and
+  `test_a_fully_cached_grid_waits_no_gap`. Two narrower batch scopes stay open
+  below (a corpus across papers; bounded concurrency; adaptive gap).
 
 ## ocr_page — server lifecycle (LM Studio up + model loaded) is the operator's job (US20)
 
@@ -1195,3 +1203,55 @@ location, the case not yet handled, and the trigger that should make us fix it.
   resolve-oa / score-ocr per-item rollup deferrals.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
+
+## ocr_batch — one page directory per run; no corpus-across-papers driver (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (one `pages_dir`).
+- **Case not handled:** ocr-batch OCRs one paper's page directory
+  (`pages/<stem>/`) across the registry per run. Fanning the whole `pages/` tree
+  — every paper's pages × models — is a thin wrapper composed from this step,
+  deferred exactly like `render-pdf`'s directory batch (US19, above). Sibling
+  render-pdf and ocr-batch are each single-input by design; a corpus run chains a
+  render-all driver into an ocr-all driver.
+- **Trigger to fix:** when the bench scores a multi-paper corpus in one command.
+  Add a wrapper that iterates `pages/*/` calling `ocr_batch` per paper (mind the
+  US20/US21 stem-collision flags once stems repeat across papers), driven by a
+  test. Pairs with the render-pdf directory-batch deferral.
+- **Status:** OPEN (deliberate — single page directory, named in the US28 "Later
+  stages").
+
+## ocr_batch — grid is strictly sequential; bounded concurrency deferred (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the nested
+  `for page … for model …` loop over one `ocr_page` at a time).
+- **Case not handled:** the grid is walked one pair at a time with a recovery gap
+  between server-hitting pairs — the report §3 anti-flap rule forbids concurrent
+  hits on the MLX runtime. A bounded pool (N in flight) with per-model
+  backpressure could speed a large grid on a runtime that tolerates it, but risks
+  the very flapping the sequential-with-gap recipe exists to avoid (mirrors the
+  browser-fetch batch-concurrency deferral).
+- **Trigger to fix:** the first grid large enough that sequential OCR is the
+  bottleneck *and* a runtime that provably tolerates concurrency. Add a bounded
+  pool with a per-model cap, driven by a test that asserts the cap; keep the
+  never-concurrent invariant for the default path.
+- **Status:** OPEN (deliberate — sequential by design for US28).
+
+## ocr_batch — a no-network quarantine still charges the next pair a recovery gap (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the `hit_server = True`
+  set unconditionally after a dispatch).
+- **Case not handled:** the recovery gap is gated on `hit_server`, which the
+  driver sets whenever it *dispatches* a missing-output pair — but `ocr_page` can
+  return without touching the network (an **unknown model**, or a **missing page
+  file** on the direct-library path both quarantine before any POST). After such
+  a pair the driver still waits a gap before the next real call — a harmless
+  wasted sleep, reachable only when a caller passes an unregistered `--model`
+  (the default grid enumerates the registry, so every default pair is a real
+  call). The idempotent-skip path is already precise (no gap); only the
+  no-network *quarantine* over-charges.
+- **Trigger to fix:** the first run that pairs an unregistered `--model` with a
+  large grid and the wasted gaps matter. Have `ocr_page` report whether it
+  contacted the server (or pre-filter `--model` against the registry in the
+  driver), so the gap follows only genuine server hits, driven by a failing test.
+- **Status:** OPEN (low priority — only a rare misconfigured `--model` over-waits;
+  correctness and the never-rapid-fire guarantee are unaffected).
