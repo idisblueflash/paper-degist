@@ -535,9 +535,76 @@ uv run ocr-page pages/Deep_Residual_Learning/p0001.png some-unregistered-ocr
 
 `ocr-page` composes after `render-pdf` (`render-pdf` produces the page PNGs this
 step consumes) and feeds the per-model Markdown to the bench's scoring steps
-(US21–23). It does one `(page, model)` per run; a batch driver that walks a page
-directory across every registered model — keeping the sequential-with-gap rule —
-is the US23 report driver, composed from this step.
+(US21–23). It does one `(page, model)` per run; the batch driver that walks a
+page directory across every registered model — keeping the sequential-with-gap
+rule — is `ocr-batch` (US28, below), composed from this step.
+
+---
+
+## `ocr-batch` — OCR a page directory across the model registry (US28)
+
+The **grid** driver over `ocr-page`: walk one paper's page directory (from
+`render-pdf`) across **every registered model** and lay down the whole
+`out/<model>/<page>.md` corpus the scorers (`score-ocr`, `score-gold`) and the
+report (`ocr-report`) consume — instead of invoking `ocr-page` once per
+`(page, model)` pair by hand. It holds no transport logic of its own: it composes
+`ocr-page` (which owns the curl transport, the retry-on-502, and the per-item
+quarantine). Its one job beyond iterating the grid is the report §3 anti-flap
+rule applied **between items** — a **recovery gap** before each pair that will
+contact the server, so the flaky MLX runtime never sees rapid-fire hits.
+
+```
+uv run ocr-batch <pages-dir> [--model ID ]... [--out-dir out] [--endpoint URL]
+                 [--attempts 3] [--gap 7.0] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `pages_dir` — a directory of rendered page PNGs (validated up
+  front — a missing directory exits 2), e.g. `pages/<paper>/` from `render-pdf`.
+  The `pNNNN.png` pages are walked in page order.
+- **Options**: `--model` (repeatable; restrict to these **registered** model ids;
+  omit for the **whole registry** — a new registered model joins the grid with no
+  flag change), `--out-dir`, `--endpoint`, `--attempts`, `--gap` (recovery seconds
+  before each server-hitting pair; default `7.0`), `--manifest`. These mirror
+  `ocr-page`'s and are threaded through per pair.
+- **Output**: each saved `out/<model-slug>/<page>.md` path on stdout in
+  page-then-model order (an already-present output is listed too); a one-line
+  summary on stderr. The per-pair `ocr` / quarantine records are **`ocr-page`'s** —
+  `ocr-batch` writes no manifest record of its own.
+- **Idempotent, and cheap on re-run.** A pair whose `out/<model>/<page>.md`
+  already exists is skipped **without re-hitting the server and without waiting a
+  recovery gap** (a skip is not a server hit) — re-running the grid to fill in
+  only the missing pairs stays fast.
+- **Never aborts, never crashes** (rule 02). A pair `ocr-page` quarantines
+  (server unreachable after retries, or an unknown `--model`) is simply omitted
+  from the returned paths; the batch continues to the remaining pairs. An empty
+  or all-cached directory does nothing and exits 0.
+- **Requires** `curl` on `$PATH` and a vision server (LM Studio) already up — same
+  precondition as `ocr-page`; `ocr-batch` does not bring the server up.
+
+### Examples
+
+```bash
+# Happy path — OCR every page of one paper with every registered model
+uv run render-pdf files/Spaced_Repetition_and_Long-Term_Retention.pdf   # -> pages/<stem>/pNNNN.png
+uv run ocr-batch pages/Spaced_Repetition_and_Long-Term_Retention
+#   -> out/qwen_qwen3-vl-4b/p0001.md
+#      out/deepseek-ocr/p0001.md
+#      out/qwen_qwen3-vl-4b/p0002.md ...        (page-then-model order)
+#   -> manifest: one ocr-page `ocr` record per pair (stage:"ocr-page")
+
+# Restrict the grid to a single model, with a shorter recovery gap
+uv run ocr-batch pages/Attention_Is_All_You_Need --model qwen/qwen3-vl-4b --gap 8
+
+# Re-run fills only the missing pairs — the already-saved ones skip (no server hit)
+uv run ocr-batch pages/Attention_Is_All_You_Need
+#   -> the existing paths are printed again; the server is not re-contacted for them
+```
+
+`ocr-batch` sits between `render-pdf` (its input pages) and the scoring steps:
+its `out/<model>/<page>.md` grid is exactly what `score-ocr` / `score-gold` score
+and `ocr-report` aggregates. It drives **one** page directory (one paper); a
+corpus across every paper's directory is a thin wrapper deferred to a later story
+(see `DEVLOG.md`).
 
 ---
 

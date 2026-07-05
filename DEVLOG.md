@@ -644,8 +644,16 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when US23 aggregates a scorecard across a corpus. Add a
   batch driver that iterates `(page, model)` pairs calling `ocr_page`, inserting
   the recovery gap between items, driven by a test that asserts the sequencing.
-- **Status:** OPEN (deliberate — kept single-input like the sibling steps; named
-  in the US20 "Later stages").
+- **Status:** RESOLVED by US28. `ocr-batch` walks a page directory across the
+  model registry, calling `ocr_page` per `(page, model)` pair and inserting the
+  report §3 recovery gap **between the pairs that actually hit the server** — the
+  inter-*item* gap this flag named, distinct from ocr-page's between-retries gap.
+  It classifies per pair on `output_path(...).exists()` (the shared SSOT extracted
+  into `ocr_page`): exists → idempotent skip, no network, **no gap**; missing →
+  dispatch to `ocr_page`. Sequencing pinned by
+  `test_waits_a_recovery_gap_between_server_hitting_pairs` and
+  `test_a_fully_cached_grid_waits_no_gap`. Two narrower batch scopes stay open
+  below (a corpus across papers; bounded concurrency; adaptive gap).
 
 ## ocr_page — server lifecycle (LM Studio up + model loaded) is the operator's job (US20)
 
@@ -1195,3 +1203,59 @@ location, the case not yet handled, and the trigger that should make us fix it.
   resolve-oa / score-ocr per-item rollup deferrals.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
+
+## ocr_batch — one page directory per run; no corpus-across-papers driver (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (one `pages_dir`).
+- **Case not handled:** ocr-batch OCRs one paper's page directory
+  (`pages/<stem>/`) across the registry per run. Fanning the whole `pages/` tree
+  — every paper's pages × models — is a thin wrapper composed from this step,
+  deferred exactly like `render-pdf`'s directory batch (US19, above). Sibling
+  render-pdf and ocr-batch are each single-input by design; a corpus run chains a
+  render-all driver into an ocr-all driver.
+- **Trigger to fix:** when the bench scores a multi-paper corpus in one command.
+  Add a wrapper that iterates `pages/*/` calling `ocr_batch` per paper (mind the
+  US20/US21 stem-collision flags once stems repeat across papers), driven by a
+  test. Pairs with the render-pdf directory-batch deferral.
+- **Status:** OPEN (deliberate — single page directory, named in the US28 "Later
+  stages").
+
+## ocr_batch — grid is strictly sequential; bounded concurrency deferred (US28)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the nested
+  `for page … for model …` loop over one `ocr_page` at a time).
+- **Case not handled:** the grid is walked one pair at a time with a recovery gap
+  between server-hitting pairs — the report §3 anti-flap rule forbids concurrent
+  hits on the MLX runtime. A bounded pool (N in flight) with per-model
+  backpressure could speed a large grid on a runtime that tolerates it, but risks
+  the very flapping the sequential-with-gap recipe exists to avoid (mirrors the
+  browser-fetch batch-concurrency deferral).
+- **Trigger to fix:** the first grid large enough that sequential OCR is the
+  bottleneck *and* a runtime that provably tolerates concurrency. Add a bounded
+  pool with a per-model cap, driven by a test that asserts the cap; keep the
+  never-concurrent invariant for the default path.
+- **Status:** OPEN (deliberate — sequential by design for US28).
+
+## ocr_batch — unregistered-model classify ordering (Codex US28 review)
+
+- **Where:** `src/paper_degist/ocr_batch.py::ocr_batch` (the per-pair classify).
+- **Case (two, both surfaced by Codex's US28 review):** (1) the batch's
+  idempotency skip originally ran on `output_path(...).exists()` **before**
+  checking model registration, so a **stale output for an unregistered model**
+  was returned as a "cached" success — diverging from `ocr_page`, whose layer-1
+  classify checks the registry *first* and quarantines an unknown model before
+  the existence check. (2) The recovery gap's `hit_server` flag was set on every
+  dispatch, including an unknown-model quarantine that never touches the network,
+  so the next real pair over-waited a gap.
+- **Status:** RESOLVED (US28 Codex follow-up). The batch now classifies in
+  ocr-page's own order: `registered = model_id in registry` gates both the skip
+  (`registered and target.exists()`) and the gap (`registered and hit_server`;
+  `hit_server` set only when `registered`). An unregistered model therefore
+  dispatches to `ocr_page` — which quarantines it (unknown model) regardless of a
+  stale file — and never counts as a server hit. Pinned by
+  `test_a_stale_output_for_an_unregistered_model_is_not_treated_as_cached` and
+  `test_an_unregistered_model_does_not_charge_the_next_pair_a_gap`. (Codex also
+  noted a library caller passing `models=[]` is a silent no-op; kept deliberate —
+  an explicit empty selection parallels an empty page directory, both clean
+  no-ops, and the CLI cannot produce it: omitting `--model` yields the whole
+  registry.)
