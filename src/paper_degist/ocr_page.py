@@ -31,6 +31,7 @@ Runnable from the command line (rule 03):
 import base64
 import json
 import os
+import platform
 import re
 import subprocess
 import tempfile
@@ -308,6 +309,7 @@ def ocr_page(
     registry: dict[str, ModelSpec] = REGISTRY,
     post: Transport = _default_post,
     sleep: Callable[[float], None] = time.sleep,
+    hostname: Callable[[], str] = platform.node,
 ) -> Optional[Path]:
     """OCR ``page_path`` with ``model_id``; save Markdown to ``out/<model>/<page>.md``.
 
@@ -357,7 +359,9 @@ def ocr_page(
             sleep(gap)  # recovery gap before a retry — never a rapid-fire re-hit
         # Time each call individually so the recorded latency is the *successful*
         # request's round-trip — the bench's model-speed signal — not the retry
-        # budget and gaps burned recovering from a flap.
+        # budget and gaps burned recovering from a flap. ``latency`` is
+        # machine-dependent, so the producing machine is recorded as ``host``
+        # (``platform.node()``) to keep a mixed-host bench attributable.
         start = time.monotonic()
         try:
             response = post(model_id, spec.prompt, page_path, endpoint)
@@ -376,6 +380,7 @@ def ocr_page(
             stage="ocr-page",
             page=str(page_path),
             model=model_id,
+            host=hostname(),
             latency=round(time.monotonic() - start, 3),
             finish_reason=response.finish_reason,
             completion_tokens=response.completion_tokens,

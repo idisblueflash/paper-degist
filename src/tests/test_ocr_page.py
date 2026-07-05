@@ -225,11 +225,12 @@ def _fail_then_ok(n_fail: int, content="# Recovered"):
     return post
 
 
-def _run(tmp_path: Path, *, model="qwen/qwen3-vl-4b", post=None, attempts=3, page_name="p02.png"):
+def _run(tmp_path: Path, *, model="qwen/qwen3-vl-4b", post=None, attempts=3, page_name="p02.png", hostname=None):
     """Run ocr_page with an injected transport, a zero-cost sleep, and a temp out/."""
     page = _page(tmp_path, name=page_name)
     manifest = tmp_path / "manifest.jsonl"
     sleeps: list[float] = []
+    kwargs = {} if hostname is None else {"hostname": hostname}
     result = ocr_page(
         page,
         model,
@@ -239,6 +240,7 @@ def _run(tmp_path: Path, *, model="qwen/qwen3-vl-4b", post=None, attempts=3, pag
         attempts=attempts,
         gap=7.0,
         sleep=sleeps.append,
+        **kwargs,
     )
     return result, page, manifest, sleeps
 
@@ -290,6 +292,13 @@ def test_success_manifest_records_the_completion_tokens(tmp_path: Path):
 def test_success_manifest_records_a_numeric_latency(tmp_path: Path):
     _, _, manifest, _ = _run(tmp_path)
     assert isinstance(_only_record(manifest)["latency"], (int, float))
+
+
+def test_success_manifest_records_the_host(tmp_path: Path):
+    # latency is machine-dependent, so the producing machine is recorded to keep
+    # a mixed-host scores.jsonl attributable (DEVLOG: host recorded, not segmented).
+    _, _, manifest, _ = _run(tmp_path, hostname=lambda: "mac-mini.local")
+    assert _only_record(manifest)["host"] == "mac-mini.local"
 
 
 # --- idempotent skip: an already-saved (page, model) must not re-hit the server (AC2) ---

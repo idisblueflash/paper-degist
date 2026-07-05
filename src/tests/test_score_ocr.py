@@ -184,6 +184,19 @@ def test_score_joins_completion_tokens_from_the_manifest(tmp_path: Path):
     assert record["completion_tokens"] == 167
 
 
+def test_score_joins_host_from_the_manifest(tmp_path: Path):
+    # latency is machine-dependent, so the producing host travels with the score
+    # into scores.jsonl (DEVLOG: host recorded at ocr-page, not yet segmented in US23).
+    output = _save_output(tmp_path, "# Doc", model="qwen_qwen3-vl-4b", page="p02.md")
+    manifest = tmp_path / "manifest.jsonl"
+    _write_ocr_record(
+        manifest, model="qwen/qwen3-vl-4b", page="pages/WordCraft/p02.png",
+        host="mba.local", finish_reason="stop", latency=20.8, completion_tokens=167,
+    )
+    record = score_ocr(output, scores_path=tmp_path / "scores.jsonl", manifest_path=manifest)
+    assert record["host"] == "mba.local"
+
+
 def test_score_manifest_fields_are_none_when_no_ocr_record_matches(tmp_path: Path):
     # No manifest at all: the per-call fields are present but null, not missing.
     _, scores, _ = _run(tmp_path)
