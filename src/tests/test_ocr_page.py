@@ -20,6 +20,7 @@ from paper_degist.ocr_page import (
     OcrResponse,
     TransportError,
     _decode_grounding,
+    _decode_grounding_layout,
     _default_post,
     _parse_response,
     _strip_markdown_fence,
@@ -52,6 +53,90 @@ def test_decode_grounding_leaves_plain_text_untouched():
     assert _decode_grounding("Just a paragraph.") == "Just a paragraph."
 
 
+# --- DeepSeek-OCR-2/8bit post-processor: the ref slot holds a layout *category*
+# (text/sub_title/table/…), not the text — drop the label, keep the content ---
+
+
+def test_decode_grounding_layout_drops_the_category_label():
+    # deepseek-ocr-2 emits <|ref|>CATEGORY<|/ref|> then the content on the next
+    # line; the decode drops the category (opposite of base deepseek-ocr, which
+    # keeps the ref slot because it holds the actual text).
+    grounded = "<|ref|>sub_title<|/ref|><|det|>[[84, 700, 203, 715]]<|/det|>\n## Results"
+    assert _decode_grounding_layout(grounded) == "## Results"
+
+
+def test_decode_grounding_layout_separates_blocks_with_one_blank_line():
+    # Removing the markers leaves a 3-newline gap between two content blocks; it
+    # collapses to a single paragraph break so the markdown stays clean.
+    grounded = (
+        "<|ref|>text<|/ref|><|det|>[[1, 2, 3, 4]]<|/det|>\nFirst paragraph.\n\n"
+        "<|ref|>text<|/ref|><|det|>[[5, 6, 7, 8]]<|/det|>\nSecond paragraph."
+    )
+    assert _decode_grounding_layout(grounded) == "First paragraph.\n\nSecond paragraph."
+
+
+def test_decode_grounding_layout_keeps_content_when_a_label_is_unclosed():
+    # A malformed <|ref|> opener (no closer) must not let the label strip run to
+    # the *next* block's <|/ref|> and delete the content in between (Codex review):
+    # never silently drop OCR'd text. The label region can't contain '<', so a
+    # runaway match is impossible; the stray marker is swept, the content stays.
+    grounded = (
+        "<|ref|>Alpha content\n\n"
+        "<|ref|>text<|/ref|><|det|>[[1, 2, 3, 4]]<|/det|>\nBeta"
+    )
+    assert _decode_grounding_layout(grounded) == "Alpha content\n\nBeta"
+
+
+def test_decode_grounding_layout_normalizes_crlf_before_collapsing_gaps():
+    # CRLF output must normalize like the qwen decode (_strip_markdown_fence) or the
+    # \n{3,} collapse misses \r\n gaps and leaves a triple break (Codex review).
+    grounded = (
+        "<|ref|>text<|/ref|><|det|>[[1, 2, 3, 4]]<|/det|>\r\nAlpha.\r\n\r\n"
+        "<|ref|>text<|/ref|><|det|>[[5, 6, 7, 8]]<|/det|>\r\nBeta."
+    )
+    assert _decode_grounding_layout(grounded) == "Alpha.\n\nBeta."
+
+
+# The layout labels DeepSeek-OCR-2 emits in the ref slot; kept by the old decode,
+# they became bare repeating lines that inflated dup_pct (the bug this fixes).
+_LAYOUT_LABELS = frozenset(
+    {"text", "title", "sub_title", "table", "figure_title", "image", "image_caption"}
+)
+
+_GROUNDING_PAGE = Path(__file__).parent / "samples" / "deepseek-ocr-2-grounding-page.txt"
+
+
+def test_decode_grounding_layout_leaves_no_bare_category_line_on_a_real_page():
+    # Captured live from deepseek-ocr-2 (rule 06 §2 ground truth). Decoding must
+    # leave no standalone category word — those bare lines were the dup_pct artifact.
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    bare = [line for line in decoded.splitlines() if line in _LAYOUT_LABELS]
+    assert bare == []
+
+
+def test_decode_grounding_layout_preserves_content_on_a_real_page():
+    # Dropping the label must not eat the content block it introduced: the table
+    # under the <|ref|>table<|/ref|> label survives intact.
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    assert "<table>" in decoded
+
+
+def test_decode_grounding_layout_leaves_no_grounding_markup_on_a_real_page():
+    # Beyond bare labels: no <|ref|>/<|det|> marker of any kind may survive, or a
+    # leaked token would ride into the Markdown undetected (Codex review).
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    residual = [m for m in ("<|ref|>", "<|/ref|>", "<|det|>", "<|/det|>") if m in decoded]
+    assert residual == []
+
+
+def test_decode_grounding_layout_keeps_content_after_the_table_on_a_real_page():
+    # The final figure caption sits *after* the big <|ref|>table<|/ref|> block; assert
+    # it survives, so an over-removal that deletes everything past the table cannot
+    # pass the preservation check silently (Codex review).
+    decoded = _decode_grounding_layout(_GROUNDING_PAGE.read_text(encoding="utf-8"))
+    assert "Figure 1: Coverage as a function of the fraction of RBS variables" in decoded
+
+
 # --- the registry maps model ids to their (prompt, post-processor) entry ---
 
 
@@ -66,21 +151,21 @@ def test_deepseek_prompt_omits_the_literal_image_token():
 
 
 def test_deepseek_ocr_2_registered_with_grounding_spec():
-    # A DeepSeek OCR variant; registered with the grounding prompt + decode. Assert
-    # the whole ModelSpec (one logical fact) so a prompt typo / wrong postprocessor
-    # can't slip past a mere key-presence check (Codex review; rule 05).
+    # A DeepSeek OCR variant; grounding prompt, but the *layout* decode — its ref
+    # slot holds a category, not text. Assert the whole ModelSpec (one logical
+    # fact) so a prompt typo / wrong postprocessor can't slip past (rule 05).
     assert REGISTRY["deepseek-ocr-2"] == ModelSpec(
         prompt="<|grounding|>Convert the document to markdown.",
-        postprocess=_decode_grounding,
+        postprocess=_decode_grounding_layout,
     )
 
 
 def test_deepseek_ocr_8bit_registered_with_grounding_spec():
-    # The 8-bit quant variant; same spec. Its id keeps the '@' in the output dir
-    # slug (_model_slug only rewrites '/') — a separate DEVLOG flag.
+    # The 8-bit quant of the same -2 model; same grammar → same layout decode. Its
+    # id keeps the '@' in the output dir slug (_model_slug only rewrites '/').
     assert REGISTRY["deepseek-ocr@8bit"] == ModelSpec(
         prompt="<|grounding|>Convert the document to markdown.",
-        postprocess=_decode_grounding,
+        postprocess=_decode_grounding_layout,
     )
 
 

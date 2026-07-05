@@ -730,8 +730,19 @@ location, the case not yet handled, and the trigger that should make us fix it.
   base deepseek-ocr's keep-ref decode). Prefer the prompt fix (root cause, one-line
   `ModelSpec` data change) over a regex that could delete a legitimate "Title"
   heading.
-- **Status:** OPEN (deferred by the "ship now, prompt-tune as follow-up" call — the
-  current bench uses the grounding prompt; the `Free OCR.` A/B is its own branch).
+- **Status:** RESOLVED (branch `feat/deepseek-ocr-2-grounding-decode`). Chose the
+  per-variant decode over the `Free OCR.` prompt: `deepseek-ocr-2` already emits
+  well-formed markdown/HTML (`##` headings, `<table>`) in the *content* line, so the
+  `Free OCR.` prompt would have thrown that structure away. Instead the -2 family
+  (`deepseek-ocr-2` + `deepseek-ocr@8bit`, same grammar) now uses a new
+  `_decode_grounding_layout` postprocess that drops the ref-slot *label* + det box
+  and keeps the content (base `deepseek-ocr` keeps its text-in-ref decode
+  untouched). The bare repeating `text`/`sub_title` lines are gone, so `dup_pct`
+  falls back to content level. Driven test-first against a real captured page
+  (`src/tests/samples/deepseek-ocr-2-grounding-page.txt`); real E2E confirmed 0
+  residual markup / 0 bare labels with the table + headings preserved. Full
+  deepseek-ocr-2 re-bench + report refresh follow the merge (the decode is the
+  code change; the report is regenerated data).
 
 ## ocr_page — registry holds one DeepSeek entry; loaded variants not registered (US20)
 
