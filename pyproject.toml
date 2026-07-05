@@ -33,6 +33,7 @@ ocr-page = "paper_degist.ocr_page:main"
 score-ocr = "paper_degist.score_ocr:main"
 score-gold = "paper_degist.score_gold:main"
 ocr-report = "paper_degist.ocr_report:main"
+embed-text = "paper_degist.embed_text:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
