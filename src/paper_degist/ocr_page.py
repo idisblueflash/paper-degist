@@ -31,6 +31,7 @@ Runnable from the command line (rule 03):
 import base64
 import json
 import os
+import platform
 import re
 import subprocess
 import tempfile
@@ -327,6 +328,7 @@ def ocr_page(
     registry: dict[str, ModelSpec] = REGISTRY,
     post: Transport = _default_post,
     sleep: Callable[[float], None] = time.sleep,
+    hostname: Callable[[], str] = platform.node,
 ) -> Optional[Path]:
     """OCR ``page_path`` with ``model_id``; save Markdown to ``out/<model>/<page>.md``.
 
@@ -376,7 +378,9 @@ def ocr_page(
             sleep(gap)  # recovery gap before a retry — never a rapid-fire re-hit
         # Time each call individually so the recorded latency is the *successful*
         # request's round-trip — the bench's model-speed signal — not the retry
-        # budget and gaps burned recovering from a flap.
+        # budget and gaps burned recovering from a flap. ``latency`` is
+        # machine-dependent, so the producing machine is recorded as ``host``
+        # (``platform.node()``) to keep a mixed-host bench attributable.
         start = time.monotonic()
         try:
             response = post(model_id, spec.prompt, page_path, endpoint)
@@ -390,12 +394,23 @@ def ocr_page(
             continue
         markdown = spec.postprocess(response.content)
         _save(target, markdown)
+        # Close the latency window *before* the host lookup, so a slow
+        # `platform.node()` never folds into the model-speed signal (the metric
+        # `host` exists to keep attributable). Guard the lookup itself: a raising
+        # hostname provider must not lose the provenance row it annotates —
+        # fall back to an unknown host, never crash (rule 02).
+        latency = round(time.monotonic() - start, 3)
+        try:
+            host = hostname()
+        except Exception:
+            host = None
         _manifest.append(
             manifest_path,
             stage="ocr-page",
             page=str(page_path),
             model=model_id,
-            latency=round(time.monotonic() - start, 3),
+            host=host,
+            latency=latency,
             finish_reason=response.finish_reason,
             completion_tokens=response.completion_tokens,
         )

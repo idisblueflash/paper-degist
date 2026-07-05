@@ -7,7 +7,7 @@ real killers — ``unlimited-ocr`` degenerating into a 95 % duplicate-line loop,
 dropping inline citation lists, a 4-bit model ignoring the image entirely. None
 of those needs a reference to detect: they are computable from the output text
 plus the per-call fields US20 already recorded in ``manifest.jsonl``
-(``finish_reason`` / ``latency`` / ``completion_tokens``).
+(``host`` / ``finish_reason`` / ``latency`` / ``completion_tokens``).
 
 This step is the **everyday, offline tier** of the OCR bench: point it at any
 model's saved Markdown for any page and get one ``scores.jsonl`` row, no
@@ -177,11 +177,15 @@ def cjk_present(text: str) -> bool:
 
 # --- join the per-call fields US20 recorded in the manifest ---
 
-_MANIFEST_FIELDS = ("finish_reason", "latency", "completion_tokens")
+# ``host`` is joined alongside the per-call fields because ``latency`` is
+# machine-dependent — the producing machine has to travel with the score so a
+# mixed-host ``scores.jsonl`` stays attributable (DEVLOG: host recorded, not yet
+# segmented in the US23 scorecard).
+_MANIFEST_FIELDS = ("host", "finish_reason", "latency", "completion_tokens")
 
 
 def _manifest_fields(manifest_path: Path, model_slug: str, page_stem: str) -> dict:
-    """The ``finish_reason``/``latency``/``completion_tokens`` US20 recorded.
+    """The ``host``/``finish_reason``/``latency``/``completion_tokens`` US20 recorded.
 
     Joins on the saved output's own coordinates: the ``out/<model_slug>/<page>``
     path maps back to the ocr-page *success* record whose ``model`` slugifies to
