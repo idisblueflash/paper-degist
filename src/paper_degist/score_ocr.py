@@ -44,6 +44,15 @@ from paper_degist.ocr_page import _model_slug
 # positive). Excluding it is encoded knowledge, not a per-run judgement.
 _RULE_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 
+# A bare figure-panel label emitted on its own line (`A`, `(B)`, `C.`): a
+# grounding/layout decode (deepseek-ocr-2) puts each subfigure's label on its own
+# single-character line, so a multi-panel figure repeats `A`/`B` per page. Like a
+# rule, that is legitimate repeated boilerplate, not a repetition loop — counting a
+# second bare `A` as a duplicate inflated dup_pct on a distinct output. Optional
+# wrapping parens/brackets and a trailing `.`/`)` are stripped so `(A)` and `A.`
+# match too; a single letter only, so a one-word line of real prose is untouched.
+_PANEL_LABEL_RE = re.compile(r"^\s*[(\[]?[A-Za-z][)\].]?\s*$")
+
 # Sentence boundary — an end punctuation (`.?!`) followed by whitespace. Used
 # only as the unlined-output fallback for `dup_pct`: a model that emits the whole
 # page on one line (no newlines) has one substantive "line", so a line-based
@@ -82,14 +91,15 @@ _CJK_RE = re.compile(r"[㐀-䶿一-鿿ɐ-ʯ]")
 def _substantive_lines(text: str) -> list[str]:
     """The lines that count toward duplication: non-blank, non-horizontal-rule.
 
-    Blank lines and markdown rules (``---``) are legitimate repeated boilerplate;
-    counting them as duplicates inflates ``dup_pct`` on clean output, so they are
-    excluded before the ratio is taken (the report's known false positive).
+    Blank lines, markdown rules (``---``), and bare figure-panel labels (``A``,
+    ``(B)``) are legitimate repeated boilerplate; counting them as duplicates
+    inflates ``dup_pct`` on clean output, so they are excluded before the ratio is
+    taken (the report's known false positives).
     """
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or _RULE_RE.match(line):
+        if not stripped or _RULE_RE.match(line) or _PANEL_LABEL_RE.match(line):
             continue
         lines.append(stripped)
     return lines
@@ -103,11 +113,16 @@ def _dup_units(text: str) -> list[str]:
     line-based behavior (no recalibration of existing scores); only the degenerate
     single-line blob falls back to sentence segmentation, so a repetition loop a
     model emitted without newlines is still caught instead of scoring 0.
+
+    The fallback segments the *substantive* text (rules/blank/panel-label lines
+    already removed), not the raw text: excluding panel labels can drop a real
+    multi-line page to one substantive line, and re-segmenting the raw text would
+    let the stripped labels reappear as duplicate sentence units (Codex review).
     """
     lines = _substantive_lines(text)
     if len(lines) > 1:
         return lines
-    return _sentences(text)
+    return _sentences("\n".join(lines))
 
 
 def _sentences(text: str) -> list[str]:
