@@ -14,6 +14,15 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
 ## The phases
 
 ### 1. Orient — read before writing
+- **Check it isn't already built first.** Before writing anything, confirm the
+  story is genuinely unbuilt: read its Status in the index
+  [`user-stories.md`](../../user-stories.md) (a `✅ Done` row means stop — it
+  already shipped), then check the code for the step it names — its console
+  script in `pyproject.toml` `[project.scripts]`, its module under `src/`, its
+  `.feature` under `features/`, and `git log` for its merge. If it is already
+  implemented (fully or in part), surface that and stop rather than
+  re-implementing — pick up only the genuinely missing piece, if any. Building a
+  duplicate is the failure this phase exists to prevent.
 - Find the US in the index [`user-stories.md`](../../user-stories.md), then open
   **only** its own file under `user-stories/` (rule 07) — its acceptance
   criteria *are* the test list, and its "Case handling" section names the
@@ -112,6 +121,18 @@ is untracked — clean up or keep the generated artifacts deliberately.
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups. Merging this PR lands both the
   story and its `✅ Done` flip on `master` in one merge.
+- **File the session minute into this PR, before opening it.** Run
+  `bureau:file-session` while the context is live and include the resulting
+  `canon/logbook/…` minute in this branch, so the session record merges
+  atomically with the story it describes and never strands uncommitted on
+  `master`. The logbook is append-only and low-authority, so it rides the
+  feature PR cleanly. This is the only bureau artifact that belongs in a feature
+  PR: **compiled cabinet pages** (`bureau:compile`) are cross-session — they
+  distil many past minutes at once — so they ship on their **own
+  `chore/bureau-compile` branch/PR** and are **never** bundled into a feature PR
+  (bundling them drags unrelated canon into a code review and side-steps the
+  human `bureau:review` gate). The invariant either way: no canon or logbook
+  write is ever left uncommitted on `master`.
 
 ### 14. Clean up — after the merge
 Once the PR merges on the remote, sync local and prune the branch in this
