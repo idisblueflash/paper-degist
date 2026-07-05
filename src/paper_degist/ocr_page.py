@@ -97,6 +97,10 @@ def _strip_markdown_fence(text: str) -> str:
 
 _DET_RE = re.compile(r"<\|det\|>.*?<\|/det\|>", re.DOTALL)
 _REF_RE = re.compile(r"<\|/?ref\|>")
+# The whole ref *pair* incl. the layout label inside it (deepseek-ocr-2 puts a
+# category there, not text) — dropped by _decode_grounding_layout.
+_REF_LABEL_RE = re.compile(r"<\|ref\|>.*?<\|/ref\|>", re.DOTALL)
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
 def _decode_grounding(text: str) -> str:
@@ -108,6 +112,24 @@ def _decode_grounding(text: str) -> str:
     """
     text = _DET_RE.sub("", text)
     text = _REF_RE.sub("", text)
+    return text.strip()
+
+
+def _decode_grounding_layout(text: str) -> str:
+    """Decode DeepSeek-OCR-2/@8bit grounding where the ref slot is a layout *label*.
+
+    Unlike base ``deepseek-ocr`` (whose ``<|ref|>`` slot holds the actual text),
+    the -2 family puts a layout *category* there — ``text``/``title``/
+    ``sub_title``/``table``/``figure_title``/… — and emits the real content
+    (already well-formed markdown/HTML) on the following line. So here we drop
+    the whole ``<|ref|>…<|/ref|>`` label and the ``<|det|>`` box, keep the
+    content, and collapse the gaps the removed markers leave. Keeping the label
+    (as ``_decode_grounding`` would) is what inflated ``dup_pct`` — the bare
+    ``text``/``sub_title`` lines repeat down the page.
+    """
+    text = _DET_RE.sub("", text)
+    text = _REF_LABEL_RE.sub("", text)
+    text = _BLANK_LINES_RE.sub("\n\n", text)
     return text.strip()
 
 
@@ -131,16 +153,17 @@ REGISTRY: dict[str, ModelSpec] = {
         prompt="<|grounding|>Convert the document to markdown.",
         postprocess=_decode_grounding,
     ),
-    # DeepSeek OCR variants loaded in LM Studio, benched alongside the base model.
-    # Same grounding prompt + grounding-markup decode — a variant is data, not a
-    # branch (rule 02).
+    # DeepSeek-OCR-2 (and its @8bit quant) loaded in LM Studio, benched alongside
+    # the base model. Same grounding prompt, but its ref slot holds a layout
+    # *category* rather than the text, so it takes the layout decode — a variant
+    # is data, not a branch (rule 02).
     "deepseek-ocr-2": ModelSpec(
         prompt="<|grounding|>Convert the document to markdown.",
-        postprocess=_decode_grounding,
+        postprocess=_decode_grounding_layout,
     ),
     "deepseek-ocr@8bit": ModelSpec(
         prompt="<|grounding|>Convert the document to markdown.",
-        postprocess=_decode_grounding,
+        postprocess=_decode_grounding_layout,
     ),
 }
 
