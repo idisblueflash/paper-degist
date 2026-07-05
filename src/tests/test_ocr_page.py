@@ -8,6 +8,7 @@ end-to-end (rule 06 §7), not here. Distinct example pages/models per case
 """
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -299,6 +300,34 @@ def test_success_manifest_records_the_host(tmp_path: Path):
     # a mixed-host scores.jsonl attributable (DEVLOG: host recorded, not segmented).
     _, _, manifest, _ = _run(tmp_path, hostname=lambda: "mac-mini.local")
     assert _only_record(manifest)["host"] == "mac-mini.local"
+
+
+def test_success_latency_excludes_the_hostname_lookup(tmp_path: Path):
+    # the host lookup must not fold into latency — that is the machine-speed signal
+    # host recording exists to keep clean (Codex review). A 0.2s hostname vs a
+    # near-instant fake transport leaves a wide margin, so the bound is not flaky.
+    def slow_hostname() -> str:
+        time.sleep(0.2)
+        return "mac-mini.local"
+
+    _, _, manifest, _ = _run(tmp_path, hostname=slow_hostname)
+    assert _only_record(manifest)["latency"] < 0.1
+
+
+def _raising_hostname() -> str:
+    raise RuntimeError("hostname lookup failed")
+
+
+def test_a_raising_hostname_still_returns_the_output_path(tmp_path: Path):
+    # a hostname lookup failure must not lose the OCR — the row it annotates is
+    # still written and the call still succeeds (never crash, rule 02; Codex review).
+    result, _, _, _ = _run(tmp_path, hostname=_raising_hostname)
+    assert result == tmp_path / "out" / "qwen_qwen3-vl-4b" / "p02.md"
+
+
+def test_a_raising_hostname_records_a_null_host(tmp_path: Path):
+    _, _, manifest, _ = _run(tmp_path, hostname=_raising_hostname)
+    assert _only_record(manifest)["host"] is None
 
 
 # --- idempotent skip: an already-saved (page, model) must not re-hit the server (AC2) ---

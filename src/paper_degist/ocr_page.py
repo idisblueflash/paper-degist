@@ -375,13 +375,23 @@ def ocr_page(
             continue
         markdown = spec.postprocess(response.content)
         _save(target, markdown)
+        # Close the latency window *before* the host lookup, so a slow
+        # `platform.node()` never folds into the model-speed signal (the metric
+        # `host` exists to keep attributable). Guard the lookup itself: a raising
+        # hostname provider must not lose the provenance row it annotates —
+        # fall back to an unknown host, never crash (rule 02).
+        latency = round(time.monotonic() - start, 3)
+        try:
+            host = hostname()
+        except Exception:
+            host = None
         _manifest.append(
             manifest_path,
             stage="ocr-page",
             page=str(page_path),
             model=model_id,
-            host=hostname(),
-            latency=round(time.monotonic() - start, 3),
+            host=host,
+            latency=latency,
             finish_reason=response.finish_reason,
             completion_tokens=response.completion_tokens,
         )
