@@ -52,6 +52,15 @@ _RULE_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 # into sentences restores the signal without touching line-structured output.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.?!])\s+")
 
+# Abbreviations whose trailing `.` is NOT a sentence end. Splitting on them would
+# turn repeated `See Fig.` fragments into false duplicate units and inflate
+# `dup_pct` on a *distinct* single-line output (Codex review). Compared lowercase
+# with the trailing dot stripped, so `Fig.`, `al.` (from `et al.`), `e.g.` match.
+_ABBREVIATIONS = frozenset(
+    {"fig", "eq", "no", "vol", "pp", "al", "e.g", "i.e", "cf", "vs",
+     "dr", "mr", "ms", "prof", "ref", "sec", "ch", "etc", "approx"}
+)
+
 # A `word- word` dehyphenation artifact: a letter/digit, a hyphen, then a space
 # before the next word (the `"low- quality"` / `"L1- Chinese"` leak that
 # separated @8bit from qwen). The word chars are matched with zero-width
@@ -98,7 +107,27 @@ def _dup_units(text: str) -> list[str]:
     lines = _substantive_lines(text)
     if len(lines) > 1:
         return lines
-    return [s.strip() for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
+    return _sentences(text)
+
+
+def _sentences(text: str) -> list[str]:
+    """Split one line into sentences, not breaking on abbreviation dots.
+
+    A naive split on every `.?!` breaks `See Fig. 1` into `See Fig.` + `1 …`, so
+    repeated `See Fig.` fragments read as duplicates and inflate `dup_pct`. When a
+    fragment ends in a known abbreviation, it is re-joined to the next — the dot
+    was not a sentence end.
+    """
+    out: list[str] = []
+    for part in _SENTENCE_SPLIT_RE.split(text.strip()):
+        part = part.strip()
+        if not part:
+            continue
+        if out and out[-1].split()[-1].rstrip(".!?").lower() in _ABBREVIATIONS:
+            out[-1] = f"{out[-1]} {part}"
+        else:
+            out.append(part)
+    return out
 
 
 def dup_pct(text: str) -> float:

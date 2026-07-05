@@ -815,7 +815,11 @@ location, the case not yet handled, and the trigger that should make us fix it.
   (`_SENTENCE_SPLIT_RE`) so the intra-line loop is caught (`mseb` → 60.0). A
   single-line *non-repetitive* hallucination stays 0.0 (`…1528-1167…_3` — 429
   unique sentences, correctly not a dup defect; its fabrication is score-gold's
-  lane). Pinned by `test_dup_pct_flags_a_loop_emitted_on_a_single_line`.
+  lane). The sentence split skips known abbreviation dots (`Fig.`, `et al.`,
+  `e.g.` via `_ABBREVIATIONS`) so repeated `See Fig.` fragments do not read as
+  false duplicates on a distinct single line (Codex review). Pinned by
+  `test_dup_pct_flags_a_loop_emitted_on_a_single_line` and
+  `test_dup_pct_does_not_false_positive_on_abbreviations_in_a_single_line`.
 
 ## score_gold — dataset is research-only; not vendored, operator supplies it (US22)
 
