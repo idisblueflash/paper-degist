@@ -1195,3 +1195,20 @@ location, the case not yet handled, and the trigger that should make us fix it.
   resolve-oa / score-ocr per-item rollup deferrals.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
+
+## discover — Embase (Elsevier) needs a paid institutional key, not keyless (US31)
+
+- **Where:** would be a `--source embase` adapter in `src/paper_degist/discover.py`
+  (not built).
+- **Case not handled:** a PoC confirmed Embase is reachable at
+  `api.elsevier.com/content/embase/article` but returns `401 Invalid API Key` — it
+  requires an Elsevier API key **plus a paid institutional entitlement** (worse
+  than S2's free key). So Embase cannot join the keyless registry the way PubMed
+  (US31) / OpenAlex (US29) did; it would be a key-gated opt-in like `--source s2`,
+  quarantining offline (missing key) when no key/entitlement is present (US27's
+  missing-key branch shape).
+- **Trigger to fix:** when institutional Elsevier/Embase access exists (an API key
+  + entitlement token). Add the `embase` adapter then, with the offline missing-key
+  quarantine and the same common-schema mapping, driven by a test against a real
+  keyed response.
+- **Status:** OPEN (blocked on paid access — deliberately not built keyless).
