@@ -64,6 +64,18 @@ def test_deepseek_prompt_omits_the_literal_image_token():
     assert "<image>" not in REGISTRY["deepseek-ocr"].prompt
 
 
+def test_deepseek_ocr_2_is_registered():
+    # A DeepSeek OCR variant loaded in LM Studio; registered so the bench can
+    # score it (a new model is one registry entry, not a branch — rule 02).
+    assert "deepseek-ocr-2" in REGISTRY
+
+
+def test_deepseek_ocr_8bit_is_registered():
+    # The 8-bit quantization variant; its id carries an '@' that _model_slug
+    # leaves in the output dir path (that punctuation is a separate DEVLOG flag).
+    assert "deepseek-ocr@8bit" in REGISTRY
+
+
 # --- output_path: the single source of truth for out/<model>/<page>.md ---
 
 

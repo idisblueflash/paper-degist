@@ -131,6 +131,17 @@ REGISTRY: dict[str, ModelSpec] = {
         prompt="<|grounding|>Convert the document to markdown.",
         postprocess=_decode_grounding,
     ),
+    # DeepSeek OCR variants loaded in LM Studio, benched alongside the base model.
+    # Same grounding prompt + grounding-markup decode — a variant is data, not a
+    # branch (rule 02).
+    "deepseek-ocr-2": ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    ),
+    "deepseek-ocr@8bit": ModelSpec(
+        prompt="<|grounding|>Convert the document to markdown.",
+        postprocess=_decode_grounding,
+    ),
 }
 
 

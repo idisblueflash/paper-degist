@@ -501,6 +501,12 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
   - `deepseek-ocr` — the `<|grounding|>Convert the document to markdown.` prompt
     (the literal `<image>` token **omitted**, or LM Studio 400s on a double
     image); the grounding markup is decoded to plain Markdown.
+  - `deepseek-ocr-2`, `deepseek-ocr@8bit` — DeepSeek OCR variants, each the same
+    grounding prompt + decode as `deepseek-ocr` (a variant is one registry entry,
+    not a branch). On a RAM-constrained host load **one model at a time** (e.g.
+    `lms unload --all && lms load deepseek-ocr-2`) and drive with
+    `ocr-batch --model <one>` — co-loaded vision models can exhaust RAM and crash
+    the worker (see DEVLOG).
 - **Quarantine, not a crash** (rule 02). Two cases land in the manifest and exit
   cleanly (exit 0):
   - `unknown model: '…' not in registry` — the model id is not registered; the
