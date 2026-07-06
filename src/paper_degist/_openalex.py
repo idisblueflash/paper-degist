@@ -20,6 +20,13 @@ WORKS_ENDPOINT = "https://api.openalex.org/works"
 # the polite pool is the ``mailto`` param below).
 USER_AGENT = "paper-degist/0.1 (https://github.com/idisblueflash/paper-degist)"
 
+# The one warning every OpenAlex-searching CLI emits when no contact email is
+# given (US29 AC4): a missing email downgrades politeness, it never blocks.
+NO_EMAIL_WARNING = (
+    "warning: no OpenAlex contact email (--email / OPENALEX_EMAIL); "
+    "using the slower common pool — set one for the polite pool."
+)
+
 
 def _get(url: str, params: dict, email: Optional[str]) -> dict:
     """GET ``url`` from OpenAlex and return its JSON, encoding the client once.

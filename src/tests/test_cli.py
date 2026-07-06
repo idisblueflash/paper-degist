@@ -27,8 +27,10 @@ from paper_degist.browser_fetch import app as browser_fetch_app
 from paper_degist.browser_up import app as browser_up_app
 from paper_degist.convert_html import app as convert_html_app
 import paper_degist.discover as discover_mod
+import paper_degist.discover_batch as discover_batch_mod
 from paper_degist.discover import Candidate
 from paper_degist.discover import app as discover_app
+from paper_degist.discover_batch import app as discover_batch_app
 from paper_degist.embed_text import app as embed_text_app
 import paper_degist.abstract_filter as abstract_filter_mod
 from paper_degist.abstract_filter import app as abstract_filter_app
@@ -822,6 +824,83 @@ def test_discover_openalex_with_email_does_not_warn(tmp_path: Path, monkeypatch)
          "--manifest", str(tmp_path / "m.jsonl")],
     )
     assert "polite pool" not in result.output
+
+
+# --- discover-batch CLI: fan out, merge, print JSONL (US31) ---
+
+
+def _mamba_candidate() -> Candidate:
+    return Candidate(
+        title="Mamba: Linear-Time Sequence Modeling",
+        authors=["Albert Gu", "Tri Dao"],
+        abstract="Selective state space models match Transformers.",
+        url="http://arxiv.org/abs/2312.00752v1",
+        published="2023-12-01T00:00:00Z",
+        source="arxiv",
+        source_id="2312.00752v1",
+    )
+
+
+def test_discover_batch_cli_prints_one_jsonl_line_per_merged_candidate(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        discover_batch_mod,
+        "_build_registry",
+        lambda mr, key, email, serp: {"arxiv": lambda q: [_mamba_candidate()]},
+    )
+    result = runner.invoke(
+        discover_batch_app,
+        ["selective state space models", "--source", "arxiv",
+         "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert json.loads(result.stdout.strip())["title"] == "Mamba: Linear-Time Sequence Modeling"
+
+
+def test_discover_batch_cli_reads_queries_from_stdin_when_no_args(tmp_path: Path, monkeypatch):
+    # Rule 03: pipeable — one query per stdin line when no argument is given.
+    seen: list[str] = []
+
+    def recording(q):
+        seen.append(q)
+        return [_mamba_candidate()]
+
+    monkeypatch.setattr(
+        discover_batch_mod, "_build_registry", lambda mr, key, email, serp: {"arxiv": recording}
+    )
+    runner.invoke(
+        discover_batch_app,
+        ["--source", "arxiv", "--manifest", str(tmp_path / "m.jsonl")],
+        input="long-context evaluation benchmarks\nneedle in a haystack tests\n",
+    )
+    assert seen == ["long-context evaluation benchmarks", "needle in a haystack tests"]
+
+
+def test_discover_batch_cli_empty_batch_exits_zero(tmp_path: Path, monkeypatch):
+    # An all-empty batch quarantines (AC6) — an expected outcome, not a crash.
+    monkeypatch.setattr(
+        discover_batch_mod, "_build_registry", lambda mr, key, email, serp: {"arxiv": lambda q: []}
+    )
+    result = runner.invoke(
+        discover_batch_app,
+        ["qwertyuiop nonexistent topic zzzz", "--source", "arxiv",
+         "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert result.exit_code == 0
+
+
+def test_discover_batch_cli_default_sources_warn_without_email(tmp_path: Path, monkeypatch):
+    # The default source pair includes openalex, so the US29 AC4 polite-pool
+    # warning fires when no contact email is supplied.
+    monkeypatch.delenv("OPENALEX_EMAIL", raising=False)
+    monkeypatch.setattr(
+        discover_batch_mod,
+        "_build_registry",
+        lambda mr, key, email, serp: {"arxiv": lambda q: [_mamba_candidate()], "openalex": lambda q: []},
+    )
+    result = runner.invoke(
+        discover_batch_app,
+        ["mixture of depths routing", "--manifest", str(tmp_path / "m.jsonl")],
+    )
+    assert "polite pool" in result.output
 
 
 # --- abstract-filter CLI: ranked JSONL to stdout, offline via a fake embedder ---

@@ -1311,7 +1311,39 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when the topic review wants the union of arXiv + S2 in one
   list. Add a fan-out/merge driver that calls `discover` per source and dedups by
   normalized DOI (and title fallback), driven by a test.
-- **Status:** OPEN (deliberate — single-source like the sibling steps).
+- **Status:** RESOLVED by US31 (2026-07-06). `discover-batch`
+  (`src/paper_degist/discover_batch.py`) fans N queries across M sources via the
+  same `discover` core, spaces consecutive arXiv calls by `ARXIV_MIN_INTERVAL`,
+  and merges + dedups the union by normalized DOI then `(source, source_id)`,
+  with an abstract-carrying duplicate replacing an abstract-less stub. The
+  title-fallback dedup stays deferred (see the US31 entry below).
+
+## discover-batch — no title-based cross-source dedup (US31)
+
+- **Where:** `src/paper_degist/discover_batch.py::merge_key`.
+- **Case not handled:** a DOI-less arXiv record and the same paper's OpenAlex
+  record share neither a normalized DOI nor a `(source, source_id)` key, so the
+  merge keeps both copies. Safe over-recall — US26's similarity filter ranks
+  both — but the shortlist can carry the same paper twice. Same gap for two
+  arXiv `source_id`s that differ only in version suffix (`…v1` vs `…v2`) —
+  can't happen within one run (the API serves one current version) but would
+  slip through when merging manifests across runs.
+- **Trigger to fix:** the first merged shortlist where a duplicate pair survives
+  to `fetch-one`. Add a fuzzy-title dedup key (rapidfuzz is already a
+  dependency via US13), driven by a failing test.
+- **Status:** OPEN (deliberate — named in the US31 "Later stages").
+
+## discover-batch — per-pair quarantines are silent on stderr (US31)
+
+- **Where:** `src/paper_degist/discover_batch.py::run` (the CLI wrapper).
+- **Case not handled:** a (query, source) pair that quarantines is recorded in
+  the manifest by `discover` (rule 02) and the batch continues (AC5), but the
+  batch CLI prints nothing about it — an operator watching stdout sees a
+  smaller merged list with no hint that a leg silently failed.
+- **Trigger to fix:** the first blind batch run where a quarantined pair goes
+  unnoticed until the shortlist looks thin. Track failed pairs in the summary
+  record (e.g. `failed_pairs`) and echo a one-line stderr note, test-first.
+- **Status:** OPEN.
 
 ## discover — first page only; deep pagination deferred (US25)
 
@@ -1319,7 +1351,7 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Case not handled:** discover returns the API's first page (up to
   `--max-results`). Deep paging for exhaustive recall (walking `start`/`offset`
   across pages, honoring arXiv's `ARXIV_MIN_INTERVAL` ~3 s inter-call delay — the
-  constant is encoded but unused until a batch needs it) is a later option, gated
+  constant US31's `discover-batch` now spaces its calls with) is a later option, gated
   on the bake-off showing the first page is too shallow.
 - **Trigger to fix:** the first topic whose relevant papers fall past page one.
   Add a paginating loop that spaces arXiv calls by `ARXIV_MIN_INTERVAL`, driven

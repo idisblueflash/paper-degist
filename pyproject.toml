@@ -37,6 +37,7 @@ score-gold = "paper_degist.score_gold:main"
 ocr-report = "paper_degist.ocr_report:main"
 embed-text = "paper_degist.embed_text:main"
 discover = "paper_degist.discover:main"
+discover-batch = "paper_degist.discover_batch:main"
 abstract-filter = "paper_degist.abstract_filter:main"
 
 [tool.pytest.ini_options]
