@@ -69,6 +69,65 @@ done
 
 ---
 
+## `dedup-inputs` — collapse inputs that point at the same DOI (US14)
+
+A pure, offline filter that sits between `parse-url` and `fetch-one`: it reads a
+list of inputs, canonicalizes any DOI it can read out of each one, and keeps only
+the **first** input for each distinct DOI — so a paper reached three ways (a bare
+DOI, its `doi.org` link, a publisher URL that embeds the DOI) is fetched once,
+not three times. Makes **no network call and no LLM call**.
+
+```
+uv run dedup-inputs <file>                        # read a file
+uv run dedup-inputs                               # read stdin
+uv run dedup-inputs <file> --manifest manifest.jsonl
+```
+
+- **Argument**: `file` — a list of inputs, one per line. Omit it to read stdin.
+- **Options**: `--manifest` (default `manifest.jsonl`) — where dropped duplicates
+  are recorded.
+- **Output**: the surviving inputs, one per line on stdout, in first-seen order.
+  The *original* kept input is printed (never rewritten to canonical form), so
+  `fetch-one` still works on it unchanged.
+- **The key** is a **normalized DOI**: the DOI extracted from the input
+  (`resolve_oa.doi_from`), scheme/`doi.org` prefix stripped, **lowercased** (DOIs
+  are case-insensitive), so `https://doi.org/10.X`, `10.X`, and `10.x` fold to one
+  key.
+- **No extractable DOI → pass through** (never dropped): a PubMed or ScienceDirect
+  URL exposes no DOI in its text, so the step cannot prove it duplicates anything
+  without a network lookup — it keeps it. Unmasking those DOIs is `resolve-oa`'s
+  job (a deferred coupling; see DEVLOG).
+- **Dropped duplicate** → a `duplicate` record is appended to the manifest
+  (`stage: "dedup-inputs"`, the dropped `input`, its normalized `doi`, and the
+  `duplicate_of` input it duplicates) — so every collapse is auditable, never
+  silent, and the manifest stays append-only.
+- Dedups **within one input list** only; a cross-run seen-ledger (skip a paper
+  fetched last week) is a separate, deferred design.
+
+### Examples
+
+```bash
+# Happy path — three forms of one DOI collapse to the first; a bare uppercase
+# twin folds too, and a DOI-less URL passes through
+printf '%s\n' \
+  'https://doi.org/10.1016/j.learninstruc.2007.02.008' \
+  '10.1016/J.LearnInstruc.2007.02.008' \
+  'https://pubmed.ncbi.nlm.nih.gov/2303742/' \
+  | uv run dedup-inputs
+#   -> https://doi.org/10.1016/j.learninstruc.2007.02.008
+#   -> https://pubmed.ncbi.nlm.nih.gov/2303742/
+#   -> manifest: {"stage":"dedup-inputs","input":"10.1016/J.LearnInstruc.2007.02.008",
+#                 "doi":"10.1016/j.learninstruc.2007.02.008",
+#                 "duplicate_of":"https://doi.org/10.1016/j.learninstruc.2007.02.008"}
+
+# Drop-in between parse-url and fetch-one: parse, collapse dups, fetch each once
+uv run parse-url notes.md | uv run dedup-inputs | while read -r url; do
+  uv run fetch-one "$url"
+done
+```
+
+---
+
 ## `fetch-one` — fetch one paper file (US2)
 
 Fetch a URL and save the file under `files/`, classifying what actually came

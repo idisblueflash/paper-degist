@@ -1527,3 +1527,53 @@ location, the case not yet handled, and the trigger that should make us fix it.
   case, derive `host` from the endpoint netloc instead of `platform.node()`.
 - **Status:** PARTIAL — host is now captured at `ocr-page` and carried into
   `scores.jsonl` (this change); host-aware aggregation in US23 remains OPEN.
+
+## dedup_inputs — within-list only; DOI-less inputs and re-runs not deduped (US14)
+
+- **Where:** `src/paper_degist/dedup_inputs.py::dedup_inputs` /
+  `normalize_doi` (built on `resolve_oa.doi_from`).
+- **Case not handled (three, all deliberate — spec "Later stages"):**
+  (1) **DOI-less inputs.** An input that hides its DOI passes through unchanged
+  (AC3), so two inputs for the *same* paper survive when one carries no readable
+  DOI. Confirmed live by the US14 real E2E: a ScienceDirect URL
+  (`…/article/pii/S0959475207000242`) and `https://doi.org/10.1016/j.learninstruc.2007.02.008`
+  are the same paper, but the SD URL embeds a PII, not the DOI — so both survived
+  while the *bare* DOI and its uppercase twin were correctly collapsed. Deduping
+  these needs resolve-oa to unmask the DOI first, which would couple this offline
+  filter to a network stage.
+  (2) **Cross-run seen-ledger.** The step dedups within one input list only; a
+  paper fetched last week is not skipped today. A durable DOI ledger belongs with
+  the stages that *learn* a DOI (fetch-one, resolve-oa), not this up-front filter.
+  (3) **Re-run manifest rows.** Re-running on the same list re-appends the same
+  `duplicate` rows (the manifest is append-only by design) — the same read-side
+  concern as the deferred resolve-oa/US11 manifest dedup+rollup.
+- **Trigger to fix:** (1) the first list where an unmasked-DOI duplicate matters
+  enough to run resolve-oa before dedup; (2) the first repeated-across-runs paper
+  worth skipping — build the seen-ledger with fetch-one/resolve-oa; (3) folded
+  into the deferred consolidated manifest view.
+- **Status:** OPEN (deliberate — US14 ships the pure within-list DOI filter; the
+  network-coupled and cross-run dedup are named deferrals in the story).
+
+## dedup_inputs — a trailing path segment after the DOI defeats the fold (US14)
+
+- **Where:** `src/paper_degist/dedup_inputs.py::normalize_doi` →
+  `resolve_oa.doi_from` / `_DOI_RE` (the suffix class includes `/`).
+- **Case not handled:** the DOI regex suffix `[-._;()/:A-Z0-9]+` greedily
+  includes `/`, so a publisher URL that appends a path segment *after* the DOI —
+  e.g. Wiley `https://onlinelibrary.wiley.com/doi/10.1002/xxx/full` (or `/pdf`,
+  `/abstract`) — yields the key `10.1002/xxx/full`, which does **not** fold
+  against the bare `10.1002/xxx`. The two survive as separate inputs. (Sage/most
+  publishers put the DOI at the path *end*, which folds cleanly — the AC2 case.)
+  This is inherent ambiguity: real DOIs may themselves contain `/`
+  (`10.1234/abc/def`), so the extractor cannot know where the DOI ends and a
+  trailing path begins. The failure is always **under**-dedup (a missed
+  collapse), never a wrong drop — the safe direction, matching AC3's "never drop
+  what you cannot prove is a duplicate".
+- **Trigger to fix:** the first real list where a `/full`-style publisher URL and
+  its bare DOI both survive and the duplicate fetch matters. Add a normalization
+  that, for a `.../doi/<DOI>[/<segment>]` URL, trims a known trailing action
+  segment (`full`, `abstract`, `pdf`, `epdf`, …) before keying — driven by a
+  failing test on such a URL. Keep it in `dedup_inputs` (do not widen the shared
+  `doi_from` primitive, which `resolve_oa` also depends on).
+- **Status:** OPEN (low priority — safe under-dedup; AC2's path-end DOIs fold
+  correctly today).
