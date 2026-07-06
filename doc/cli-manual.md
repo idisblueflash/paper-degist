@@ -1229,8 +1229,88 @@ uv run discover "diffusion models for protein design" --source scholar
 
 `discover` is the entry point the US26 abstract filter composes: it emits a
 wide-net candidate list (one source per run), and the filter narrows it by
-abstract similarity. Merging both sources into one deduped union (reusing US14's
-DOI normalization) is a deferred driver built on top of this step, not baked in.
+abstract similarity. To cast several queries across several sources in one
+command, use `discover-batch` (US31), the fan-out/merge driver built on top of
+this step.
+
+---
+
+## `discover-batch` — fan queries across sources, merge the union (US31)
+
+The fan-out/merge driver over `discover`: run **N topic queries × M sources**
+in one command and emit **one merged, deduplicated candidate list**. Pure
+composition — each (query, source) pair goes through the same `discover` core,
+so every per-pair behaviour (adapter quirks, quarantine reasons, per-run
+manifest rows) is exactly `discover`'s. What the driver adds: fan-out that
+survives a failing pair, ~3 s etiquette spacing between consecutive arXiv
+calls, and a DOI-then-`(source, source_id)` dedup of the union.
+
+```
+uv run discover-batch [<query>...] [--source arxiv --source openalex ...]
+                      [--max-results 25] [--s2-api-key KEY] [--email you@example.com]
+                      [--serpapi-key KEY] [--manifest manifest.jsonl]
+```
+
+- **Arguments**: the topic queries (each quoted). With **no** query arguments,
+  queries are read **one per line from stdin** — pipeable from a file of
+  queries (rule 03).
+- **`--source`** is repeatable; the default is the **keyless pair**
+  `arxiv` + `openalex`, so the command runs with zero setup. Key-gated sources
+  (`s2` with a key, `scholar`, `scholar-author`) join by repeating the flag.
+  All other options are passed through to each `discover` run and mean the same
+  thing there.
+- **Merge + dedup**: two records are the same paper when their **normalized
+  DOIs** match (US14's key, like US26's dedup), or — for DOI-less records like
+  arXiv's — when they share `(source, source_id)` (the same source returning
+  the same paper for two queries). First-seen wins, with one deterministic
+  upgrade: a duplicate that **carries an abstract replaces a kept record that
+  has none** (an OpenAlex record with the full abstract beats a bibliographic
+  `scholar-author` stub), so the merged list keeps the richest copy for
+  `abstract-filter`. Every dropped duplicate leaves a
+  `{"stage":"discover-batch","event":"filtered", …}` manifest record with a
+  distinct reason (`dedup-doi` / `dedup-source-id`).
+- **Resilience** (rule 02): a pair that rate-limits or matches nothing is
+  quarantined by `discover`'s own path and takes out **only itself**; the other
+  pairs still merge. A batch where **every** pair yields nothing quarantines
+  with a distinct `empty-batch` reason and exits 0.
+- **Output**: the merged JSONL on stdout (same common schema as `discover`) —
+  a drop-in to `abstract-filter` — plus one `discover-batch` summary manifest
+  record (`queries`, `sources`, merged `result_count`) after the per-pair rows.
+
+### Examples
+
+```bash
+# Happy path — two queries across the keyless pair, merged and deduped
+uv run discover-batch "sparse mixture-of-experts routing" \
+                      "expert choice routing transformers" \
+                      --email you@example.com --max-results 10
+#   -> 38 merged JSONL records (40 fetched; 2 cross-query duplicates dropped)
+#   -> manifest: {"stage":"discover","source":"arxiv","query":"sparse …","result_count":10}
+#                … one row per (query, source) pair …
+#                {"stage":"discover-batch","event":"filtered",
+#                 "url":"https://doi.org/10.48550/arxiv.2202.09368","source":"openalex",
+#                 "reason":"dedup-doi",
+#                 "duplicate_of":"https://doi.org/10.48550/arxiv.2202.09368"}
+#                {"stage":"discover-batch","queries":2,"sources":["arxiv","openalex"],
+#                 "result_count":38}
+
+# Queries from stdin (one per line) — compose the whole front of the pipeline
+printf '%s\n' "contrastive speech representations" "wav2vec self-supervised" |
+  uv run discover-batch --email you@example.com |
+  uv run abstract-filter --topic "contrastive learning for speech representations"
+
+# Quarantine branch — a nonsense query yields nothing from any pair (exit 0)
+uv run discover-batch "xqzptvwklmn" --source arxiv
+#   -> stderr: quarantined (see manifest.jsonl): empty batch for 1 query x ['arxiv']
+#   -> manifest: {"stage":"discover","source":"arxiv","query":"xqzptvwklmn",
+#                 "reason":"empty-result: the search returned no candidates"}
+#                {"stage":"discover-batch","queries":1,"sources":["arxiv"],
+#                 "reason":"empty-batch: no candidates from any (query, source) pair"}
+```
+
+The title-based cross-source dedup (an arXiv record and the same paper's
+OpenAlex record share no DOI and no source id) is deferred — the merged list
+can carry such a pair, and US26's filter ranks both (safe over-recall).
 
 ---
 
@@ -1351,6 +1431,13 @@ a wide net, rank it to an on-topic shortlist, and fetch that.
 ```bash
 # 0. topic → wide candidate net → ranked shortlist → fetch the on-topic ones
 uv run discover "contrastive learning for speech representations" --source arxiv \
+  | uv run abstract-filter --topic "contrastive learning for speech representations" \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+
+# Or cast several queries across several sources in one go (US31)
+uv run discover-batch "contrastive speech representations" "wav2vec self-supervised" \
+  --email you@example.com \
   | uv run abstract-filter --topic "contrastive learning for speech representations" \
   | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
   | uv run fetch-one
