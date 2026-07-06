@@ -15,11 +15,16 @@ import pytest
 
 from paper_degist.discover import (
     Candidate,
+    MissingKeyError,
+    _build_registry,
     discover,
     parse_arxiv_atom,
     parse_openalex_json,
     parse_s2_json,
+    parse_serpapi_scholar,
+    parse_serpapi_scholar_author,
     reconstruct_abstract,
+    route_serpapi_response,
 )
 
 SAMPLES = Path(__file__).parent / "samples"
@@ -348,6 +353,162 @@ def test_record_includes_tldr_when_present():
     assert "tldr" in first.to_record()
 
 
+# --- SerpAPI Google Scholar organic parser (US27 AC1/AC2, rule 02) ---
+
+
+def _scholar_data() -> dict:
+    return json.loads((SAMPLES / "serpapi-scholar-rag-for-code.json").read_text(encoding="utf-8"))
+
+
+def test_scholar_parses_one_candidate_per_organic_result():
+    assert len(parse_serpapi_scholar(_scholar_data())) == 2
+
+
+def test_scholar_extracts_the_title():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.title == "Retrieval-augmented generation for code summarization"
+
+
+def test_scholar_abstract_is_the_snippet_fragment():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.abstract.startswith("We augment a code language model")
+
+
+def test_scholar_url_is_the_result_link():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.url == "https://openreview.net/forum?id=zv-typ1gPxA"
+
+
+def test_scholar_source_id_is_the_result_id():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.source_id == "hK9c2mQ8x1wJ"
+
+
+def test_scholar_tags_the_source():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.source == "scholar"
+
+
+def test_scholar_extracts_author_names_from_publication_info():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.authors == ["Md Rizwan Parvez", "Wasi Uddin Ahmad"]
+
+
+def test_scholar_extracts_the_cited_by_total():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.cited_by == 214
+
+
+def test_scholar_carries_the_pdf_url_from_an_open_resource():
+    first = parse_serpapi_scholar(_scholar_data())[0]
+    assert first.pdf_url == "https://arxiv.org/pdf/2108.11601"
+
+
+def test_scholar_pdf_url_is_none_when_no_open_resource():
+    second = parse_serpapi_scholar(_scholar_data())[1]
+    assert second.pdf_url is None
+
+
+def test_scholar_still_emits_a_hit_with_no_resource():
+    second = parse_serpapi_scholar(_scholar_data())[1]
+    assert second.title == "A survey of retrieval-augmented code generation"
+
+
+def test_scholar_tolerates_missing_publication_info_authors():
+    second = parse_serpapi_scholar(_scholar_data())[1]
+    assert second.authors == []
+
+
+def test_scholar_empty_organic_results_yields_no_candidates():
+    assert parse_serpapi_scholar({"organic_results": []}) == []
+
+
+# --- SerpAPI Google Scholar author parser (US27 AC3, rule 02) ---
+
+
+def _scholar_author_data() -> dict:
+    return json.loads(
+        (SAMPLES / "serpapi-scholar-author-bibliometrics.json").read_text(encoding="utf-8")
+    )
+
+
+def test_scholar_author_parses_one_candidate_per_article():
+    assert len(parse_serpapi_scholar_author(_scholar_author_data())) == 2
+
+
+def test_scholar_author_extracts_the_title():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.title == "Deep learning"
+
+
+def test_scholar_author_url_is_the_citation_link():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.url.startswith("https://scholar.google.com/citations?view_op=view_citation")
+
+
+def test_scholar_author_source_id_is_the_citation_id():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.source_id == "JicYPdAAAAAJ:xY1nfvUcv0IC"
+
+
+def test_scholar_author_splits_the_comma_separated_authors():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.authors == ["Y LeCun", "Y Bengio", "G Hinton"]
+
+
+def test_scholar_author_published_is_the_year():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.published == "2015"
+
+
+def test_scholar_author_extracts_the_cited_by_value():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.cited_by == 98213
+
+
+def test_scholar_author_tags_the_source():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.source == "scholar-author"
+
+
+def test_scholar_author_carries_no_abstract():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.abstract is None
+
+
+def test_scholar_author_record_flags_abstract_present_false():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert first.to_record()["abstract_present"] is False
+
+
+def test_scholar_author_record_omits_pdf_url():
+    first = parse_serpapi_scholar_author(_scholar_author_data())[0]
+    assert "pdf_url" not in first.to_record()
+
+
+def test_scholar_author_empty_articles_yields_no_candidates():
+    assert parse_serpapi_scholar_author({"articles": []}) == []
+
+
+# --- SerpAPI's 200-with-error quirk routes to empty vs api-error (US27 AC5) ---
+
+
+def test_serpapi_no_results_error_routes_to_empty_list():
+    data = {"error": "Google Scholar hasn't returned any results for this query."}
+    assert route_serpapi_response(data, parse_serpapi_scholar) == []
+
+
+def test_serpapi_other_error_raises_for_api_error():
+    data = {"error": "Invalid API key. Your API key should be here: https://serpapi.com."}
+    with pytest.raises(Exception):
+        route_serpapi_response(data, parse_serpapi_scholar)
+
+
+def test_serpapi_clean_body_delegates_to_the_parser():
+    data = _scholar_data()
+    assert len(route_serpapi_response(data, parse_serpapi_scholar)) == 2
+
+
 # --- orchestrator: shared arrange/act (rule 05 — factor setup into helpers) ---
 
 
@@ -522,3 +683,48 @@ def test_empty_and_api_error_reasons_are_distinct(tmp_path: Path):
 def test_api_error_does_not_crash_and_records_the_exception(tmp_path: Path):
     _, manifest = _run(tmp_path, search=_error_search(ValueError("bad gateway")))
     assert "bad gateway" in _only_record(manifest)["reason"]
+
+
+# --- US27 AC4: a missing SerpAPI key quarantines offline with a DISTINCT reason ---
+
+
+def _missing_key_search():
+    """A Search that raises MissingKeyError before any network call (no key)."""
+
+    def search(query):
+        raise MissingKeyError("no SerpAPI key (--serpapi-key / SERPAPI_API_KEY)")
+
+    return search
+
+
+def test_missing_key_returns_none(tmp_path: Path):
+    result, _ = _run(tmp_path, source="scholar", search=_missing_key_search())
+    assert result is None
+
+
+def test_missing_key_reason_is_missing_key(tmp_path: Path):
+    _, manifest = _run(tmp_path, source="scholar", search=_missing_key_search())
+    assert "missing-key" in _only_record(manifest)["reason"]
+
+
+def test_missing_key_and_api_error_reasons_are_distinct(tmp_path: Path):
+    _, key_manifest = _run(tmp_path, source="scholar", search=_missing_key_search())
+    _, error_manifest = _run(tmp_path / "e", source="scholar", search=_error_search())
+    assert _only_record(key_manifest)["reason"] != _only_record(error_manifest)["reason"]
+
+
+# --- US27: the two SerpAPI sources join the registry (rule 02 — one entry each) ---
+
+
+def test_registry_includes_the_scholar_source():
+    assert "scholar" in _build_registry(25, None, None, None)
+
+
+def test_registry_includes_the_scholar_author_source():
+    assert "scholar-author" in _build_registry(25, None, None, None)
+
+
+def test_registry_scholar_without_a_key_raises_missing_key():
+    scholar = _build_registry(25, None, None, None)["scholar"]
+    with pytest.raises(MissingKeyError):
+        scholar("retrieval-augmented generation for code")

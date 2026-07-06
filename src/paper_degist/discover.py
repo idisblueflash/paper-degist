@@ -57,6 +57,16 @@ OPENALEX_ENDPOINT = "https://api.openalex.org/works"
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
 
+class MissingKeyError(Exception):
+    """A source needs an API key that was not supplied (US27 AC4).
+
+    Raised by a key-gated adapter (SerpAPI's ``scholar`` / ``scholar-author``)
+    **before it touches the network**, so ``discover`` can quarantine it with a
+    distinct ``missing-key`` reason — classified offline like the source name,
+    never confused with a live ``api-error``.
+    """
+
+
 @dataclass(frozen=True)
 class Candidate:
     """One discovered paper in the common schema, source-agnostic.
@@ -306,6 +316,150 @@ def parse_openalex_json(data: dict) -> list[Candidate]:
     return candidates
 
 
+def _scholar_pdf_url(item: dict) -> Optional[str]:
+    """The directly fetchable open PDF from a Scholar organic hit (US27 AC2).
+
+    Scholar lists open copies under ``resources[]``, each with a ``file_format``
+    (``PDF``/``HTML``) and a ``link``. Return the first ``PDF`` resource's link —
+    directly fetchable by ``fetch-one`` — or ``None`` when the hit has no open PDF
+    (still emitted, just without a ``pdf_url``).
+    """
+    for resource in item.get("resources") or []:
+        if isinstance(resource, dict) and resource.get("file_format") == "PDF" and resource.get("link"):
+            return resource["link"]
+    return None
+
+
+def parse_serpapi_scholar(data: dict) -> list[Candidate]:
+    """Map a SerpAPI ``google_scholar`` (organic) response into Candidates (rule 02).
+
+    Scholar's fixed quirks, encoded here once: each ``organic_results`` item
+    carries a ``snippet`` (an abstract **fragment** with ``…`` ellipses, kept as
+    the ``abstract`` — US27 AC1), its stable ``result_id`` (the ``source_id``), a
+    ``link`` (the landing ``url``), an ``inline_links.cited_by.total`` count, and —
+    when Scholar has an open copy — a ``resources[]`` PDF whose ``link`` becomes
+    ``pdf_url`` (AC2). Author names come from ``publication_info.authors[]`` when
+    present (Scholar often gives only a summary string, so an empty list is fine).
+    A response with no ``organic_results`` (a zero-result query) yields ``[]``.
+    """
+    candidates: list[Candidate] = []
+    for item in data.get("organic_results") or []:
+        authors = [
+            a["name"]
+            for a in ((item.get("publication_info") or {}).get("authors") or [])
+            if isinstance(a, dict) and a.get("name")
+        ]
+        cited_by = ((item.get("inline_links") or {}).get("cited_by") or {}).get("total")
+        candidates.append(
+            Candidate(
+                title=item.get("title") or "",
+                authors=authors,
+                abstract=item.get("snippet"),
+                url=item.get("link") or "",
+                published=None,
+                source="scholar",
+                source_id=item.get("result_id") or "",
+                pdf_url=_scholar_pdf_url(item),
+                cited_by=cited_by,
+            )
+        )
+    return candidates
+
+
+def parse_serpapi_scholar_author(data: dict) -> list[Candidate]:
+    """Map a SerpAPI ``google_scholar_author`` response into Candidates (rule 02).
+
+    The author engine is **bibliographic only** (US27 AC3): each ``articles`` item
+    carries a ``title``, a citation ``link`` (the ``url``), a ``citation_id`` (the
+    ``source_id``), a comma-separated ``authors`` string (split into names), a
+    ``year`` (the ``published``), and a ``cited_by.value`` count — but **no
+    abstract and no PDF** (confirmed live). So ``abstract`` stays ``None`` (flagged
+    ``abstract_present: false``) and ``pdf_url`` is never set. An author with no
+    ``articles`` yields ``[]``.
+    """
+    candidates: list[Candidate] = []
+    for item in data.get("articles") or []:
+        authors = [name.strip() for name in (item.get("authors") or "").split(",") if name.strip()]
+        cited_by = (item.get("cited_by") or {}).get("value")
+        candidates.append(
+            Candidate(
+                title=item.get("title") or "",
+                authors=authors,
+                abstract=None,
+                url=item.get("link") or "",
+                published=item.get("year") or None,
+                source="scholar-author",
+                source_id=item.get("citation_id") or "",
+                cited_by=cited_by,
+            )
+        )
+    return candidates
+
+
+# SerpAPI signals "no hits" not with an empty body but with a 200 whose ``error``
+# field carries this phrase (US27 AC5) — routed to an empty result, distinct from a
+# real API error (a bad key / other ``error``, which raises → api-error).
+SERPAPI_NO_RESULTS = "hasn't returned any results"
+
+SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
+
+
+def route_serpapi_response(data: dict, parser: Callable[[dict], list[Candidate]]) -> list[Candidate]:
+    """Route a SerpAPI 200 body to the parser, an empty result, or an error (AC5).
+
+    SerpAPI answers a zero-result query with HTTP 200 whose body carries an
+    ``error`` field (not an empty result set), and reports a bad key / other
+    failure the same way. Classify on that field (rule 02): a *no-results* error →
+    ``[]`` (quarantined as empty-result upstream); any other ``error`` → raise (so
+    ``discover`` quarantines it as a **distinct** api-error); no ``error`` → parse.
+    """
+    error = data.get("error")
+    if error:
+        if SERPAPI_NO_RESULTS in error.lower():
+            return []
+        raise RuntimeError(f"SerpAPI error: {error}")
+    return parser(data)
+
+
+def _serpapi_search(
+    engine: str,
+    query_param: str,
+    parser: Callable[[dict], list[Candidate]],
+    *,
+    max_results: int,
+    api_key: Optional[str],
+) -> Search:
+    """Build a SerpAPI adapter (``scholar`` organic / ``scholar-author``), US27.
+
+    Both engines are one endpoint (``engine=…``) and **require an API key**
+    (US27 AC4): with none, raise ``MissingKeyError`` **before any network call**,
+    so ``discover`` quarantines it offline (missing-key), classified like the
+    source name. With a key, issue the search and route the 200 body through
+    ``route_serpapi_response`` (AC5). ``query_param`` is the engine's query key
+    (``q`` for organic, ``author_id`` for the author engine).
+    """
+
+    def search(query: str) -> list[Candidate]:
+        if not api_key:
+            raise MissingKeyError(
+                "no SerpAPI key (--serpapi-key / SERPAPI_API_KEY) for source "
+                f"{engine!r}"
+            )
+        import httpx
+
+        resp = httpx.get(
+            SERPAPI_ENDPOINT,
+            params={"engine": engine, query_param: query, "num": max_results, "api_key": api_key},
+            headers={"User-Agent": "paper-degist/0.1 (https://github.com/idisblueflash/paper-degist)"},
+            timeout=30.0,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        return route_serpapi_response(resp.json(), parser)
+
+    return search
+
+
 def _arxiv_search(max_results: int) -> Search:
     """Build the real arXiv adapter: query the Atom API, parse into Candidates."""
 
@@ -408,7 +562,9 @@ def discover(
 
     Classify-then-dispatch (rule 02). Layer 1 — on the source: not a known
     adapter → quarantine (unknown source) **without touching the network** and
-    return ``None`` (AC5). Layer 2 — on the transport result: an API/network
+    return ``None`` (AC5). A key-gated adapter with no key raises
+    ``MissingKeyError`` before the network → quarantine (missing-key, a distinct
+    reason — US27 AC4). Layer 2 — on the transport result: an API/network
     error → quarantine (api-error); an empty result → quarantine (empty-result,
     a **distinct** reason); hits → append a ``discover`` success record with the
     result count and return one record dict per hit (AC1–AC4). Never crashes,
@@ -428,6 +584,14 @@ def discover(
 
     try:
         candidates = search(query)
+    except MissingKeyError as exc:  # key-gated source, no key — offline, distinct
+        _quarantine(
+            manifest_path,
+            source=source,
+            query=query,
+            reason=f"missing-key: {exc}",
+        )
+        return None
     except Exception as exc:  # API error / rate-limit — quarantine, do not crash
         _quarantine(
             manifest_path,
@@ -467,13 +631,24 @@ app = typer.Typer(
 
 
 def _build_registry(
-    max_results: int, s2_api_key: Optional[str], email: Optional[str]
+    max_results: int,
+    s2_api_key: Optional[str],
+    email: Optional[str],
+    serpapi_api_key: Optional[str],
 ) -> dict[str, Search]:
     """The source registry (rule 02: a new source is one entry, not a branch)."""
     return {
         "arxiv": _arxiv_search(max_results),
         "s2": _s2_search(max_results, s2_api_key),
         "openalex": _openalex_search(max_results, email),
+        "scholar": _serpapi_search(
+            "google_scholar", "q", parse_serpapi_scholar,
+            max_results=max_results, api_key=serpapi_api_key,
+        ),
+        "scholar-author": _serpapi_search(
+            "google_scholar_author", "author_id", parse_serpapi_scholar_author,
+            max_results=max_results, api_key=serpapi_api_key,
+        ),
     }
 
 
@@ -482,7 +657,9 @@ def run(
     query: Annotated[str, typer.Argument(help="the topic query to search for")],
     source: Annotated[
         str,
-        typer.Option(help="which scholarly API to search: arxiv, s2, or openalex"),
+        typer.Option(
+            help="which scholarly API to search: arxiv, s2, openalex, scholar, or scholar-author"
+        ),
     ] = "arxiv",
     max_results: Annotated[
         int,
@@ -497,6 +674,13 @@ def run(
         typer.Option(
             envvar="OPENALEX_EMAIL",
             help="contact email for OpenAlex's faster polite pool (keyless without it)",
+        ),
+    ] = None,
+    serpapi_key: Annotated[
+        Optional[str],
+        typer.Option(
+            envvar="SERPAPI_API_KEY",
+            help="SerpAPI key — required for --source scholar / scholar-author",
         ),
     ] = None,
     manifest: Annotated[
@@ -518,7 +702,7 @@ def run(
         query,
         source,
         manifest_path=manifest,
-        registry=_build_registry(max_results, s2_api_key, email),
+        registry=_build_registry(max_results, s2_api_key, email, serpapi_key),
     )
     if records is None:
         # Quarantine is an expected outcome, not a crash: note it and exit clean.

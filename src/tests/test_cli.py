@@ -707,7 +707,7 @@ def test_discover_cli_hits_print_one_jsonl_line_per_candidate(tmp_path: Path, mo
         source_id="2101.03961v1",
     )
     monkeypatch.setattr(
-        discover_mod, "_build_registry", lambda mr, key, email: {"arxiv": lambda q: [candidate]}
+        discover_mod, "_build_registry", lambda mr, key, email, serp: {"arxiv": lambda q: [candidate]}
     )
     result = runner.invoke(
         discover_app,
@@ -715,6 +715,35 @@ def test_discover_cli_hits_print_one_jsonl_line_per_candidate(tmp_path: Path, mo
     )
     line = result.stdout.strip()
     assert json.loads(line)["title"] == "Switch Transformers"
+
+
+# --- discover scholar CLI: no SerpAPI key quarantines offline (US27 AC4) ---
+
+
+def _discover_scholar_no_key(tmp_path: Path, monkeypatch):
+    """Run `discover --source scholar` with no key; return (result, manifest).
+
+    The missing-key branch raises before any network call (MissingKeyError), so
+    the real registry runs offline — no injected adapter needed.
+    """
+    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
+    manifest = tmp_path / "manifest.jsonl"
+    result = runner.invoke(
+        discover_app,
+        ["retrieval-augmented generation for code", "--source", "scholar", "--manifest", str(manifest)],
+    )
+    return result, manifest
+
+
+def test_discover_cli_scholar_no_key_exits_zero(tmp_path: Path, monkeypatch):
+    result, _ = _discover_scholar_no_key(tmp_path, monkeypatch)
+    assert result.exit_code == 0
+
+
+def test_discover_cli_scholar_no_key_quarantines_missing_key(tmp_path: Path, monkeypatch):
+    _, manifest = _discover_scholar_no_key(tmp_path, monkeypatch)
+    record = json.loads(manifest.read_text(encoding="utf-8").splitlines()[0])
+    assert "missing-key" in record["reason"]
 
 
 # --- discover openalex CLI: a missing contact email warns, does not block (US29 AC4) ---
@@ -728,7 +757,7 @@ def _discover_openalex_no_email(tmp_path: Path, monkeypatch, search):
     """
     monkeypatch.delenv("OPENALEX_EMAIL", raising=False)
     monkeypatch.setattr(
-        discover_mod, "_build_registry", lambda mr, key, email: {"openalex": search}
+        discover_mod, "_build_registry", lambda mr, key, email, serp: {"openalex": search}
     )
     return runner.invoke(
         discover_app,
@@ -761,7 +790,7 @@ def test_discover_openalex_missing_email_still_runs(tmp_path: Path, monkeypatch)
 def test_discover_openalex_with_email_does_not_warn(tmp_path: Path, monkeypatch):
     # The polite-pool warning is conditional: supplying --email suppresses it.
     monkeypatch.setattr(
-        discover_mod, "_build_registry", lambda mr, key, email: {"openalex": lambda q: []}
+        discover_mod, "_build_registry", lambda mr, key, email, serp: {"openalex": lambda q: []}
     )
     result = runner.invoke(
         discover_app,

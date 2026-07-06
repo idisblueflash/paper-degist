@@ -1,0 +1,45 @@
+{
+  "search_metadata": {
+    "id": "6650a1f2c0a1b2c3d4e5f6a7",
+    "status": "Success"
+  },
+  "search_parameters": {
+    "engine": "google_scholar",
+    "q": "retrieval-augmented generation for code"
+  },
+  "organic_results": [
+    {
+      "position": 0,
+      "title": "Retrieval-augmented generation for code summarization",
+      "result_id": "hK9c2mQ8x1wJ",
+      "link": "https://openreview.net/forum?id=zv-typ1gPxA",
+      "snippet": "We augment a code language model with a retriever over a corpus of functions, so that generation is grounded in retrieved exemplars rather than …",
+      "publication_info": {
+        "summary": "S Parvez, W Ahmad, S Chakraborty - arXiv, 2021 - openreview.net",
+        "authors": [
+          {"name": "Md Rizwan Parvez", "author_id": "hK9c2mQ8x1wJ"},
+          {"name": "Wasi Uddin Ahmad", "author_id": "9c2mQ8x1wJhK"}
+        ]
+      },
+      "resources": [
+        {"title": "arxiv.org", "file_format": "PDF", "link": "https://arxiv.org/pdf/2108.11601"}
+      ],
+      "inline_links": {
+        "cited_by": {"total": 214, "link": "https://scholar.google.com/scholar?cites=123"}
+      }
+    },
+    {
+      "position": 1,
+      "title": "A survey of retrieval-augmented code generation",
+      "result_id": "pL4d7nR2y5zK",
+      "link": "https://dl.acm.org/doi/10.1145/3626235",
+      "snippet": "This survey reviews retrieval-augmented approaches to program synthesis and code completion, categorizing retrievers, fusion mechanisms, and …",
+      "publication_info": {
+        "summary": "H Li, T Zhang - ACM Computing Surveys, 2024 - dl.acm.org"
+      },
+      "inline_links": {
+        "cited_by": {"total": 37, "link": "https://scholar.google.com/scholar?cites=456"}
+      }
+    }
+  ]
+}

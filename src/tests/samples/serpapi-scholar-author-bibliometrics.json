@@ -1,0 +1,41 @@
+{
+  "search_metadata": {
+    "id": "77a2b3c4d5e6f7a8b9c0d1e2",
+    "status": "Success"
+  },
+  "search_parameters": {
+    "engine": "google_scholar_author",
+    "author_id": "JicYPdAAAAAJ"
+  },
+  "author": {
+    "name": "Geoffrey Hinton",
+    "affiliations": "Emeritus Professor, University of Toronto"
+  },
+  "articles": [
+    {
+      "title": "Deep learning",
+      "link": "https://scholar.google.com/citations?view_op=view_citation&hl=en&user=JicYPdAAAAAJ&citation_for_view=JicYPdAAAAAJ:xY1nfvUcv0IC",
+      "citation_id": "JicYPdAAAAAJ:xY1nfvUcv0IC",
+      "authors": "Y LeCun, Y Bengio, G Hinton",
+      "publication": "Nature 521 (7553), 436-444, 2015",
+      "cited_by": {
+        "value": 98213,
+        "link": "https://scholar.google.com/scholar?oi=bibs&hl=en&cites=111",
+        "serpapi_link": "https://serpapi.com/search.json?cites=111&engine=google_scholar"
+      },
+      "year": "2015"
+    },
+    {
+      "title": "ImageNet classification with deep convolutional neural networks",
+      "link": "https://scholar.google.com/citations?view_op=view_citation&hl=en&user=JicYPdAAAAAJ&citation_for_view=JicYPdAAAAAJ:qUcmZB5y_30C",
+      "citation_id": "JicYPdAAAAAJ:qUcmZB5y_30C",
+      "authors": "A Krizhevsky, I Sutskever, GE Hinton",
+      "publication": "Advances in neural information processing systems 25, 2012",
+      "cited_by": {
+        "value": 132456,
+        "link": "https://scholar.google.com/scholar?oi=bibs&hl=en&cites=222"
+      },
+      "year": "2012"
+    }
+  ]
+}
