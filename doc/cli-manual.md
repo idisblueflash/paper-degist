@@ -1076,25 +1076,37 @@ narrowing is US26's job. Sources are a **registry**, not a per-source branch
 (rule 02): a new API is one adapter entry.
 
 ```
-uv run discover <query> [--source arxiv|s2] [--max-results 25]
-                [--s2-api-key KEY] [--manifest manifest.jsonl]
+uv run discover <query> [--source arxiv|s2|openalex] [--max-results 25]
+                [--s2-api-key KEY] [--email you@example.com]
+                [--manifest manifest.jsonl]
 ```
 
 - **Argument**: the topic `query` (quote it — it is one string).
 - **`--source`** selects the adapter: `arxiv` (default — no key, an Atom feed,
-  100 % abstract-present) or `s2` (Semantic Scholar — a JSON API that adds a
-  `tldr` one-line summary US26 can pre-filter on). The phase-2 bake-off made
-  arXiv the default: keyless and reliable, where S2's free tier **without a key
-  is rate-limited to 429** (see the story). An unknown source (e.g. `pubmed`)
-  quarantines **offline**, without touching the network.
+  100 % abstract-present), `s2` (Semantic Scholar — a JSON API that adds a
+  `tldr` one-line summary US26 can pre-filter on), or `openalex` (US29 — keyless,
+  cross-field/CC0, and carries a directly fetchable OA `pdf_url` when one exists).
+  The phase-2 bake-off made arXiv the default: keyless and reliable, where S2's
+  free tier **without a key is rate-limited to 429** (see the story). An unknown
+  source (e.g. `pubmed`) quarantines **offline**, without touching the network.
 - **Options**: `--max-results` (cap on the first page requested; default `25`),
   `--s2-api-key` (optional Semantic Scholar key, or the `S2_API_KEY` env var —
-  raises the rate limit), `--manifest`.
+  raises the rate limit), `--email` (contact email for OpenAlex's faster **polite
+  pool**, or the `OPENALEX_EMAIL` env var — see below), `--manifest`.
+- **`openalex` specifics** (US29): OpenAlex is **keyless**. `--email` /
+  `OPENALEX_EMAIL` is *politeness*, not access — supplying it uses the faster
+  polite pool; **omitting it still runs** on the common pool and only **warns**
+  (contrast S2, where a missing key means a 429). The adapter reconstructs the
+  abstract from OpenAlex's `abstract_inverted_index` (a `{token: [positions]}`
+  map, never plain text), sorts by `cited_by_count:desc` (most-cited first), and
+  emits two extra fields when the record carries them: `pdf_url` (an open-access
+  copy, straight into `fetch-one`) and `cited_by`.
 - **Output**: one JSONL record per hit on stdout, in a **common schema** across
   sources — `title`, `authors`, `abstract`, `abstract_present`, `url`,
-  `published`, `source`, `source_id`, plus `doi` and `tldr` **only when the
-  record carries them**. A run also appends a `discover` provenance record to the
-  manifest (`stage`, `source`, `query`, `result_count`).
+  `published`, `source`, `source_id`, plus `doi`, `tldr`, `pdf_url` and
+  `cited_by` **only when the record carries them**. A run also appends a
+  `discover` provenance record to the manifest (`stage`, `source`, `query`,
+  `result_count`).
 - **No abstract is kept, not dropped** (AC3). A hit with no abstract is still
   emitted with `abstract: null` and `abstract_present: false`, so US26 can drop
   it cheaply — discovery casts wide; filtering is downstream.
@@ -1124,6 +1136,29 @@ uv run discover "graph neural network expressivity" --source arxiv \
 
 # Semantic Scholar (needs a key for a usable rate) — carries a tldr signal
 uv run discover "CRISPR base editing off-target effects" --source s2 --s2-api-key "$S2_API_KEY"
+
+# OpenAlex (keyless, CC0) — reconstructs the inverted-index abstract, sorts by
+# citations, and carries an OA pdf_url up front. --email uses the polite pool.
+uv run discover "graph neural networks for molecular property prediction" \
+  --source openalex --email you@example.com --max-results 5
+#   -> {"title":"Neural Message Passing for Quantum Chemistry","authors":[…],
+#       "abstract":"Supervised learning on molecules …","abstract_present":true,
+#       "url":"https://doi.org/10.48550/arxiv.1704.01212","published":"2017-04-04",
+#       "source":"openalex","source_id":"W2606780347","doi":"10.48550/arxiv.1704.01212",
+#       "pdf_url":"https://arxiv.org/pdf/1704.01212","cited_by":3010}    (× --max-results)
+
+# The OA pdf_url short-circuits resolve-oa — fetch the open copy directly
+uv run discover "neural message passing for quantum chemistry" --source openalex \
+  --email you@example.com \
+  | python3 -c 'import sys,json
+for l in sys.stdin:
+    r=json.loads(l)
+    if r.get("pdf_url"): print(r["pdf_url"]); break' \
+  | xargs -r -I{} uv run fetch-one "{}"
+
+# OpenAlex with no email still runs (common pool) — only warns
+uv run discover "sparse mixture-of-experts routing" --source openalex
+#   -> stderr: warning: no OpenAlex contact email (--email / OPENALEX_EMAIL); …
 
 # An unknown source quarantines without touching the network
 uv run discover "single-cell RNA sequencing" --source pubmed

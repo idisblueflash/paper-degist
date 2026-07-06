@@ -327,6 +327,8 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the first paper wrongly reported closed that has an OA copy
   elsewhere. Add an OpenAlex/CORE fallback lookup (same injected shape) and take
   the union of OA locations, driven by a failing test.
+- **Story:** specced as [US 30](user-stories/us-30-openalex-oa-fallback.md)
+  (OpenAlex fallback; CORE deferred as a later third index).
 - **Status:** OPEN.
 
 ## resolve_oa — "OA but no PDF link" shares the "closed access" reason
@@ -1300,6 +1302,45 @@ location, the case not yet handled, and the trigger that should make us fix it.
   resolve-oa / score-ocr per-item rollup deferrals.
 - **Status:** OPEN (deliberate — append-only manifest, consistent with the
   pipeline).
+
+## discover — OpenAlex `abstract_inverted_index` can encode page furniture, not the abstract (US29)
+
+- **Where:** `src/paper_degist/discover.py::reconstruct_abstract` /
+  `parse_openalex_json`; surfaced by the US29 real E2E.
+- **Case not handled:** `reconstruct_abstract` faithfully rebuilds whatever
+  OpenAlex ships in `abstract_inverted_index`. For some publisher records the
+  index is not an abstract but the journal *page furniture* — e.g. the top gnn
+  hit "On the Construction and Comparison of Difference Schemes" (SIAM,
+  `10.1137/0705041`) reconstructs to `"Previous article Next article … PDFBibTex
+  … [1] J. Barkley Rosser, A Runge-Kutta for all seasons …"` (nav chrome + the
+  reference list), with `abstract_present: true`. The reconstruction is correct;
+  the *source* index is polluted, so a downstream reader sees noise where it
+  expects an abstract. arXiv/OA-native records (Neural Message Passing) are clean.
+- **Trigger to fix:** the first time US26's abstract-similarity filter is thrown
+  off by a boilerplate "abstract". Add a heuristic that detects page-furniture
+  indexes (leading `Previous article` / high reference-marker density) and blanks
+  the abstract to `None` (`abstract_present: false`) so US26 drops it cheaply —
+  driven by a captured fixture of such a record. It is upstream data quality, not
+  a reconstruction bug, so the fix is a filter, not a change to the ordering.
+- **Status:** OPEN (surfaced by the US29 E2E; reconstruction is faithful, the
+  source index quality is the deferred concern).
+
+## discover — OpenAlex returns near-duplicate works (preprint vs published) in one page (US29)
+
+- **Where:** `src/paper_degist/discover.py::parse_openalex_json` (one Candidate
+  per `results[]` entry); surfaced by the US29 real E2E.
+- **Case not handled:** OpenAlex indexes a preprint and its published version as
+  **separate works** under distinct `W…` ids, so one page can carry the same
+  paper twice — the gnn E2E returned "Neural Message Passing for Quantum
+  Chemistry" as both `W2606780347` and `W2952254971`. discover emits both (US25's
+  wide-net contract — it does not judge or dedup); collapsing them is US14's
+  DOI-normalization territory and the deferred query-both-and-merge driver, not a
+  change to this adapter.
+- **Trigger to fix:** when the duplicate works inflate a candidate list a human
+  reads. Dedup by normalized DOI (then title fallback) in the merge driver
+  (US14 + the US25 fan-out deferral), driven by a test — never inside the parser,
+  which stays a faithful 1:1 map of the source.
+- **Status:** OPEN (deliberate — discovery casts wide; dedup is downstream).
 
 ## ocr_batch — page discovery only matched `p*.png`, skipping `.jpg` gold pages (US28)
 

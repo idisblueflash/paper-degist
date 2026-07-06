@@ -42,3 +42,23 @@ Feature: US25 — discover finds candidate papers by topic from a scholarly API
     When discover searches the "pubmed" source
     Then the query is quarantined with a "unknown source" reason
     And the scholarly API is not contacted
+
+  # --- US29: the OpenAlex adapter (keyless, mailto polite pool) ---
+
+  Scenario: OpenAlex reconstructs the abstract from its inverted index (US29 AC2)
+    Given a topic query "graph neural networks for molecular property prediction"
+    And an "openalex" work whose abstract arrives as an inverted index
+    When discover searches the "openalex" source
+    Then the emitted record abstract reads "Graph neural networks predict molecular properties"
+
+  Scenario: An OpenAlex hit carries its open-access pdf_url up front (US29 AC3)
+    Given a topic query "neural message passing for quantum chemistry"
+    And an "openalex" source whose candidate carries a pdf_url "https://arxiv.org/pdf/1704.01212"
+    When discover searches the "openalex" source
+    Then the emitted record carries the pdf_url "https://arxiv.org/pdf/1704.01212"
+
+  Scenario: OpenAlex with no contact email warns but still searches (US29 AC4)
+    Given a topic query "sparse mixture-of-experts routing"
+    When discover runs the openalex CLI with no contact email
+    Then a polite-pool warning is emitted
+    And the openalex search is still run
