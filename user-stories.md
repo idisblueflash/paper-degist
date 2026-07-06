@@ -43,6 +43,7 @@ timeless spec and carry no status marker.
 | [US 28](user-stories/us-28-batch-ocr-page-grid.md)           | Batch-OCR a page directory across the model registry                   | `ocr-batch`       | ✅ Done                            |
 | [US 29](user-stories/us-29-discover-openalex.md)             | Discover candidates by topic via OpenAlex (keyless + mailto)           | `discover`        | ✅ Done                            |
 | [US 30](user-stories/us-30-openalex-oa-fallback.md)          | Cross-check open access against OpenAlex when Unpaywall says closed    | `resolve-oa`      | ✅ Done                            |
+| [US 31](user-stories/us-31-discover-batch-merge.md)          | Fan a topic across queries and sources, merge the union                | `discover-batch`  | —                                 |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
