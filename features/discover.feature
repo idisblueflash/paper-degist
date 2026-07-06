@@ -62,3 +62,29 @@ Feature: US25 — discover finds candidate papers by topic from a scholarly API
     When discover runs the openalex CLI with no contact email
     Then a polite-pool warning is emitted
     And the openalex search is still run
+
+  # --- US27: the two SerpAPI Google Scholar sources ---
+
+  Scenario: A Scholar organic hit carries its open-access pdf_url up front (US27 AC2)
+    Given a topic query "retrieval-augmented generation for code"
+    And a "scholar" organic hit whose open resource is a pdf "https://arxiv.org/pdf/2108.11601"
+    When discover searches the "scholar" source
+    Then the emitted record carries the pdf_url "https://arxiv.org/pdf/2108.11601"
+
+  Scenario: A Scholar organic hit carries its cited_by count (US27 AC1)
+    Given a topic query "sparse retrieval for open-domain question answering"
+    And a "scholar" organic hit cited 214 times
+    When discover searches the "scholar" source
+    Then the emitted record carries the cited_by count 214
+
+  Scenario: A Scholar author article is bibliographic with a null abstract (US27 AC3)
+    Given an author id "JicYPdAAAAAJ"
+    And a "scholar-author" profile with one bibliographic article
+    When discover searches the "scholar-author" source
+    Then the emitted record has a null abstract flagged abstract_present false
+
+  Scenario: A Scholar source with no SerpAPI key is quarantined offline (US27 AC4)
+    Given a topic query "diffusion models for protein backbone generation"
+    And a "scholar" source with no SerpAPI key
+    When discover searches the "scholar" source
+    Then the query is quarantined with a "missing-key" reason

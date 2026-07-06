@@ -1076,23 +1076,30 @@ narrowing is US26's job. Sources are a **registry**, not a per-source branch
 (rule 02): a new API is one adapter entry.
 
 ```
-uv run discover <query> [--source arxiv|s2|openalex] [--max-results 25]
-                [--s2-api-key KEY] [--email you@example.com]
-                [--manifest manifest.jsonl]
+uv run discover <query> [--source arxiv|s2|openalex|scholar|scholar-author]
+                [--max-results 25] [--s2-api-key KEY] [--email you@example.com]
+                [--serpapi-key KEY] [--manifest manifest.jsonl]
 ```
 
-- **Argument**: the topic `query` (quote it — it is one string).
+- **Argument**: the topic `query` (quote it — it is one string). For
+  `--source scholar-author` the query is instead a Google Scholar **author id**
+  (e.g. `JicYPdAAAAAJ`).
 - **`--source`** selects the adapter: `arxiv` (default — no key, an Atom feed,
   100 % abstract-present), `s2` (Semantic Scholar — a JSON API that adds a
-  `tldr` one-line summary US26 can pre-filter on), or `openalex` (US29 — keyless,
-  cross-field/CC0, and carries a directly fetchable OA `pdf_url` when one exists).
-  The phase-2 bake-off made arXiv the default: keyless and reliable, where S2's
-  free tier **without a key is rate-limited to 429** (see the story). An unknown
-  source (e.g. `pubmed`) quarantines **offline**, without touching the network.
+  `tldr` one-line summary US26 can pre-filter on), `openalex` (US29 — keyless,
+  cross-field/CC0, and carries a directly fetchable OA `pdf_url` when one exists),
+  `scholar` (US27 — Google Scholar **topic** search via SerpAPI, with a direct
+  PDF link when Scholar has an open copy), or `scholar-author` (US27 — an
+  author's body of work via SerpAPI, bibliographic only). The phase-2 bake-off
+  made arXiv the default: keyless and reliable, where S2's free tier **without a
+  key is rate-limited to 429** (see the story). An unknown source (e.g. `pubmed`)
+  quarantines **offline**, without touching the network.
 - **Options**: `--max-results` (cap on the first page requested; default `25`),
   `--s2-api-key` (optional Semantic Scholar key, or the `S2_API_KEY` env var —
   raises the rate limit), `--email` (contact email for OpenAlex's faster **polite
-  pool**, or the `OPENALEX_EMAIL` env var — see below), `--manifest`.
+  pool**, or the `OPENALEX_EMAIL` env var — see below), `--serpapi-key` (**required**
+  for `scholar` / `scholar-author`, or the `SERPAPI_API_KEY` env var — see below),
+  `--manifest`.
 - **`openalex` specifics** (US29): OpenAlex is **keyless**. `--email` /
   `OPENALEX_EMAIL` is *politeness*, not access — supplying it uses the faster
   polite pool; **omitting it still runs** on the common pool and only **warns**
@@ -1101,6 +1108,18 @@ uv run discover <query> [--source arxiv|s2|openalex] [--max-results 25]
   map, never plain text), sorts by `cited_by_count:desc` (most-cited first), and
   emits two extra fields when the record carries them: `pdf_url` (an open-access
   copy, straight into `fetch-one`) and `cited_by`.
+- **`scholar` / `scholar-author` specifics** (US27): both go through **SerpAPI**
+  and **require a key** — `--serpapi-key` or `SERPAPI_API_KEY`. With no key they
+  quarantine **offline** with a distinct `missing-key` reason (the key is checked
+  before the network, like the source name — contrast OpenAlex, where a missing
+  email only warns). `scholar` (topic) sets `abstract` to Scholar's `snippet`
+  (a truncated **fragment**, not the full abstract), carries `cited_by`, and
+  carries `pdf_url` when a hit has an open `resources[]` PDF — directly fetchable,
+  short-circuiting `resolve-oa`. `scholar-author` (author id) is **bibliographic
+  only** — `title`, `authors`, `url`, `source_id` (the citation id), `published`
+  (the year), `cited_by` — with `abstract: null` and **no** `pdf_url`. SerpAPI
+  signals a zero-result query with a 200 body carrying an `error` field, routed to
+  `empty-result`; a bad key / other `error` routes to `api-error`.
 - **Output**: one JSONL record per hit on stdout, in a **common schema** across
   sources — `title`, `authors`, `abstract`, `abstract_present`, `url`,
   `published`, `source`, `source_id`, plus `doi`, `tldr`, `pdf_url` and
@@ -1117,6 +1136,8 @@ uv run discover <query> [--source arxiv|s2|openalex] [--max-results 25]
   - `empty-result: the search returned no candidates` — the query matched nothing.
   - `api-error: <Type>: …` — the API errored / rate-limited (e.g. S2's keyless
     `429`); the diagnostic is included.
+  - `missing-key: no SerpAPI key …` (US27) — a `scholar` / `scholar-author` run
+    with no key; quarantined **before** the network, distinct from `api-error`.
 
 ### Examples
 
@@ -1165,6 +1186,35 @@ uv run discover "single-cell RNA sequencing" --source pubmed
 #   -> stderr: quarantined (see manifest.jsonl): pubmed + 'single-cell RNA sequencing'
 #   -> manifest: {"stage":"discover","source":"pubmed","query":"single-cell …",
 #                 "reason":"unknown source: 'pubmed' not in registry"}
+
+# Google Scholar topic search via SerpAPI (US27) — carries a direct pdf_url + cited_by
+uv run discover "retrieval-augmented generation for code" --source scholar \
+  --serpapi-key "$SERPAPI_API_KEY"
+#   -> {"title":"Retrieval-augmented generation for code summarization","authors":[…],
+#       "abstract":"We augment a code language model with a retriever …","abstract_present":true,
+#       "url":"https://openreview.net/…","published":null,"source":"scholar",
+#       "source_id":"hK9c2mQ8x1wJ","pdf_url":"https://arxiv.org/pdf/2108.11601","cited_by":214}
+
+# A scholar hit's pdf_url short-circuits resolve-oa — fetch the open copy directly
+uv run discover "dense passage retrieval" --source scholar --serpapi-key "$SERPAPI_API_KEY" \
+  | python3 -c 'import sys,json
+for l in sys.stdin:
+    r=json.loads(l)
+    if r.get("pdf_url"): print(r["pdf_url"]); break' \
+  | xargs -r -I{} uv run fetch-one "{}"
+
+# An author id via SerpAPI (US27) — bibliographic only, null abstract, no pdf
+uv run discover "JicYPdAAAAAJ" --source scholar-author --serpapi-key "$SERPAPI_API_KEY"
+#   -> {"title":"Deep learning","authors":["Y LeCun","Y Bengio","G Hinton"],
+#       "abstract":null,"abstract_present":false,"url":"https://scholar.google.com/citations?…",
+#       "published":"2015","source":"scholar-author","source_id":"JicYPdAAAAAJ:xY1nfvUcv0IC",
+#       "cited_by":98213}
+
+# A scholar source with no key quarantines OFFLINE (distinct missing-key reason)
+uv run discover "diffusion models for protein design" --source scholar
+#   -> stderr: quarantined (see manifest.jsonl): scholar + 'diffusion models for protein design'
+#   -> manifest: {"stage":"discover","source":"scholar","query":"diffusion …",
+#                 "reason":"missing-key: no SerpAPI key … for source 'google_scholar'"}
 ```
 
 `discover` is the entry point the US26 abstract filter composes: it emits a

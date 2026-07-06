@@ -6,7 +6,14 @@ from behave import given, then, when
 from typer.testing import CliRunner
 
 import paper_degist.discover as discover_mod
-from paper_degist.discover import Candidate, discover, parse_openalex_json
+from paper_degist.discover import (
+    Candidate,
+    _build_registry,
+    discover,
+    parse_openalex_json,
+    parse_serpapi_scholar,
+    parse_serpapi_scholar_author,
+)
 from paper_degist.discover import app as discover_app
 
 
@@ -134,7 +141,7 @@ def step_openalex_cli_no_email(context):
 
     os.environ.pop("OPENALEX_EMAIL", None)
     original_build_registry = discover_mod._build_registry
-    discover_mod._build_registry = lambda mr, key, email: {"openalex": search}
+    discover_mod._build_registry = lambda mr, key, email, serp: {"openalex": search}
     try:
         context.cli_result = CliRunner().invoke(
             discover_app,
@@ -216,3 +223,77 @@ def step_quarantined_reason(context, reason):
 @then("the scholarly API is not contacted")
 def step_not_contacted(context):
     assert getattr(context, "searched", []) == [], f"API was contacted: {context.searched}"
+
+
+# --- US27: SerpAPI Google Scholar sources (scholar organic + scholar-author) ---
+
+
+@given('an author id "{author_id}"')
+def step_author_id(context, author_id):
+    # scholar-author's query *is* the author id; reuse context.query as discover's
+    # query argument (the engine maps it to author_id).
+    context.query = author_id
+
+
+@given('a "{source}" organic hit whose open resource is a pdf "{pdf_url}"')
+def step_scholar_pdf(context, source, pdf_url):
+    # A raw SerpAPI google_scholar organic body, parsed through the real parser so
+    # the scenario pins resources[]→pdf_url extraction (US27 AC2), not to_record.
+    raw = {
+        "organic_results": [
+            {
+                "title": "Retrieval-augmented generation for code summarization",
+                "result_id": "hK9c2mQ8x1wJ",
+                "link": "https://openreview.net/forum?id=zv-typ1gPxA",
+                "snippet": "We augment a code language model with a retriever …",
+                "resources": [{"file_format": "PDF", "link": pdf_url}],
+            }
+        ]
+    }
+    context.registry = {source: _recording_search(context, candidates=parse_serpapi_scholar(raw))}
+
+
+@given('a "{source}" organic hit cited {count:d} times')
+def step_scholar_cited_by(context, source, count):
+    raw = {
+        "organic_results": [
+            {
+                "title": "Dense passage retrieval for open-domain question answering",
+                "result_id": "pQ7r3nT9y2wL",
+                "link": "https://aclanthology.org/2020.emnlp-main.550",
+                "snippet": "We show that retrieval can be practically implemented using dense …",
+                "inline_links": {"cited_by": {"total": count}},
+            }
+        ]
+    }
+    context.registry = {source: _recording_search(context, candidates=parse_serpapi_scholar(raw))}
+
+
+@given('a "{source}" profile with one bibliographic article')
+def step_scholar_author_article(context, source):
+    raw = {
+        "articles": [
+            {
+                "title": "Deep learning",
+                "link": "https://scholar.google.com/citations?view_op=view_citation&citation_for_view=JicYPdAAAAAJ:xY1nfvUcv0IC",
+                "citation_id": "JicYPdAAAAAJ:xY1nfvUcv0IC",
+                "authors": "Y LeCun, Y Bengio, G Hinton",
+                "cited_by": {"value": 98213},
+                "year": "2015",
+            }
+        ]
+    }
+    context.registry = {source: _recording_search(context, candidates=parse_serpapi_scholar_author(raw))}
+
+
+@given('a "{source}" source with no SerpAPI key')
+def step_scholar_no_key(context, source):
+    # The real key-gated adapter with no key: it raises MissingKeyError before any
+    # network call, so discover quarantines it offline (US27 AC4).
+    context.registry = {source: _build_registry(25, None, None, None)[source]}
+
+
+@then("the emitted record carries the cited_by count {count:d}")
+def step_record_cited_by(context, count):
+    assert context.result is not None, "expected records, got a quarantine"
+    assert context.result[0].get("cited_by") == count, context.result[0].get("cited_by")

@@ -14,6 +14,13 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
 ## The phases
 
 ### 1. Orient — read before writing
+- **Sync `master` from the remote first** — `git switch master && git pull
+  --ff-only` — *before* branching a new US, so the feature branch starts from
+  the real remote tip, not a stale local `master` or (worse) another still-open
+  feature branch. Never stack a new US on an unmerged sibling branch: US27 was
+  branched off the still-open US25 branch instead of a freshly-pulled `master`,
+  which is exactly the stacked-PR trap phase 14 warns about. Only branch once
+  `git pull --ff-only` reports up to date.
 - Find the US in the index [`user-stories.md`](../../user-stories.md), then open
   **only** its own file under `user-stories/` (rule 07) — its acceptance
   criteria *are* the test list, and its "Case handling" section names the
@@ -78,7 +85,9 @@ is untracked — clean up or keep the generated artifacts deliberately.
   findings **test-first**. Anchor any `file:line` finding per rule 04.
 
 ### 9. Commit in logical, each-green chunks
-- Feature branch off `master` (never commit to `master` directly). Separate a
+- Feature branch off a **remote-synced** `master` (phase 1 — `git pull
+  --ff-only` first; never off a stale local `master` or an unmerged sibling
+  branch), and never commit to `master` directly. Separate a
   self-contained refactor from the feature so each commit passes on its own.
   Sign commits.
 

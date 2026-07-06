@@ -1584,6 +1584,92 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** OPEN (low priority — safe under-dedup; AC2's path-end DOIs fold
   correctly today).
 
+## discover — scholar-author records are bibliographic only; no abstract/PDF enrichment (US27)
+
+- **Where:** `src/paper_degist/discover.py::parse_serpapi_scholar_author` (each
+  `articles[]` item → one Candidate with `abstract=None`, no `pdf_url`).
+- **Case not handled:** SerpAPI's `google_scholar_author` engine carries only
+  bibliographic fields (`title`, `authors`, `year`, `cited_by`, citation link) —
+  confirmed live on a real profile. Recovering each article's abstract snippet +
+  open PDF needs a **follow-up `google_scholar` organic lookup per title** — an
+  N+1 pass that multiplies SerpAPI quota per author (a 100-paper profile = 100
+  extra billed searches). So `scholar-author` emits the body of work with null
+  abstracts (flagged `abstract_present: false`), and enrichment is deferred.
+- **Trigger to fix:** the first author-driven review that actually needs the
+  files/abstracts, not just the citation list. Add an opt-in enrichment driver
+  that pipes each `scholar-author` hit's title back through `--source scholar` and
+  merges the resource/snippet — gated on a `--enrich` flag so the default stays
+  one-call-cheap. Keep it a driver over `discover`, not baked into the parser.
+- **Status:** OPEN (deliberate — named in the US27 "Later stages").
+
+## discover — scholar `snippet` is a truncated abstract fragment, not the full text (US27)
+
+- **Where:** `src/paper_degist/discover.py::parse_serpapi_scholar` (`abstract` is
+  set to the organic `snippet`).
+- **Case not handled:** Google Scholar's organic `snippet` is a `…`-elided
+  **fragment** of the abstract, never the whole thing — so a `scholar` record's
+  `abstract` reads as a partial sentence. Full-abstract recovery is downstream
+  work (resolve the DOI → S2/Crossref, or read the fetched paper); arXiv/s2/OpenAlex
+  remain the full-abstract sources. The record is still emitted and flagged
+  `abstract_present: true` because a fragment is a non-empty abstract signal for
+  US26's pre-filter — which is the intended use of the snippet.
+- **Trigger to fix:** the first US26 pre-filter (or wiki import) that needs the
+  full abstract from a `scholar`-sourced record and cannot fall back to another
+  source. Enrich via the resolved DOI, driven by a failing test.
+- **Status:** OPEN (deliberate — named in the US27 "Later stages").
+
+## discover — SerpAPI organic ranking is fuzzy; no title-match precision guard (US27)
+
+- **Where:** `src/paper_degist/discover.py::parse_serpapi_scholar` (every
+  `organic_results[]` hit is emitted; no relevance check).
+- **Case not handled:** SerpAPI's organic ranking is loose — the US27 PoC's
+  `"Attention is all you need"` query topped with *"The psychology of attention"*.
+  A title-overlap guard (reuse `resolve_oa._title_overlap`) would drop
+  loosely-related top hits, but that is a **precision** refinement counter to
+  US25's wide-net recall contract, so discovery keeps every hit and narrowing is
+  US26's job.
+- **Trigger to fix:** US26 (the relevance/narrowing story) — apply the
+  title-overlap guard there, over the emitted records, not inside the parser.
+- **Status:** OPEN (deliberate — narrowing is US26; discovery casts wide).
+
+## discover — scholar num= caps at the first page; no Scholar pagination (US27)
+
+- **Where:** `src/paper_degist/discover.py::_serpapi_search` (`num=max_results`,
+  one call — no `start=` paging).
+- **Case not handled:** the two SerpAPI engines return only the first page
+  (`num`), like arXiv/s2/OpenAlex. Exhaustive recall via Scholar's `start`/`num`
+  paging is deferred, gated (as with US25) on the first page proving too shallow —
+  and each extra page is another billed SerpAPI search.
+- **Trigger to fix:** the first topic whose first page misses known-relevant
+  papers *and* the SerpAPI quota justifies the extra billed pages. Add a paging
+  loop to `_serpapi_search`, driven by a test.
+- **Status:** OPEN (deliberate — named in the US27 "Later stages", shared with
+  the US25 first-page-only deferral).
+
+## discover — scholar/scholar-author live happy-path E2E not yet run (no key) (US27)
+
+- **Where:** `src/paper_degist/discover.py::_serpapi_search` (the live HTTP call
+  + `route_serpapi_response` on a real 200 body).
+- **Case:** US27's phase-7 real run exercised the **offline** branches for real
+  (missing-key quarantine on both engines, exit 0, distinct reasons) but **not**
+  a live SerpAPI call — no `SERPAPI_API_KEY` was available and inventing a bogus
+  key only burns a real network round-trip. The response *shapes* are pinned by
+  the phase-2 PoC fixtures (`serpapi-scholar-rag-for-code.json`,
+  `serpapi-scholar-author-bibliometrics.json`) and the parser/router unit tests,
+  so the mapping is characterized; only the live transport is unverified.
+- **Trigger to fix:** the first run with a real key in `.env` — run
+  `uv run discover "…" --source scholar` and eyeball a real `pdf_url`/`cited_by`,
+  then confirm SerpAPI's real no-results `error` body still routes to
+  empty-result (not api-error). Fold any shape drift back into the fixtures.
+- **Status:** RESOLVED. Run live with a real `SERPAPI_API_KEY`: (1) `--source
+  scholar` "retrieval-augmented generation for code" returned real hits with
+  `pdf_url` + `cited_by` and `published: null` (organic carries no year, matching
+  the fixture); (2) `--source scholar-author` `JicYPdAAAAAJ` returned
+  bibliographic records (null abstract, `year`, `cited_by`); (3) a gibberish query
+  routed to `empty-result` (not api-error), confirming SerpAPI's real no-results
+  body is classified correctly; (4) end-to-end edge — a scholar `pdf_url`
+  (`arxiv.org/pdf/2006.05405`) piped into `fetch-one` saved a real 7-page PDF with
+  no `resolve-oa` hop. No shape drift; fixtures stand.
 ## abstract_filter — one global cosine threshold; no per-topic calibration (US26)
 
 - **Where:** `src/paper_degist/abstract_filter.py` (`DEFAULT_THRESHOLD = 0.65`).

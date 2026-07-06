@@ -39,7 +39,7 @@ timeless spec and carry no status marker.
 | [US 24](user-stories/us-24-embed-text-registry.md)           | Embed one text with a registered local model (LM Studio transport)     | `embed-text`      | ✅ Done                            |
 | [US 25](user-stories/us-25-discover-candidates.md)           | Discover candidate papers by topic (arXiv / Semantic Scholar)          | `discover`        | ✅ Done                            |
 | [US 26](user-stories/us-26-abstract-filter-embedding.md)     | Filter candidates by abstract similarity (deterministic + embedding)   | `abstract-filter` | ✅ Done                            |
-| [US 27](user-stories/us-27-serpapi-google-scholar.md)        | Discover via SerpAPI Google Scholar (topic + author, direct PDF links) | `discover`        | —                                 |
+| [US 27](user-stories/us-27-serpapi-google-scholar.md)        | Discover via SerpAPI Google Scholar (topic + author, direct PDF links) | `discover`        | ✅ Done                            |
 | [US 28](user-stories/us-28-batch-ocr-page-grid.md)           | Batch-OCR a page directory across the model registry                   | `ocr-batch`       | ✅ Done                            |
 | [US 29](user-stories/us-29-discover-openalex.md)             | Discover candidates by topic via OpenAlex (keyless + mailto)           | `discover`        | ✅ Done                            |
 | [US 30](user-stories/us-30-openalex-oa-fallback.md)          | Cross-check open access against OpenAlex when Unpaywall says closed    | `resolve-oa`      | —                                 |
