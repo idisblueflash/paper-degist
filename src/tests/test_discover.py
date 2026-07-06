@@ -423,6 +423,18 @@ def test_scholar_empty_organic_results_yields_no_candidates():
     assert parse_serpapi_scholar({"organic_results": []}) == []
 
 
+def test_scholar_skips_a_null_organic_result():
+    # A partial SerpAPI body with a null item must not crash the parser (rule 02),
+    # mirroring parse_s2_json's malformed-record tolerance — keep the good hit.
+    data = {
+        "organic_results": [
+            None,
+            {"title": "Sparse retrieval for QA", "result_id": "kW3", "link": "https://x", "snippet": "…"},
+        ]
+    }
+    assert len(parse_serpapi_scholar(data)) == 1
+
+
 # --- SerpAPI Google Scholar author parser (US27 AC3, rule 02) ---
 
 
@@ -490,6 +502,18 @@ def test_scholar_author_empty_articles_yields_no_candidates():
     assert parse_serpapi_scholar_author({"articles": []}) == []
 
 
+def test_scholar_author_skips_a_null_article():
+    # A null / non-object article must not crash the parser (rule 02) — keep the
+    # well-formed one, like the arXiv/S2/OpenAlex parsers do.
+    data = {
+        "articles": [
+            None,
+            {"title": "Backpropagation", "citation_id": "JicYPdAAAAAJ:zzz", "link": "https://x", "year": "1986"},
+        ]
+    }
+    assert len(parse_serpapi_scholar_author(data)) == 1
+
+
 # --- SerpAPI's 200-with-error quirk routes to empty vs api-error (US27 AC5) ---
 
 
@@ -501,6 +525,15 @@ def test_serpapi_no_results_error_routes_to_empty_list():
 def test_serpapi_other_error_raises_for_api_error():
     data = {"error": "Invalid API key. Your API key should be here: https://serpapi.com."}
     with pytest.raises(Exception):
+        route_serpapi_response(data, parse_serpapi_scholar)
+
+
+def test_serpapi_non_string_error_routes_to_api_error():
+    # A truthy non-string error (e.g. a structured body) must not crash on
+    # .lower() (AttributeError); it is not the no-results phrase, so it routes to
+    # a RuntimeError — quarantined upstream as api-error, not an unhandled crash.
+    data = {"error": {"message": "quota exceeded"}}
+    with pytest.raises(RuntimeError):
         route_serpapi_response(data, parse_serpapi_scholar)
 
 

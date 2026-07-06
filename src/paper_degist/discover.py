@@ -344,6 +344,10 @@ def parse_serpapi_scholar(data: dict) -> list[Candidate]:
     """
     candidates: list[Candidate] = []
     for item in data.get("organic_results") or []:
+        if not isinstance(item, dict):
+            # A null / non-object hit is a malformed record, not a candidate —
+            # skip it rather than crash (rule 02), like the arXiv/S2 parsers.
+            continue
         authors = [
             a["name"]
             for a in ((item.get("publication_info") or {}).get("authors") or [])
@@ -379,6 +383,9 @@ def parse_serpapi_scholar_author(data: dict) -> list[Candidate]:
     """
     candidates: list[Candidate] = []
     for item in data.get("articles") or []:
+        if not isinstance(item, dict):
+            # A null / non-object article is malformed — skip it (rule 02).
+            continue
         authors = [name.strip() for name in (item.get("authors") or "").split(",") if name.strip()]
         cited_by = (item.get("cited_by") or {}).get("value")
         candidates.append(
@@ -415,7 +422,10 @@ def route_serpapi_response(data: dict, parser: Callable[[dict], list[Candidate]]
     """
     error = data.get("error")
     if error:
-        if SERPAPI_NO_RESULTS in error.lower():
+        # Coerce to str first: SerpAPI's error is normally a string, but a
+        # structured/non-string body must route as an api-error (raise), never
+        # crash on ``.lower()`` (rule 02 — tolerate a malformed response).
+        if SERPAPI_NO_RESULTS in str(error).lower():
             return []
         raise RuntimeError(f"SerpAPI error: {error}")
     return parser(data)
