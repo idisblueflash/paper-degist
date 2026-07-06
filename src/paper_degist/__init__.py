@@ -26,6 +26,7 @@ _STEPS = [
     ("ocr-report", "Aggregate the stored OCR scores into one Markdown scorecard (US23)."),
     ("embed-text", "Embed one text with one registered local embedding model (US24)."),
     ("discover", "Discover candidate papers by topic from arXiv or Semantic Scholar (US25)."),
+    ("abstract-filter", "Filter candidates by abstract similarity to a topic (US26)."),
 ]
 
 app = typer.Typer(

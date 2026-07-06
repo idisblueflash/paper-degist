@@ -1165,8 +1165,14 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when US26 filters a candidate list by abstract similarity.
   Add a batch driver that iterates texts calling `embed_text`, inserting the
   recovery gap between items, driven by a test that asserts the sequencing.
-- **Status:** OPEN (deliberate — kept single-input like the sibling steps; named
-  in the US24 "Later stages").
+- **Status:** RESOLVED by US26. `abstract_filter.make_embedder` composes
+  `embed_text` per abstract, called **sequentially** (never concurrent) through
+  `abstract_filter`'s pass-2 loop, so the flaky runtime never sees parallel hits.
+  The **inter-item** recovery gap this flag named is deliberately **not** added:
+  the US26 real E2E ran 21 back-to-back embeds (20 abstracts + 1 query) in 3.3 s
+  with **zero** failures, and `embed_text`'s own retry-after-`gap` budget absorbs
+  a transient 5xx flap per item — so an explicit between-items sleep buys nothing
+  here (see the new US26 deferred flag below if a larger corpus flaps).
 
 ## embed_text — one JSON per vector; no on-disk vector index (US24)
 
@@ -1577,3 +1583,84 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `doi_from` primitive, which `resolve_oa` also depends on).
 - **Status:** OPEN (low priority — safe under-dedup; AC2's path-end DOIs fold
   correctly today).
+
+## abstract_filter — one global cosine threshold; no per-topic calibration (US26)
+
+- **Where:** `src/paper_degist/abstract_filter.py` (`DEFAULT_THRESHOLD = 0.65`).
+- **Case not handled:** the cutoff is a single global constant, measured against
+  one real sample (the US26 "Threshold calibration": off-topic ≤ 0.6337, on-topic
+  ≥ 0.72, so 0.65 sits in the gap). But the separating cosine is **topic-dependent**
+  — a broad topic ("machine learning") clusters everything high, a narrow one
+  ("contrastive learning for speech") spreads wider — so one constant is a
+  compromise, not the right cut for every `--topic`. It is overridable per run via
+  `--threshold`, but not auto-calibrated.
+- **Trigger to fix:** the first topic whose shortlist is visibly too permissive or
+  too strict at 0.65. Auto-calibrate per topic — e.g. embed a handful of known
+  on/off exemplars, or find the natural gap in the score histogram of the actual
+  candidate set — and set the cut from that, driven by a test over a captured
+  multi-topic score set. Named in the US26 "Later stages".
+- **Status:** OPEN (deliberate — one measured global constant; per-topic
+  calibration deferred).
+
+## abstract_filter — DOI-less near-duplicate works are not collapsed (US26)
+
+- **Where:** `src/paper_degist/abstract_filter.py::candidate_doi_key` /
+  `abstract_filter` pass 1; surfaced by the US26 real E2E.
+- **Case not handled:** the deterministic dedup pass keys on the **normalized
+  DOI**, so it only collapses candidates that both carry the *same* DOI. The US26
+  E2E on real OpenAlex data returned "Neural Message Passing for Quantum Chemistry"
+  as **two** works — one with `doi 10.48550/arxiv.1704.01212`, one with **no DOI**
+  — and since the second has no extractable key, it is *not* deduped: both survive
+  into the shortlist at the same similarity (0.8052). This is the same
+  preprint-vs-published near-duplicate the discover US29 flag names; DOI dedup
+  cannot see it. A title/abstract-similarity dedup (or the deferred query-both-and-
+  merge driver that assigns DOIs upstream) is the fix, not a change to this key.
+- **Trigger to fix:** the first shortlist a human finds noisy with title-identical
+  near-duplicates that carry no shared DOI. Add a secondary dedup on normalized
+  title (or a high abstract-cosine pair collapse), driven by a captured fixture of
+  such a pair. Pairs with the US25/US29 "query both and merge" deferral.
+- **Status:** OPEN (deliberate — DOI dedup is exact and safe; fuzzy near-duplicate
+  collapse deferred to the merge driver).
+
+## abstract_filter — a failed topic-query embed sinks the whole run (US26)
+
+- **Where:** `src/paper_degist/abstract_filter.py::abstract_filter` (the
+  `query_vec is None` branch).
+- **Case not handled:** the topic is embedded **once** up front as the query. If
+  that single embed quarantines (server down), no candidate can be scored, so the
+  run records one `embed-unavailable` quarantine (naming the topic) and returns an
+  **empty** shortlist — correct and crash-free (confirmed by the US26 E2E against
+  an unreachable endpoint: exit 0, empty output, one recorded reason), but it
+  means a momentary server flap at the *start* of a run discards the whole batch
+  rather than the run resuming once the server recovers. Per-abstract embeds (AC5)
+  already tolerate a mid-run flap individually; the query embed does not retry
+  beyond `embed_text`'s own budget.
+- **Trigger to fix:** the first real run where the server is briefly down exactly
+  at the query embed and the operator wants the batch to wait/retry rather than
+  emit nothing. Add a warm-up probe (mirroring the deferred `embed-up`/`browser-up`
+  lifecycle step) or a longer query-embed retry before giving up, driven by a test.
+- **Status:** OPEN (deliberate — fail-clean-and-empty is correct today; a warm-up
+  or query-retry is the follow-up, tied to the US24 server-lifecycle deferral).
+
+## input JSONL parsing — abstract_filter guards it; sibling steps do not (US26)
+
+- **Where:** `src/paper_degist/abstract_filter.py::load_candidates` (guards),
+  vs. `src/paper_degist/dedup_inputs.py` / `embed_text.py` (parse input plainly).
+- **Case:** the US26 self-review (correctness pass) flagged that reading a
+  candidate JSONL with a bare `[json.loads(line) …]` crashes the whole batch on a
+  single malformed line — an interrupted/hand-edited `discover` pipe can leave a
+  truncated final line — contrary to rule 02 ("never crash; unknowns go to the
+  manifest"). `abstract_filter` now routes parsing through `load_candidates`,
+  which quarantines an unparseable **or** non-object line (a distinct
+  `unparseable candidate line N` / `non-object candidate line N` reason, `stage:
+  "abstract-filter"`, `event: "quarantined"`) and finishes the batch — confirmed
+  by a real E2E on a truncated file (3 good candidates emitted, the bad line
+  quarantined, exit 0). The **sibling** steps still parse their input plainly;
+  for `dedup_inputs` each line is a raw string (no parse to fail) and `embed_text`
+  reads one whole text file, so neither has the multi-record-JSONL exposure —
+  but if either later consumes a JSONL stream, it should adopt the same guard.
+- **Trigger to fix:** the first sibling step that reads a multi-record JSONL
+  stream from an upstream pipe. Extract `load_candidates`' skip-malformed-line
+  shape into a shared `_jsonl` reader and route that step through it, test-first.
+- **Status:** RESOLVED for `abstract_filter` (US26); OPEN as a shared-helper
+  extraction for any future JSONL-consuming step.

@@ -30,6 +30,8 @@ import paper_degist.discover as discover_mod
 from paper_degist.discover import Candidate
 from paper_degist.discover import app as discover_app
 from paper_degist.embed_text import app as embed_text_app
+import paper_degist.abstract_filter as abstract_filter_mod
+from paper_degist.abstract_filter import app as abstract_filter_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.ocr_batch import app as ocr_batch_app
 from paper_degist.ocr_page import app as ocr_page_app
@@ -770,6 +772,87 @@ def test_discover_openalex_with_email_does_not_warn(tmp_path: Path, monkeypatch)
          "--manifest", str(tmp_path / "m.jsonl")],
     )
     assert "polite pool" not in result.output
+
+
+# --- abstract-filter CLI: ranked JSONL to stdout, offline via a fake embedder ---
+
+
+def _abstract_filter_cli(tmp_path: Path, monkeypatch, candidates, *, topic="speech contrastive learning"):
+    """Run `abstract-filter` with an injected embedder so no server is touched.
+
+    The fake embedder puts the topic query on one axis and every abstract on the
+    same axis (cosine 1.0 — kept), so the CLI's parse → filter → emit path is
+    exercised without LM Studio.
+    """
+    src = tmp_path / "candidates.jsonl"
+    src.write_text("".join(json.dumps(c) + "\n" for c in candidates), encoding="utf-8")
+
+    def fake_make_embedder(*a, **k):
+        return lambda text, role: [1.0, 0.0]
+
+    monkeypatch.setattr(abstract_filter_mod, "make_embedder", fake_make_embedder)
+    result = runner.invoke(
+        abstract_filter_app,
+        [str(src), "--topic", topic, "--manifest", str(tmp_path / "manifest.jsonl")],
+    )
+    return result
+
+
+def test_abstract_filter_cli_prints_kept_records_as_jsonl(tmp_path: Path, monkeypatch):
+    candidate = {
+        "title": "Learning Disentangled Speech Representations",
+        "authors": ["A. Researcher"],
+        "abstract": "A contrastive objective for speech.",
+        "abstract_present": True,
+        "url": "http://arxiv.org/abs/2101.01111v1",
+        "source": "arxiv",
+        "source_id": "2101.01111v1",
+    }
+    result = _abstract_filter_cli(tmp_path, monkeypatch, [candidate])
+    assert json.loads(result.stdout.strip())["title"] == "Learning Disentangled Speech Representations"
+
+
+def test_abstract_filter_cli_attaches_the_similarity(tmp_path: Path, monkeypatch):
+    candidate = {
+        "abstract": "A contrastive objective for speech.",
+        "abstract_present": True,
+        "url": "http://arxiv.org/abs/2101.02222v1",
+    }
+    result = _abstract_filter_cli(tmp_path, monkeypatch, [candidate])
+    assert json.loads(result.stdout.strip())["similarity"] == 1.0
+
+
+def test_abstract_filter_cli_malformed_line_does_not_crash(tmp_path: Path, monkeypatch):
+    # rule 02: a truncated JSONL line quarantines; the batch still finishes (exit 0).
+    good = json.dumps({"abstract": "on topic", "abstract_present": True, "url": "u/ok"})
+    src = tmp_path / "c.jsonl"
+    src.write_text(good + "\n{\"url\": \"u/trunc\", \"abst\n", encoding="utf-8")
+    monkeypatch.setattr(abstract_filter_mod, "make_embedder", lambda *a, **k: lambda t, r: [1.0, 0.0])
+    result = runner.invoke(
+        abstract_filter_app, [str(src), "--topic", "on topic", "--manifest", str(tmp_path / "m.jsonl")]
+    )
+    assert result.exit_code == 0
+
+
+def test_abstract_filter_cli_missing_file_exits_two(tmp_path: Path):
+    # Typer validates the candidates file up front (exists=True) — clean exit 2.
+    result = runner.invoke(
+        abstract_filter_app, [str(tmp_path / "absent.jsonl"), "--topic", "x"]
+    )
+    assert result.exit_code == 2
+
+
+def test_abstract_filter_cli_missing_topic_exits_two(tmp_path: Path):
+    # --topic is a required option; omitting it is a clean usage error, not a crash.
+    src = tmp_path / "c.jsonl"
+    src.write_text("{}\n", encoding="utf-8")
+    result = runner.invoke(abstract_filter_app, [str(src)])
+    assert result.exit_code == 2
+
+
+def test_root_signpost_lists_abstract_filter():
+    result = runner.invoke(root_app, [])
+    assert "abstract-filter" in result.stdout
 
 
 def test_root_signpost_lists_discover():
