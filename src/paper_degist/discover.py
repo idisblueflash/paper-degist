@@ -319,24 +319,15 @@ def _openalex_search(max_results: int, email: Optional[str]) -> Search:
     """
 
     def search(query: str) -> list[Candidate]:
-        import httpx
-
-        params = {
-            "filter": f"title_and_abstract.search:{query}",
-            "sort": "cited_by_count:desc",
-            "per-page": max_results,
-        }
-        if email:
-            params["mailto"] = email
-        resp = httpx.get(
-            OPENALEX_ENDPOINT,
-            params=params,
-            headers={"User-Agent": "paper-degist/0.1 (https://github.com/idisblueflash/paper-degist)"},
-            timeout=30.0,
-            follow_redirects=True,
+        data = _openalex.search_works(
+            {
+                "filter": f"title_and_abstract.search:{query}",
+                "sort": "cited_by_count:desc",
+                "per-page": max_results,
+            },
+            email,
         )
-        resp.raise_for_status()
-        return parse_openalex_json(resp.json())
+        return parse_openalex_json(data)
 
     return search
 

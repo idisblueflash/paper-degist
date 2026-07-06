@@ -364,17 +364,7 @@ def _openalex_oa_lookup(email: Optional[str]) -> OALookup:
         print(_OPENALEX_NO_EMAIL_WARNING, file=sys.stderr)
 
     def lookup(doi: str) -> Optional[str]:
-        import httpx
-
-        resp = httpx.get(
-            f"{_openalex.WORKS_ENDPOINT}/doi:{doi}",
-            params={"mailto": email} if email else {},
-            headers={"User-Agent": "paper-degist/0.1 (https://github.com/idisblueflash/paper-degist)"},
-            timeout=30.0,
-            follow_redirects=True,
-        )
-        resp.raise_for_status()
-        return _openalex.pdf_url_from_work(resp.json())
+        return _openalex.pdf_url_from_work(_openalex.fetch_work_by_doi(doi, email))
 
     return lookup
 
