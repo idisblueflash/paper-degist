@@ -223,9 +223,11 @@ def test_convert_html_cli_missing_file_exits_two(tmp_path: Path):
     assert result.exit_code == 2
 
 
-def _resolve_oa_run(tmp_path, monkeypatch, *, verdict):
-    """Patch the Unpaywall lookup to `verdict` and run `resolve-oa` on a DOI URL."""
+def _resolve_oa_run(tmp_path, monkeypatch, *, verdict, fallback=None):
+    """Run `resolve-oa` on a DOI URL with the Unpaywall verdict (and OpenAlex
+    fallback) patched offline, so no test touches the network."""
     monkeypatch.setattr(resolve_oa_mod, "_unpaywall_lookup", lambda email: (lambda doi: verdict))
+    monkeypatch.setattr(resolve_oa_mod, "_openalex_oa_lookup", lambda email: (lambda doi: fallback))
     manifest = tmp_path / "manifest.jsonl"
     result = runner.invoke(
         resolve_oa_app,
@@ -248,6 +250,25 @@ def test_resolve_oa_cli_quarantine_exits_zero(tmp_path: Path, monkeypatch):
 def test_resolve_oa_cli_quarantine_notes_url_on_stderr(tmp_path: Path, monkeypatch):
     result, _ = _resolve_oa_run(tmp_path, monkeypatch, verdict=None)
     assert "https://doi.org/10.1191/x" in result.output
+
+
+def test_resolve_oa_cli_openalex_fallback_prints_pdf_url(tmp_path: Path, monkeypatch):
+    # US30: Unpaywall reports closed, but the CLI's wired OpenAlex fallback finds
+    # an OA PDF — the paper resolves instead of being quarantined.
+    result, _ = _resolve_oa_run(
+        tmp_path, monkeypatch, verdict=None, fallback="https://repo.org/openalex.pdf"
+    )
+    assert result.stdout.strip() == "https://repo.org/openalex.pdf"
+
+
+def test_resolve_oa_cli_both_indexes_closed_reason_names_both(tmp_path: Path, monkeypatch):
+    # US30 AC2: both Unpaywall and OpenAlex report no PDF → the quarantine reason
+    # records that two indexes were checked, not one.
+    _, manifest = _resolve_oa_run(tmp_path, monkeypatch, verdict=None, fallback=None)
+    (line,) = manifest.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["reason"] == (
+        "no OA copy (closed access) — checked Unpaywall and OpenAlex"
+    )
 
 
 def test_resolve_oa_cli_slug_url_resolves_via_title_lookup(tmp_path: Path, monkeypatch):

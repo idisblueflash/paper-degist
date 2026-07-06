@@ -329,7 +329,15 @@ location, the case not yet handled, and the trigger that should make us fix it.
   the union of OA locations, driven by a failing test.
 - **Story:** specced as [US 30](user-stories/us-30-openalex-oa-fallback.md)
   (OpenAlex fallback; CORE deferred as a later third index).
-- **Status:** OPEN.
+- **Status:** RESOLVED by US30. `resolve_oa` now takes an injected `oa_fallback`
+  (OpenAlex), asked only when Unpaywall yields no PDF; the verdict is the union
+  of both indexes (`resolve_oa._resolve_via_openalex`). The real
+  `_openalex_oa_lookup` looks a DOI up at `…/works/doi:<doi>` and reads
+  `best_oa_location`/`oa_locations` via the shared `_openalex.pdf_url_from_work`.
+  Closed now means both indexes agreed (reason records both were checked); an
+  OpenAlex transport error quarantines naming OpenAlex (distinct from Unpaywall's
+  AC6 error). **CORE as a third union member remains deferred** — trigger: the
+  first paper still wrongly reported closed after the OpenAlex cross-check.
 
 ## resolve_oa — "OA but no PDF link" shares the "closed access" reason
 
