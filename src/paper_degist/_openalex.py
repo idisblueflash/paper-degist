@@ -59,14 +59,22 @@ def pdf_url_from_work(work: dict) -> Optional[str]:
     """The directly fetchable OA PDF of a Work: ``best_oa_location`` then locations.
 
     OpenAlex's ``best_oa_location.pdf_url`` is the preferred open copy; when it
-    has none (an OA landing page with no direct PDF, or a closed work), fall back
-    to the first ``oa_locations[]`` entry that carries a ``pdf_url``. A work with
-    no OA PDF anywhere yields ``None`` (closed, as far as OpenAlex knows).
+    has none (an OA landing page with no direct PDF), fall back to a lesser open
+    location. The current API exposes every location under ``locations`` (each
+    tagged ``is_oa``) and no longer emits an ``oa_locations`` array — so scan the
+    OA entries of ``locations`` for a ``pdf_url``, while still honoring a legacy
+    ``oa_locations`` array on any record that carries one. A **non**-OA location's
+    ``pdf_url`` (a paywalled publisher copy) is never returned — it is not free.
+    A work with no OA PDF anywhere yields ``None`` (closed, as far as OpenAlex
+    knows).
     """
     best = work.get("best_oa_location") or {}
     if best.get("pdf_url"):
         return best["pdf_url"]
-    for location in work.get("oa_locations") or []:
+    for location in work.get("oa_locations") or []:  # legacy array, if present
         if isinstance(location, dict) and location.get("pdf_url"):
+            return location["pdf_url"]
+    for location in work.get("locations") or []:  # current API: filter is_oa
+        if isinstance(location, dict) and location.get("is_oa") and location.get("pdf_url"):
             return location["pdf_url"]
     return None

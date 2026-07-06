@@ -332,12 +332,36 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Status:** RESOLVED by US30. `resolve_oa` now takes an injected `oa_fallback`
   (OpenAlex), asked only when Unpaywall yields no PDF; the verdict is the union
   of both indexes (`resolve_oa._resolve_via_openalex`). The real
-  `_openalex_oa_lookup` looks a DOI up at `…/works/doi:<doi>` and reads
-  `best_oa_location`/`oa_locations` via the shared `_openalex.pdf_url_from_work`.
-  Closed now means both indexes agreed (reason records both were checked); an
-  OpenAlex transport error quarantines naming OpenAlex (distinct from Unpaywall's
-  AC6 error). **CORE as a third union member remains deferred** — trigger: the
-  first paper still wrongly reported closed after the OpenAlex cross-check.
+  `_openalex_oa_lookup` looks a DOI up at `…/works/doi:<doi>` and reads the OA PDF
+  via the shared `_openalex.pdf_url_from_work`. Closed now means both indexes
+  agreed (reason records both were checked); a real OpenAlex transport error
+  quarantines naming OpenAlex (distinct from Unpaywall's AC6 error), while a
+  **404** (DOI not indexed) is a definitive "no record" → treated as no-OA, not an
+  error. Codex review caught that the live OpenAlex schema no longer emits an
+  `oa_locations` array — it exposes every location under `locations` (each tagged
+  `is_oa`) — so `pdf_url_from_work` now scans OA `locations` (legacy `oa_locations`
+  still honored); the old code returned a false "closed" for a paper whose OA PDF
+  was in a non-best location (real case: arXiv 1412.6980). **CORE as a third
+  union member remains deferred** — trigger: the first paper still wrongly
+  reported closed after the OpenAlex cross-check.
+
+## resolve_oa — a Unpaywall *error* (e.g. 404 on an arXiv DOI) skips the OpenAlex fallback
+
+- **Where:** `src/paper_degist/resolve_oa.py::resolve_oa` (the `except` around the
+  primary `oa_lookup`) and `_unpaywall_lookup`.
+- **Case not handled:** the OpenAlex fallback (US30) fires only when Unpaywall
+  returns a **closed verdict** (HTTP 200, no PDF). When Unpaywall *raises* — e.g.
+  it returns **404** for a DOI it does not index, which arXiv DOIs
+  (`10.48550/arXiv.…`) routinely hit — the primary path quarantines
+  `"OA lookup error"` (US9 AC6) **before** the fallback runs, so a paper OpenAlex
+  has an OA copy for is still abandoned. Surfaced by the US30 real E2E
+  (`10.48550/arxiv.1412.6980`: Unpaywall 404, but OpenAlex points at the arXiv
+  PDF).
+- **Trigger to fix:** the first paper wrongly abandoned on a Unpaywall 404 that
+  OpenAlex could resolve. Let a Unpaywall 404 (not every error) fall through to
+  the OpenAlex cross-check, driven by a failing test. Out of US30's stated scope
+  ("when Unpaywall says **closed**"); logged so the next OA story can pick it up.
+- **Status:** OPEN.
 
 ## resolve_oa — "OA but no PDF link" shares the "closed access" reason
 

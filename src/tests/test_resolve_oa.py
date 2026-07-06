@@ -13,6 +13,8 @@ offline (US2 design principle).
 import json
 from pathlib import Path
 
+import pytest
+
 from paper_degist.resolve_oa import (
     _doi_from_crossref,
     _openalex_oa_lookup,
@@ -420,6 +422,48 @@ def test_openalex_lookup_without_email_warns_about_the_polite_pool(monkeypatch, 
     # AC5: a missing email downgrades politeness (warn), it does not skip the check.
     _openalex_oa_lookup(None)
     assert "polite pool" in capsys.readouterr().err
+
+
+class _ErrResp:
+    """A fake httpx response whose raise_for_status raises an HTTP status error."""
+
+    def __init__(self, status):
+        self.status_code = status
+
+    def raise_for_status(self):
+        import httpx
+
+        raise httpx.HTTPStatusError(
+            str(self.status_code), request=httpx.Request("GET", "http://x"), response=self
+        )
+
+    def json(self):
+        return {}
+
+
+def _openalex_http_status(monkeypatch, status):
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: _ErrResp(status))
+
+
+def test_openalex_lookup_404_is_treated_as_no_oa_copy(monkeypatch):
+    # A DOI OpenAlex does not index answers 404 — a definitive "no record here",
+    # not a transport failure: it feeds the union as no-OA (→ both-checked closed),
+    # not the AC4 error path with a scary "lookup error" reason.
+    _openalex_http_status(monkeypatch, 404)
+    assert _openalex_oa_lookup("me@example.com")("10.9999/not.indexed") is None
+
+
+def test_openalex_lookup_503_propagates_as_an_error(monkeypatch):
+    # A real transport failure (5xx/429/network) still raises, so resolve_oa
+    # quarantines it as an OpenAlex lookup error (AC4), distinct from no-OA.
+    import httpx
+
+    _openalex_http_status(monkeypatch, 503)
+    lookup = _openalex_oa_lookup("me@example.com")
+    with pytest.raises(httpx.HTTPStatusError):
+        lookup("10.1145/3292500.3330701")
 
 
 # --- US11 AC1/AC2: a resolve-oa quarantine carries a clickable doi.org link ---

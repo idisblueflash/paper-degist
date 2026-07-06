@@ -364,7 +364,19 @@ def _openalex_oa_lookup(email: Optional[str]) -> OALookup:
         print(_OPENALEX_NO_EMAIL_WARNING, file=sys.stderr)
 
     def lookup(doi: str) -> Optional[str]:
-        return _openalex.pdf_url_from_work(_openalex.fetch_work_by_doi(doi, email))
+        import httpx
+
+        try:
+            work = _openalex.fetch_work_by_doi(doi, email)
+        except httpx.HTTPStatusError as exc:
+            # A 404 is a *definitive* answer — OpenAlex has no record of this DOI,
+            # so it has no OA copy (feed the union as no-OA, → both-checked closed).
+            # Every other status (429/5xx/…) is a real transport failure that AC4
+            # quarantines as an OpenAlex lookup error, so re-raise it.
+            if exc.response.status_code == 404:
+                return None
+            raise
+        return _openalex.pdf_url_from_work(work)
 
     return lookup
 
