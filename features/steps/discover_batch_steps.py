@@ -179,6 +179,12 @@ def step_batch_saw_both(context):
         assert search.queries == context.batch_queries, (source, search.queries)
 
 
+@then("the merged stream carries the arxiv and the openalex candidate")
+def step_batch_merged_stream(context):
+    sources = sorted(r["source"] for r in context.batch_result)
+    assert sources == ["arxiv", "openalex"], context.batch_result
+
+
 @then("a discover-batch summary record is written to the manifest")
 def step_batch_summary(context):
     rows = [

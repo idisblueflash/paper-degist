@@ -12,6 +12,7 @@ Feature: US31 — discover-batch fans queries across sources and merges the unio
     And a batch "openalex" source returning one candidate
     When discover-batch runs
     Then every batch source saw both queries
+    And the merged stream carries the arxiv and the openalex candidate
     And a discover-batch summary record is written to the manifest
 
   Scenario: The same paper under one normalized DOI is emitted once (AC2)

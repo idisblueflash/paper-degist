@@ -201,6 +201,42 @@ def test_doiless_same_source_repeat_reason_is_dedup_source_id(tmp_path: Path):
     assert dropped["reason"] == "dedup-source-id"
 
 
+def _sequenced_search(batches):
+    """A Search returning the next batch per call — per-query answers differ."""
+    remaining = list(batches)
+
+    def search(query):
+        return list(remaining.pop(0))
+
+    return search
+
+
+def test_doi_flipping_same_source_repeat_is_still_emitted_once(tmp_path: Path):
+    # The same s2 paper answers the first query with its DOI but the second
+    # without it (Codex review): the merge must match on the (source,
+    # source_id) identity registered alongside the DOI, not just the DOI.
+    hyena_with_doi = _candidate(
+        title="Hyena Hierarchy: Towards Larger Convolutional Language Models",
+        url="https://www.semanticscholar.org/paper/hyena77",
+        source="s2",
+        source_id="hyena77",
+        doi="10.48550/arxiv.2302.10866",
+    )
+    hyena_doiless = _candidate(
+        title="Hyena Hierarchy: Towards Larger Convolutional Language Models",
+        url="https://www.semanticscholar.org/paper/hyena77",
+        source="s2",
+        source_id="hyena77",
+        doi=None,
+    )
+    result, _ = _run(
+        tmp_path,
+        ["implicit convolution language models", "subquadratic attention replacements"],
+        {"s2": _sequenced_search([[hyena_with_doi], [hyena_doiless]])},
+    )
+    assert len(result) == 1
+
+
 # --- AC4: a duplicate that carries an abstract replaces an abstract-less stub ---
 
 
@@ -271,6 +307,20 @@ def test_a_failing_pair_does_not_kill_the_batch(tmp_path: Path):
         sources=["s2", "arxiv"],
     )
     assert [r["title"] for r in result] == ["Mamba: Linear-Time Sequence Modeling"]
+
+
+def test_the_failing_pairs_quarantine_row_lands_in_the_batch_manifest(tmp_path: Path):
+    # AC5's other half (Codex review): the batch survives *and* the failing
+    # pair's own quarantine row — written by the inherited discover core —
+    # is in the same manifest, so the leg's failure is never silent.
+    _, manifest = _run(
+        tmp_path,
+        ["test-time training layers"],
+        {"s2": _rate_limited_search(), "arxiv": _recording_search([_candidate()])},
+        sources=["s2", "arxiv"],
+    )
+    (row,) = [r for r in _records(manifest, "discover") if "api-error" in r.get("reason", "")]
+    assert row["source"] == "s2"
 
 
 def test_all_empty_batch_returns_none(tmp_path: Path):

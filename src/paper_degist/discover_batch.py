@@ -35,22 +35,25 @@ from paper_degist.discover import (
 DEFAULT_SOURCES = ["arxiv", "openalex"]
 
 
-def merge_key(record: dict) -> Optional[tuple]:
-    """The dedup identity of a candidate: normalized DOI, else (source, id).
+def merge_keys(record: dict) -> list[tuple]:
+    """The dedup identities of a candidate: normalized DOI and (source, id).
 
     Two records are the same paper when their normalized DOIs match (US14's
-    `normalize_doi`, via US26's `candidate_doi_key`); a DOI-less record (an
-    arXiv hit) falls back to its `(source, source_id)` — which only catches the
-    same source returning the same paper twice (two overlapping queries), never
-    a cross-source match. No key at all → not dedupable, always kept.
+    `normalize_doi`, via US26's `candidate_doi_key`) or when the same source
+    returned the same `source_id` twice (two overlapping queries) — the
+    source-id identity never catches a cross-source match. A record is
+    registered under **every** identity it carries, so a later copy that
+    shares only one of them (a DOI-less repeat of a DOI-carrying hit) still
+    dedups. No identity at all → not dedupable, always kept.
     """
+    keys: list[tuple] = []
     doi = candidate_doi_key(record)
     if doi is not None:
-        return ("doi", doi)
+        keys.append(("doi", doi))
     source_id = record.get("source_id")
     if record.get("source") and source_id:
-        return ("source-id", record["source"], source_id)
-    return None
+        keys.append(("source-id", record["source"], source_id))
+    return keys
 
 
 def discover_batch(
@@ -80,19 +83,23 @@ def discover_batch(
             if records is None:
                 continue
             for record in records:
-                key = merge_key(record)
-                if key is None or key not in kept_at:
-                    if key is not None:
+                keys = merge_keys(record)
+                match = next((key for key in keys if key in kept_at), None)
+                if match is None:
+                    for key in keys:
                         kept_at[key] = len(merged)
                     merged.append(record)
                     continue
-                kept = merged[kept_at[key]]
+                index = kept_at[match]
+                kept = merged[index]
                 # First-seen wins, with one deterministic upgrade (AC4): a
                 # duplicate that carries an abstract replaces a kept record
                 # that has none, so the merged list keeps the richest copy
                 # for US26's similarity filter. The loser is the filtered one.
                 if record.get("abstract_present") and not kept.get("abstract_present"):
-                    merged[kept_at[key]] = record
+                    merged[index] = record
+                    for key in keys:
+                        kept_at[key] = index
                     record, kept = kept, record
                 _manifest.append(
                     manifest_path,
@@ -100,7 +107,7 @@ def discover_batch(
                     event="filtered",
                     url=record.get("url", ""),
                     source=record.get("source", ""),
-                    reason="dedup-doi" if key[0] == "doi" else "dedup-source-id",
+                    reason="dedup-doi" if match[0] == "doi" else "dedup-source-id",
                     duplicate_of=kept.get("url", ""),
                 )
     if not merged:
