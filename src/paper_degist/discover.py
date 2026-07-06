@@ -676,11 +676,7 @@ def run(
         # AC4: OpenAlex serves keyless traffic, so a missing contact email is
         # *politeness*, not an access requirement — warn and downgrade to the
         # common pool rather than quarantine (contrast US27's hard SerpAPI key).
-        typer.echo(
-            "warning: no OpenAlex contact email (--email / OPENALEX_EMAIL); "
-            "using the slower common pool — set one for the polite pool.",
-            err=True,
-        )
+        typer.echo(_openalex.NO_EMAIL_WARNING, err=True)
     records = discover(
         query,
         source,
