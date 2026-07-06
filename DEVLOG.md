@@ -1655,4 +1655,12 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `uv run discover "…" --source scholar` and eyeball a real `pdf_url`/`cited_by`,
   then confirm SerpAPI's real no-results `error` body still routes to
   empty-result (not api-error). Fold any shape drift back into the fixtures.
-- **Status:** OPEN (live path unexercised; offline branches and mapping verified).
+- **Status:** RESOLVED. Run live with a real `SERPAPI_API_KEY`: (1) `--source
+  scholar` "retrieval-augmented generation for code" returned real hits with
+  `pdf_url` + `cited_by` and `published: null` (organic carries no year, matching
+  the fixture); (2) `--source scholar-author` `JicYPdAAAAAJ` returned
+  bibliographic records (null abstract, `year`, `cited_by`); (3) a gibberish query
+  routed to `empty-result` (not api-error), confirming SerpAPI's real no-results
+  body is classified correctly; (4) end-to-end edge — a scholar `pdf_url`
+  (`arxiv.org/pdf/2006.05405`) piped into `fetch-one` saved a real 7-page PDF with
+  no `resolve-oa` hop. No shape drift; fixtures stand.
