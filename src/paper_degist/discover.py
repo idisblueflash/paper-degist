@@ -37,7 +37,7 @@ from typing import Annotated, Callable, Optional
 
 import typer
 
-from paper_degist import _manifest
+from paper_degist import _manifest, _openalex
 from paper_degist._cli import invoke
 
 # arXiv asks for a ~3 s delay between calls (its published rate-limit etiquette).
@@ -51,7 +51,7 @@ S2_ENDPOINT = "https://api.semanticscholar.org/graph/v1/paper/search"
 # The Semantic Scholar fields we ask for — the common-schema inputs plus tldr.
 S2_FIELDS = "title,abstract,authors,externalIds,url,publicationDate,tldr"
 
-OPENALEX_ENDPOINT = "https://api.openalex.org/works"
+OPENALEX_ENDPOINT = _openalex.WORKS_ENDPOINT
 
 # The Atom namespace every arXiv feed element lives under.
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -244,24 +244,6 @@ def _bare_doi(doi_url: Optional[str]) -> Optional[str]:
     return doi_url
 
 
-def _openalex_pdf_url(work: dict) -> Optional[str]:
-    """The directly fetchable OA PDF: ``best_oa_location`` then ``oa_locations``.
-
-    OpenAlex's ``best_oa_location.pdf_url`` is the preferred open copy; when it
-    has none (an OA landing page with no direct PDF, or a closed work), fall back
-    to the first ``oa_locations[]`` entry that carries a ``pdf_url`` (US29 AC3).
-    A work with no OA PDF anywhere yields ``None`` — still emitted, just without a
-    ``pdf_url``.
-    """
-    best = work.get("best_oa_location") or {}
-    if best.get("pdf_url"):
-        return best["pdf_url"]
-    for location in work.get("oa_locations") or []:
-        if isinstance(location, dict) and location.get("pdf_url"):
-            return location["pdf_url"]
-    return None
-
-
 def parse_openalex_json(data: dict) -> list[Candidate]:
     """Map an OpenAlex Works response into Candidates (rule 02 — quirks once).
 
@@ -299,7 +281,7 @@ def parse_openalex_json(data: dict) -> list[Candidate]:
                 source="openalex",
                 source_id=source_id,
                 doi=doi,
-                pdf_url=_openalex_pdf_url(work),
+                pdf_url=_openalex.pdf_url_from_work(work),
                 cited_by=work.get("cited_by_count"),
             )
         )
