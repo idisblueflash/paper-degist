@@ -15,8 +15,8 @@ timeless spec and carry no status marker.
 | ------------------------------------------------------------ | ---------------------------------------------------------------------- | ----------------- | --------------------------------- |
 | [US 1](user-stories/us-01-parsing-the-links.md)              | Parsing the links                                                      | `parse-url`       | ✅ Done                            |
 | [US 2](user-stories/us-02-fetching-the-paper-file.md)        | Fetching the paper file                                                | `fetch-one`       | ✅ Done                            |
-| [US 3](user-stories/us-03-converting-pdf.md)                 | Converting PDF                                                         | *(PDF path)*      | — *(model TBD by bench US 19–23)* |
-| [US 4](user-stories/us-04-formatting-paper.md)               | Formatting Paper                                                       | *(PDF path)*      | —                                 |
+| [US 3](user-stories/us-03-converting-pdf.md)                 | Converting PDF (OCR → MD, default `deepseek-ocr-2`)                    | `render-pdf`+`ocr-page` | — *(default set by bench US 19–23/28)* |
+| [US 4](user-stories/us-04-formatting-paper.md)               | Formatting Paper                                                       | *(folded into US 3)* | ❌ Cancelled                     |
 | [US 5](user-stories/us-05-converting-html.md)                | Converting HTML                                                        | `convert-html`    | ✅ Done                            |
 | [US 6](user-stories/us-06-importing-paper.md)                | Importing Paper                                                        | *(wiki import)*   | —                                 |
 | [US 7](user-stories/us-07-compiling-paper.md)                | Compiling Paper                                                        | *(wiki skill)*    | —                                 |
