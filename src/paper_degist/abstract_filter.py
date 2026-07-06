@@ -67,14 +67,21 @@ def cosine(a: list[float], b: list[float]) -> float:
 
     A zero vector has no direction, so guard the division rather than crash
     (rule 02: never crash) — a degenerate embedding scores 0 (below any positive
-    threshold), which drops it as off-topic.
+    threshold), which drops it as off-topic. Two other degenerate inputs fold to
+    0.0 for the same reason: **mismatched dimensions** (not comparable — return 0
+    rather than let ``zip`` truncate to a false near-match) and a **non-finite**
+    result (a ``NaN``/``inf`` component would otherwise emit ``similarity: NaN``,
+    which is not valid JSON for the downstream shortlist).
     """
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    result = dot / (norm_a * norm_b)
+    return result if math.isfinite(result) else 0.0
 
 
 def candidate_doi_key(record: dict) -> Optional[str]:
@@ -104,7 +111,10 @@ def _has_abstract(record: dict) -> bool:
     if record.get("abstract_present") is False:
         return False
     abstract = record.get("abstract")
-    return bool(abstract and str(abstract).strip())
+    # Require an actual non-empty *string*: a malformed source could carry
+    # abstract as a list/number, which would pass a truthiness check but then
+    # crash pass 2 on embed(non-str) — drop it as no-abstract instead.
+    return isinstance(abstract, str) and bool(abstract.strip())
 
 
 def _filtered(manifest_path: Path, *, url: str, reason: str, **fields: object) -> None:
@@ -114,10 +124,13 @@ def _filtered(manifest_path: Path, *, url: str, reason: str, **fields: object) -
     )
 
 
-def _quarantine(manifest_path: Path, *, url: str, reason: str) -> None:
-    """Record an *unhandled failure* — embed-text could not obtain a vector."""
+def _quarantine(manifest_path: Path, *, url: str, reason: str, **fields: object) -> None:
+    """Record an *unhandled failure* — a malformed input line or an embed-text
+    vector that could not be obtained. ``**fields`` carries the case-specific
+    detail (e.g. the raw offending ``line``) so the manifest preserves the
+    unknown case for a human, not just the parser's message."""
     _manifest.append(
-        manifest_path, stage="abstract-filter", event="quarantined", url=url, reason=reason
+        manifest_path, stage="abstract-filter", event="quarantined", url=url, reason=reason, **fields
     )
 
 
@@ -139,13 +152,19 @@ def load_candidates(text: str, *, manifest_path: Path = Path("manifest.jsonl")) 
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
-            _quarantine(manifest_path, url="", reason=f"unparseable candidate line {lineno}: {exc}")
+            _quarantine(
+                manifest_path,
+                url="",
+                reason=f"unparseable candidate line {lineno}: {exc}",
+                line=line[:500],
+            )
             continue
         if not isinstance(record, dict):
             _quarantine(
                 manifest_path,
                 url="",
                 reason=f"non-object candidate line {lineno}: got {type(record).__name__}",
+                line=line[:500],
             )
             continue
         candidates.append(record)
@@ -251,7 +270,13 @@ def make_embedder(
         )
         if path is None:
             return None
-        return json.loads(path.read_text(encoding="utf-8"))["embedding"]
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["embedding"]
+        except (json.JSONDecodeError, KeyError, OSError):
+            # embed_text saves atomically, so this is rare — but a corrupt or
+            # hand-edited cache file must not crash the batch (rule 02): surface
+            # it as None so abstract_filter quarantines this candidate.
+            return None
 
     return embed
 

@@ -18,6 +18,7 @@ from paper_degist.abstract_filter import (
     candidate_doi_key,
     cosine,
     load_candidates,
+    make_embedder,
 )
 
 TOPIC = "contrastive learning for speech representations"
@@ -98,6 +99,18 @@ def test_cosine_of_a_zero_vector_is_zero_not_a_crash():
     assert cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
 
 
+def test_cosine_of_mismatched_lengths_is_zero():
+    # Different dimensions are not comparable; return 0 rather than let zip()
+    # truncate the dot product and score a false near-match (Codex finding).
+    assert cosine([1.0, 0.0], [1.0, 0.0, 0.0]) == 0.0
+
+
+def test_cosine_of_a_non_finite_component_is_zero():
+    # A NaN in a vector must not yield similarity NaN (invalid JSON downstream);
+    # a non-finite result folds to 0.0 → dropped as off-topic (Codex finding).
+    assert cosine([float("nan"), 0.0], [1.0, 0.0]) == 0.0
+
+
 # --- candidate_doi_key (pure): the normalized dedup key ----------------------
 
 
@@ -131,6 +144,14 @@ def test_present_flag_true_but_empty_abstract_is_treated_as_no_abstract(tmp_path
     # A record whose flag lies (present=true, abstract empty) must be dropped as
     # no-abstract, never reach embed(None) and crash (rule 02: never crash).
     kept, _ = _run(tmp_path, [_cand("u/liar", abstract="   ", abstract_present=True)])
+    assert kept == []
+
+
+def test_non_string_abstract_is_treated_as_no_abstract(tmp_path):
+    # A malformed source could carry abstract as a list/number; it must drop as
+    # no-abstract, never pass a non-str into embed() and crash (Codex finding).
+    weird = _cand("u/weird", abstract=["not", "a", "string"], abstract_present=True)
+    kept, _ = _run(tmp_path, [weird])
     assert kept == []
 
 
@@ -331,6 +352,27 @@ def test_load_candidates_skips_a_non_object_line(tmp_path):
     text = '{"url": "u/ok"}\n42\n'
     cands = load_candidates(text, manifest_path=tmp_path / "m.jsonl")
     assert [c["url"] for c in cands] == ["u/ok"]
+
+
+def test_load_candidates_records_the_offending_line(tmp_path):
+    # The manifest is the queue of unknown cases; capture the raw bad line so a
+    # human can see what failed, not just the parser's message (Codex finding).
+    manifest = tmp_path / "m.jsonl"
+    load_candidates('{"url": "u/trunc", "abst', manifest_path=manifest)
+    assert _record_with(manifest, "unparseable")["line"] == '{"url": "u/trunc", "abst'
+
+
+# --- make_embedder: a corrupt cached vector quarantines, never crashes (rule 02) ---
+
+
+def test_make_embedder_returns_none_on_a_corrupt_cache_file(tmp_path, monkeypatch):
+    # embed_text saves atomically, but an externally-corrupted/edited cache file
+    # must not crash the batch — read failure surfaces as None → quarantine.
+    corrupt = tmp_path / "vec.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr("paper_degist.abstract_filter.embed_text", lambda *a, **k: corrupt)
+    embed = make_embedder(out_dir=tmp_path, manifest_path=tmp_path / "m.jsonl")
+    assert embed("some abstract", "document") is None
 
 
 # --- the calibrated constant is the measured value ---------------------------
