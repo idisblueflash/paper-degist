@@ -32,6 +32,35 @@ The scope is a **new filter step, `abstract-filter`, over a candidate JSONL and 
 topic**. It does **not** call an LLM, resolve intent beyond topical closeness, or
 fetch anything.
 
+## Threshold calibration (evidence)
+
+Measured the cosine cutoff against a real sample (rule 06 phase 2 — like the
+HTML-density and OCR constants, not guessed). Embedded the topic
+`"contrastive learning for speech representations"` once as a query and each
+candidate abstract as a document through the live `nomic-embed-text-v1.5`
+(the same model + `search_query:`/`search_document:` prefixes the pipeline
+uses), and scored cosine on two real arXiv candidate sets: 20 hits for the
+on-topic query, 12 for an unrelated `"CRISPR base editing off-target effects"`
+query.
+
+| Set                          | n  | min    | max    | mean   |
+| ---------------------------- | -- | ------ | ------ | ------ |
+| on-topic (speech contrastive)| 20 | 0.6408 | 0.8326 | 0.7479 |
+| off-topic (CRISPR editing)   | 12 | 0.4959 | 0.6337 | 0.5841 |
+
+The two sets separate cleanly: every off-topic (CRISPR) candidate scores
+**≤ 0.6337**, while the clearly-on-topic speech papers cluster **≥ 0.72**. The
+only entries in the gap are two wide-net arXiv hits that are *not* about speech
+at all — "Transformation Properties of Learned Visual Representations" (0.6682)
+and "AtomSurf: Surface Representation for … Protein Structures" (0.6408) — noise
+the coarse `all:` net returned. **`DEFAULT_THRESHOLD = 0.65`** sits just above
+the entire off-topic cluster (0.6337) with margin: it drops 100 % of the
+deliberately-off-topic set and keeps 100 % of the clearly-on-topic speech
+papers, a recall-biased shortlister (the finer intent judgment is the deferred
+LLM pass). A curated slice of this real corpus is saved at
+`src/tests/samples/abstract-filter-speech-candidates.jsonl`. Per-topic
+auto-calibration (the cut is topic-dependent) is deferred — see below and DEVLOG.
+
 ## Acceptance Criteria
 
 1. Given a candidate JSONL where two candidates share a normalized DOI and one

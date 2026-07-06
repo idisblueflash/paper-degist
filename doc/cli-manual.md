@@ -1174,6 +1174,92 @@ DOI normalization) is a deferred driver built on top of this step, not baked in.
 
 ---
 
+## `abstract-filter` — narrow a candidate list by abstract similarity (US26)
+
+Takes a candidate JSONL (`discover`'s output) and a `--topic`, and emits a
+**short, ranked shortlist** — a drop-in to `fetch-one`. It narrows the wide net
+in **two passes, and no LLM** (the criteria-aware judge on the ambiguous middle
+is a later story):
+
+1. **Deterministic** (pure, offline, free — runs first): dedup candidates by
+   normalized DOI (reusing US14's key) and drop any candidate `discover` flagged
+   `abstract_present: false`. This throws out the cheap junk **before** a single
+   embedding call is spent.
+2. **Embedding similarity**: embed the `--topic` once as a query and each
+   surviving abstract as a document via `embed-text` (US24), take the **cosine
+   similarity**, and cut everything below `--threshold`. Survivors are emitted
+   with their `similarity` attached, ordered by **descending** similarity.
+
+```
+uv run abstract-filter [candidates.jsonl] --topic "your topic"
+                       [--threshold 0.65] [--model nomic-embed-text-v1.5]
+                       [--out-dir out] [--endpoint URL] [--attempts 3] [--gap 7.0]
+                       [--manifest manifest.jsonl]
+```
+
+- **Argument**: the candidate JSONL file (one `discover` record per line); reads
+  **stdin** when omitted, so `discover … | abstract-filter --topic …` composes.
+- **`--topic`** (required): the topic string the abstracts are ranked against.
+- **`--threshold`** is the cosine cutoff (default **`0.65`**, measured against a
+  real sample — see the US26 story's calibration: every off-topic candidate
+  scored ≤ 0.6337, on-topic ≥ 0.72). A candidate at or above it is kept, below it
+  is dropped. Raise it for a stricter shortlist, lower it for higher recall.
+- **`--model`** is a registered `embed-text` model id (default
+  `nomic-embed-text-v1.5`); `--endpoint`/`--attempts`/`--gap` are the same
+  LM-Studio transport knobs as `embed-text`, and vectors are cached under
+  `--out-dir` (`out/embeddings/<model>/`), so a re-run is an idempotent,
+  network-free skip.
+- **Output**: the kept candidate records as JSONL on stdout, each with a
+  `similarity` field, ranked most-similar first.
+- **Every drop is auditable** (rule 02 — never silent, never a crash). Each lands
+  in the manifest with `stage: "abstract-filter"` and an `event` discriminator:
+  - `event: "filtered"` — a **deliberate** drop: `reason` is `dedup-doi` (with
+    `doi` + `duplicate_of`), `no-abstract`, or `below-threshold` (with its
+    `similarity`).
+  - `event: "quarantined"` — an **unhandled failure**: `embed-unavailable`, when
+    `embed-text` could not get a vector (server down). Only that candidate is
+    quarantined; the rest of the batch still completes.
+
+### Examples
+
+```bash
+# Happy path — rank a wide arXiv net down to the on-topic shortlist
+uv run discover "contrastive learning for speech representations" --source arxiv \
+  | uv run abstract-filter --topic "contrastive learning for speech representations"
+#   -> {"title":"Supervised Contrastive Learning for Accented Speech …",…,"similarity":0.8326}
+#   -> {"title":"A Brief Overview of Unsupervised Neural Speech …",…,"similarity":0.7963}
+#      … (descending) … the off-topic "protein surface" hit is dropped:
+#   -> manifest: {"stage":"abstract-filter","event":"filtered",
+#                 "url":"https://arxiv.org/abs/2309.16519v4",
+#                 "reason":"below-threshold","similarity":0.640824}
+
+# From a file, with a stricter cut and the full chain into fetch-one
+uv run abstract-filter candidates.jsonl --topic "graph neural networks for molecules" \
+  --threshold 0.72 \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+
+# Deterministic pass — a duplicate DOI and an abstract-less hit drop for free,
+# before any embedding call (real OpenAlex data carries both cases)
+uv run abstract-filter merged.jsonl --topic "graph neural networks for molecules"
+#   -> manifest: {"stage":"abstract-filter","event":"filtered","url":"…","reason":"no-abstract"}
+#   -> manifest: {"stage":"abstract-filter","event":"filtered","reason":"dedup-doi",
+#                 "doi":"10.48550/arxiv.1704.01212","duplicate_of":"https://doi.org/10.48550/…"}
+
+# Server down — the run exits cleanly (exit 0) with an empty shortlist, recorded
+uv run abstract-filter candidates.jsonl --topic "…" --endpoint http://localhost:9/v1/embeddings
+#   -> stdout: (empty — nothing scored)
+#   -> manifest: {"stage":"abstract-filter","event":"quarantined","url":"",
+#                 "reason":"embed-unavailable: could not embed the topic query '…'"}
+```
+
+`abstract-filter` sits between `discover` and `fetch-one`: `discover` casts the
+wide net, `abstract-filter` ranks and trims it to the on-topic shortlist, and the
+kept `url`s feed straight into `fetch-one`. It embeds through `embed-text`, so the
+LM-Studio server must be up (a down server quarantines cleanly, never crashes).
+
+---
+
 ## End-to-end (no AI in the loop)
 
 ```bash
@@ -1197,6 +1283,17 @@ endpoint=$(uv run browser-up)
 uv run recover-blocked manifest.jsonl --cdp "$endpoint" | while read -r p; do
   case "$p" in *.html) uv run convert-html "$p" ;; esac
 done
+```
+
+Or start from a **topic** instead of a list of URLs (the US25/US26 front): cast
+a wide net, rank it to an on-topic shortlist, and fetch that.
+
+```bash
+# 0. topic → wide candidate net → ranked shortlist → fetch the on-topic ones
+uv run discover "contrastive learning for speech representations" --source arxiv \
+  | uv run abstract-filter --topic "contrastive learning for speech representations" \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
 ```
 
 Inspect `manifest.jsonl` for everything that could not be handled
