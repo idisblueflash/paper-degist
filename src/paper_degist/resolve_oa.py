@@ -20,13 +20,14 @@ line (rule 03):
 """
 
 import re
+import sys
 from pathlib import Path
 from typing import Annotated, Callable, Optional
 from urllib.parse import unquote, urlsplit
 
 import typer
 
-from paper_degist import _manifest
+from paper_degist import _manifest, _openalex
 from paper_degist._cli import invoke
 
 # An OA lookup maps a DOI to its open-access PDF URL, or ``None`` for closed
@@ -89,13 +90,21 @@ def resolve_oa(
     manifest_path: Path = Path("manifest.jsonl"),
     oa_lookup: OALookup,
     title_lookup: Optional[TitleLookup] = None,
+    oa_fallback: Optional[OALookup] = None,
 ) -> Optional[str]:
     """Resolve an open-access PDF URL for ``url``, or quarantine and return None.
 
-    Classify-then-dispatch (rule 02): recover a DOI, ask ``oa_lookup`` for the
-    open-access verdict, and dispatch — an OA URL is returned; closed access, a
-    missing DOI, and a lookup error each quarantine to ``manifest_path`` with a
-    precise reason and return ``None`` so the batch finishes.
+    Classify-then-dispatch (rule 02): recover a DOI, ask ``oa_lookup`` (Unpaywall)
+    for the open-access verdict, and dispatch — an OA URL is returned; closed
+    access, a missing DOI, and a lookup error each quarantine to ``manifest_path``
+    with a precise reason and return ``None`` so the batch finishes.
+
+    When ``oa_lookup`` yields no PDF and an ``oa_fallback`` (OpenAlex, US30) is
+    supplied, the verdict is the **union of two indexes**: the fallback is asked
+    only then (a paper Unpaywall already resolves never triggers it), and open if
+    *either* index has an OA PDF. Closed only when **both** agree — quarantined
+    with a reason recording both were checked; a fallback transport error
+    quarantines naming OpenAlex as the failed source (distinct from Unpaywall's).
 
     When no DOI is embedded and a ``title_lookup`` is supplied (US10), recover a
     title from the URL slug and resolve it to a DOI via Crossref before the OA
@@ -114,8 +123,41 @@ def resolve_oa(
     except Exception as exc:  # API/network error — quarantine, do not crash
         _quarantine(manifest_path, url=url, doi=doi, reason=f"OA lookup error: {exc}")
         return None
-    if pdf_url is None:
+    if pdf_url is not None:
+        return pdf_url  # Unpaywall resolved it — the fallback is never called.
+
+    return _resolve_via_openalex(url, doi, manifest_path, oa_fallback)
+
+
+def _resolve_via_openalex(
+    url: str, doi: str, manifest_path: Path, oa_fallback: Optional[OALookup]
+) -> Optional[str]:
+    """Cross-check the closed Unpaywall verdict against OpenAlex (US30).
+
+    The union's second index: with no ``oa_fallback`` wired, keep US9's single-
+    source verdict (``closed access``). With one, ask OpenAlex by DOI — a PDF is
+    returned (open after all); both indexes agreeing on no PDF quarantines with a
+    both-checked reason; an OpenAlex transport error quarantines naming OpenAlex.
+    Never crashes, never calls an LLM.
+    """
+    if oa_fallback is None:
         _quarantine(manifest_path, url=url, doi=doi, reason="no OA copy (closed access)")
+        return None
+
+    try:
+        pdf_url = oa_fallback(doi)
+    except Exception as exc:  # OpenAlex API/network error — quarantine, do not crash
+        _quarantine(
+            manifest_path, url=url, doi=doi, reason=f"OpenAlex OA lookup error: {exc}"
+        )
+        return None
+    if pdf_url is None:
+        _quarantine(
+            manifest_path,
+            url=url,
+            doi=doi,
+            reason="no OA copy (closed access) — checked Unpaywall and OpenAlex",
+        )
         return None
     return pdf_url
 
@@ -298,9 +340,50 @@ def _unpaywall_lookup(email: str) -> OALookup:
     return lookup
 
 
+_OPENALEX_NO_EMAIL_WARNING = (
+    "warning: no OpenAlex contact email (--email / OPENALEX_EMAIL); the OA "
+    "cross-check uses the slower common pool — set one for the polite pool."
+)
+
+
+def _openalex_oa_lookup(email: Optional[str]) -> OALookup:
+    """Build the OpenAlex OA fallback lookup: find a DOI's OA PDF in OpenAlex (US30).
+
+    Addresses the single work at ``{WORKS_ENDPOINT}/doi:<doi>`` and reads its
+    ``best_oa_location``/``oa_locations`` for a fetchable ``pdf_url`` via the
+    shared ``_openalex`` extractor (rule 02 — the quirk encoded once). Returns the
+    PDF URL, or ``None`` when OpenAlex knows no OA copy either; raises on a
+    network/API error so ``resolve_oa`` quarantines it naming OpenAlex (AC4).
+
+    OpenAlex is **keyless**; a contact ``mailto`` earns the faster polite pool.
+    With no email the cross-check still runs on the common pool (AC5) — ``mailto``
+    is omitted and a politeness warning is emitted; a missing email downgrades
+    politeness, it does not skip the cross-check.
+    """
+    if not email:
+        print(_OPENALEX_NO_EMAIL_WARNING, file=sys.stderr)
+
+    def lookup(doi: str) -> Optional[str]:
+        import httpx
+
+        try:
+            work = _openalex.fetch_work_by_doi(doi, email)
+        except httpx.HTTPStatusError as exc:
+            # A 404 is a *definitive* answer — OpenAlex has no record of this DOI,
+            # so it has no OA copy (feed the union as no-OA, → both-checked closed).
+            # Every other status (429/5xx/…) is a real transport failure that AC4
+            # quarantines as an OpenAlex lookup error, so re-raise it.
+            if exc.response.status_code == 404:
+                return None
+            raise
+        return _openalex.pdf_url_from_work(work)
+
+    return lookup
+
+
 app = typer.Typer(
     add_completion=False,
-    help="Verify whether a failed fetch has an open-access copy (US9/US10).",
+    help="Verify whether a failed fetch has an open-access copy (US9/US10/US30).",
 )
 
 
@@ -322,6 +405,7 @@ def run(
         manifest_path=manifest,
         oa_lookup=_unpaywall_lookup(email),
         title_lookup=_crossref_title_lookup(email),
+        oa_fallback=_openalex_oa_lookup(email),
     )
     if pdf_url is None:
         # Quarantine is an expected outcome, not a crash: the batch still

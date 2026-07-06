@@ -35,6 +35,42 @@ def step_oa_no_doi(context, url):
     context.oa_lookup = _must_not_call
 
 
+@given('a failed URL "{url}" Unpaywall reports closed but OpenAlex has an OA PDF at "{pdf_url}"')
+def step_openalex_fallback_open(context, url, pdf_url):
+    context.url = url
+    context.oa_lookup = lambda doi: None
+    context.oa_fallback = lambda doi: pdf_url
+
+
+@given('a failed URL "{url}" both Unpaywall and OpenAlex report closed')
+def step_both_closed(context, url):
+    context.url = url
+    context.oa_lookup = lambda doi: None
+    context.oa_fallback = lambda doi: None
+
+
+@given('a failed URL "{url}" Unpaywall reports open at "{pdf_url}" and OpenAlex must not be consulted')
+def step_unpaywall_open_openalex_untouched(context, url, pdf_url):
+    context.url = url
+    context.oa_lookup = lambda doi: pdf_url
+
+    def _must_not_call(doi):
+        raise AssertionError("OpenAlex fallback ran though Unpaywall already resolved")
+
+    context.oa_fallback = _must_not_call
+
+
+@given('a failed URL "{url}" Unpaywall reports closed and the OpenAlex fallback errors')
+def step_openalex_fallback_errors(context, url):
+    context.url = url
+    context.oa_lookup = lambda doi: None
+
+    def _boom(doi):
+        raise RuntimeError("openalex 503")
+
+    context.oa_fallback = _boom
+
+
 @when("resolve-oa looks it up")
 def step_resolve(context):
     context.manifest = _work_dir(context) / "manifest.jsonl"
@@ -42,6 +78,7 @@ def step_resolve(context):
         context.url,
         manifest_path=context.manifest,
         oa_lookup=context.oa_lookup,
+        oa_fallback=getattr(context, "oa_fallback", None),
     )
 
 

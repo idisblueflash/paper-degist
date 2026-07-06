@@ -13,8 +13,11 @@ offline (US2 design principle).
 import json
 from pathlib import Path
 
+import pytest
+
 from paper_degist.resolve_oa import (
     _doi_from_crossref,
+    _openalex_oa_lookup,
     _pdf_url_from_unpaywall,
     doi_from,
     resolve_oa,
@@ -25,11 +28,15 @@ _DOI_URL = "https://doi.org/10.1191/1362168805lr151oa"
 _SLUG_URL = "https://www.researchgate.net/publication/249870239_An_investigation"
 
 
-def _run(tmp_path, *, url=_DOI_URL, oa_lookup, title_lookup=None):
+def _run(tmp_path, *, url=_DOI_URL, oa_lookup, title_lookup=None, oa_fallback=None):
     """Arrange a fresh manifest and run resolve_oa; return (result, manifest)."""
     manifest = tmp_path / "manifest.jsonl"
     result = resolve_oa(
-        url, manifest_path=manifest, oa_lookup=oa_lookup, title_lookup=title_lookup
+        url,
+        manifest_path=manifest,
+        oa_lookup=oa_lookup,
+        title_lookup=title_lookup,
+        oa_fallback=oa_fallback,
     )
     return result, manifest
 
@@ -284,6 +291,179 @@ def test_title_lookup_error_returns_none(tmp_path: Path):
 def test_title_lookup_error_reason_mentions_the_error(tmp_path: Path):
     _, manifest = _run(tmp_path, url=_SLUG_URL, oa_lookup=_must_not_call, title_lookup=_boom)
     assert "unpaywall 422" in _only_record(manifest)["reason"]
+
+
+# --- US30 AC1: OpenAlex fallback finds a PDF that Unpaywall (closed) missed ---
+
+
+def test_openalex_fallback_returns_the_pdf_when_unpaywall_closed(tmp_path: Path):
+    result, _ = _run(
+        tmp_path,
+        oa_lookup=_closed,
+        oa_fallback=_found("https://repo.example.org/openalex.pdf"),
+    )
+    assert result == "https://repo.example.org/openalex.pdf"
+
+
+def test_openalex_fallback_hit_writes_no_manifest_record(tmp_path: Path):
+    _, manifest = _run(
+        tmp_path,
+        oa_lookup=_closed,
+        oa_fallback=_found("https://repo.example.org/openalex.pdf"),
+    )
+    assert not manifest.exists()
+
+
+# --- US30 AC3: Unpaywall's own PDF short-circuits — OpenAlex is never called ---
+
+
+def test_unpaywall_pdf_does_not_call_openalex_fallback(tmp_path: Path):
+    # Unpaywall already resolved a PDF, so the fallback must never run
+    # (_must_not_call raising would surface the extra call as a failure).
+    result, _ = _run(
+        tmp_path,
+        oa_lookup=_found("https://oa.example.org/unpaywall.pdf"),
+        oa_fallback=_must_not_call,
+    )
+    assert result == "https://oa.example.org/unpaywall.pdf"
+
+
+# --- US30 AC2: both indexes closed → quarantine names both were checked ---
+
+
+def test_both_indexes_closed_returns_none(tmp_path: Path):
+    result, _ = _run(tmp_path, oa_lookup=_closed, oa_fallback=_closed)
+    assert result is None
+
+
+def test_both_indexes_closed_reason_names_both_sources(tmp_path: Path):
+    _, manifest = _run(tmp_path, oa_lookup=_closed, oa_fallback=_closed)
+    assert _only_record(manifest)["reason"] == (
+        "no OA copy (closed access) — checked Unpaywall and OpenAlex"
+    )
+
+
+# --- US30 AC4: an OpenAlex fallback error is quarantined, naming OpenAlex ---
+
+
+def _openalex_boom(doi):
+    raise RuntimeError("openalex 503")
+
+
+def test_openalex_fallback_error_returns_none(tmp_path: Path):
+    result, _ = _run(tmp_path, oa_lookup=_closed, oa_fallback=_openalex_boom)
+    assert result is None
+
+
+def test_openalex_fallback_error_reason_names_openalex(tmp_path: Path):
+    _, manifest = _run(tmp_path, oa_lookup=_closed, oa_fallback=_openalex_boom)
+    reason = _only_record(manifest)["reason"]
+    assert reason == "OpenAlex OA lookup error: openalex 503"
+
+
+# --- US30: the real _openalex_oa_lookup builder (works-by-DOI + polite pool) ---
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def _capture_openalex(monkeypatch, payload):
+    """Patch httpx.get to record the request and return ``payload`` as JSON."""
+    import httpx
+
+    calls: dict = {}
+
+    def fake_get(url, **kwargs):
+        calls["url"] = url
+        calls["params"] = kwargs.get("params")
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    return calls
+
+
+_OPENALEX_WORK_WITH_PDF = {"best_oa_location": {"pdf_url": "https://repo.example/oa/42.pdf"}}
+
+
+def test_openalex_lookup_extracts_pdf_from_work(monkeypatch):
+    _capture_openalex(monkeypatch, _OPENALEX_WORK_WITH_PDF)
+    lookup = _openalex_oa_lookup("me@example.com")
+    assert lookup("10.1145/3292500.3330701") == "https://repo.example/oa/42.pdf"
+
+
+def test_openalex_lookup_addresses_the_work_by_doi(monkeypatch):
+    calls = _capture_openalex(monkeypatch, _OPENALEX_WORK_WITH_PDF)
+    _openalex_oa_lookup("me@example.com")("10.1145/3292500.3330701")
+    assert calls["url"].endswith("/works/doi:10.1145/3292500.3330701")
+
+
+def test_openalex_lookup_with_email_sends_the_mailto(monkeypatch):
+    calls = _capture_openalex(monkeypatch, _OPENALEX_WORK_WITH_PDF)
+    _openalex_oa_lookup("me@example.com")("10.1145/3292500.3330701")
+    assert calls["params"]["mailto"] == "me@example.com"
+
+
+def test_openalex_lookup_without_email_omits_the_mailto(monkeypatch):
+    # AC5: keyless is allowed — the request runs on the common pool, no mailto.
+    calls = _capture_openalex(monkeypatch, _OPENALEX_WORK_WITH_PDF)
+    _openalex_oa_lookup(None)("10.1145/3292500.3330701")
+    assert "mailto" not in calls["params"]
+
+
+def test_openalex_lookup_without_email_warns_about_the_polite_pool(monkeypatch, capsys):
+    # AC5: a missing email downgrades politeness (warn), it does not skip the check.
+    _openalex_oa_lookup(None)
+    assert "polite pool" in capsys.readouterr().err
+
+
+class _ErrResp:
+    """A fake httpx response whose raise_for_status raises an HTTP status error."""
+
+    def __init__(self, status):
+        self.status_code = status
+
+    def raise_for_status(self):
+        import httpx
+
+        raise httpx.HTTPStatusError(
+            str(self.status_code), request=httpx.Request("GET", "http://x"), response=self
+        )
+
+    def json(self):
+        return {}
+
+
+def _openalex_http_status(monkeypatch, status):
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: _ErrResp(status))
+
+
+def test_openalex_lookup_404_is_treated_as_no_oa_copy(monkeypatch):
+    # A DOI OpenAlex does not index answers 404 — a definitive "no record here",
+    # not a transport failure: it feeds the union as no-OA (→ both-checked closed),
+    # not the AC4 error path with a scary "lookup error" reason.
+    _openalex_http_status(monkeypatch, 404)
+    assert _openalex_oa_lookup("me@example.com")("10.9999/not.indexed") is None
+
+
+def test_openalex_lookup_503_propagates_as_an_error(monkeypatch):
+    # A real transport failure (5xx/429/network) still raises, so resolve_oa
+    # quarantines it as an OpenAlex lookup error (AC4), distinct from no-OA.
+    import httpx
+
+    _openalex_http_status(monkeypatch, 503)
+    lookup = _openalex_oa_lookup("me@example.com")
+    with pytest.raises(httpx.HTTPStatusError):
+        lookup("10.1145/3292500.3330701")
 
 
 # --- US11 AC1/AC2: a resolve-oa quarantine carries a clickable doi.org link ---

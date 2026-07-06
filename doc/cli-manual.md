@@ -226,13 +226,15 @@ uv run convert-html files/paper.pdf
 
 ---
 
-## `resolve-oa` — recover an open-access copy of a failed fetch (US9 / US10)
+## `resolve-oa` — recover an open-access copy of a failed fetch (US9 / US10 / US30)
 
 When `fetch-one` quarantines a URL (typically a `403`), ask whether the paper is
 reachable for free somewhere. Recover the paper's DOI — embedded in the URL, or
 (US10) resolved from the URL's title slug via Crossref — then ask Unpaywall for
-an open-access **PDF** URL. Print that URL so it can be piped back into
-`fetch-one`.
+an open-access **PDF** URL. When Unpaywall reports no PDF, **cross-check
+OpenAlex** (US30): it aggregates repository copies and author self-archives
+Unpaywall can miss, so the verdict is the *union* of the two indexes. Print the
+PDF URL so it can be piped back into `fetch-one`.
 
 ```
 uv run resolve-oa <url-or-doi> --email you@example.com
@@ -241,16 +243,20 @@ uv run resolve-oa <url-or-doi> --email you@example.com
 - **Argument**: `url` — the failed URL, or a bare DOI.
 - **Options**: `--email` (**required**; Unpaywall and Crossref both require a
   contact email — set once via `export UNPAYWALL_EMAIL=you@example.com` instead
-  of passing `--email` each time), `--manifest` (default `manifest.jsonl`).
-- **Output**: the open-access PDF URL on stdout.
+  of passing `--email` each time; the same address joins OpenAlex's `mailto`
+  polite pool), `--manifest` (default `manifest.jsonl`).
+- **Output**: the open-access PDF URL on stdout — from Unpaywall, or from the
+  OpenAlex fallback when Unpaywall had none.
 - **Quarantined**, each with a precise reason (not a bare `http 403`):
-  - `no OA copy (closed access)` — Unpaywall reports the paper closed.
+  - `no OA copy (closed access) — checked Unpaywall and OpenAlex` — **both**
+    indexes agree the paper has no free PDF (a two-index verdict, US30).
   - `title→DOI: no confident Crossref match (route to human/browser)` — a title
     was recovered but Crossref's best match is too weak to trust.
   - `no DOI and no title to resolve (route to human/browser)` — nothing to work
     from (e.g. a bare domain).
-  - `OA lookup error: …` / `title→DOI lookup error: …` — a network/API error;
-    finishes cleanly.
+  - `OA lookup error: …` — Unpaywall failed; `OpenAlex OA lookup error: …` — the
+    OpenAlex cross-check failed; `title→DOI lookup error: …` — Crossref failed.
+    Each names its source and finishes cleanly.
 - **Manifest hand-off** (US11): every quarantine that recovered a DOI also
   carries a `doi_url` of `https://doi.org/<doi>` — a clickable link straight to
   the paper for a reader working `manifest.jsonl` by hand. A quarantine with no
@@ -263,6 +269,10 @@ export UNPAYWALL_EMAIL=you@example.com
 
 # From a DOI — prints the OA PDF URL when one exists
 uv run resolve-oa 10.1371/journal.pone.0000308
+
+# Unpaywall reports closed, but OpenAlex has a self-archived copy (US30):
+# prints the OpenAlex PDF instead of quarantining
+uv run resolve-oa 10.1109/5.726791
 
 # From a slug-only URL — recovers the title, asks Crossref, then Unpaywall
 uv run resolve-oa https://www.researchgate.net/publication/249870239_An_investigation
