@@ -45,6 +45,8 @@ timeless spec and carry no status marker.
 | [US 30](user-stories/us-30-openalex-oa-fallback.md)          | Cross-check open access against OpenAlex when Unpaywall says closed    | `resolve-oa`      | ✅ Done                            |
 | [US 31](user-stories/us-31-discover-batch-merge.md)          | Fan a topic across queries and sources, merge the union                | `discover-batch`  | ✅ Done                            |
 | [US 32](user-stories/us-32-rank-cited.md)                    | Rank candidates by citation count, keep the top N                      | `rank-cited`      | ✅ Done                            |
+| [US 33](user-stories/us-33-snowball.md)                      | Snowball a seed paper's references and citers via OpenAlex             | `snowball`        | ✅ Done                            |
+| [US 34](user-stories/us-34-enrich-abstract.md)               | Fill missing abstracts for candidates by DOI via OpenAlex              | `enrich-abstract` | —                                 |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
