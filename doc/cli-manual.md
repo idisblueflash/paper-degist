@@ -1624,3 +1624,93 @@ uv run snowball 10.48550/arxiv.1706.03762 --email "$OPENALEX_EMAIL" --direction 
   | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
   | uv run fetch-one
 ```
+
+---
+
+## `enrich-abstract` — fill missing abstracts from OpenAlex by DOI (US34)
+
+`snowball` emits reference/citer candidates that often lack an `abstract` field;
+`discover --source scholar-author` is bibliographic-only. `abstract-filter` drops
+a candidate with `abstract_present: false` as `no-abstract` — so a paper that
+could be scored is silently lost. `enrich-abstract` fills the gap: for each
+candidate without an abstract, it looks the Work up by DOI on OpenAlex and
+reconstructs the abstract. Candidates already carrying an abstract pass through
+unchanged. **Drop-in between `snowball`/`discover-batch` and `abstract-filter`.**
+
+No LLM call. One API key optional (OpenAlex polite-pool email).
+
+```
+uv run enrich-abstract [candidates.jsonl] [--email you@example.com] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `candidates.jsonl` — JSONL from `discover`, `snowball`, or any
+  step that emits the common candidate schema. Omit to read **stdin**.
+- **`--email`** (or `OPENALEX_EMAIL` env var): contact email for OpenAlex's polite
+  pool. Optional — omitting it only warns on stderr.
+- **`--manifest`** (default `manifest.jsonl`): where quarantined records land.
+- **Output**: the surviving candidates as JSONL on stdout — same schema as input,
+  with `abstract` and `abstract_present: true` filled in on enriched records,
+  all other fields unchanged. A drop-in to `abstract-filter`.
+- **Quarantine, not a crash** (rule 02). Three cases land in the manifest and
+  exit cleanly (exit 0):
+  - `no-doi` — candidate has no `doi` field (or it is empty); OpenAlex cannot be
+    queried without a DOI.
+  - `doi-not-found` — OpenAlex returned an error (e.g. 404) for the DOI.
+  - `no-abstract-on-record` — OpenAlex has the Work but carries no
+    `abstract_inverted_index`; the abstract is genuinely absent.
+
+### Happy path
+
+```bash
+export OPENALEX_EMAIL=you@example.com
+
+# Enrich a single abstract-less candidate (BERT paper)
+echo '{"title":"BERT","doi":"10.18653/v1/N19-1423","url":"https://doi.org/10.18653/v1/N19-1423","abstract":null,"abstract_present":false}' \
+  | uv run enrich-abstract --email "$OPENALEX_EMAIL"
+#   -> {"title":"BERT","doi":"10.18653/v1/N19-1423",
+#       "abstract":"Jacob Devlin, Ming-Wei Chang ... 2019.","abstract_present":true,...}
+
+# Candidate already with an abstract passes through unchanged (no API call)
+echo '{"title":"FlashAttention","doi":"10.48550/arxiv.2205.14135","abstract":"We show...","abstract_present":true}' \
+  | uv run enrich-abstract --email "$OPENALEX_EMAIL"
+#   -> (same record, unchanged)
+```
+
+### Quarantine examples
+
+**No DOI on candidate** (scholar-author bibliographic record):
+
+```bash
+echo '{"title":"Deep Learning","abstract":null,"abstract_present":false,"url":"https://scholar.google.com/citations?..."}' \
+  | uv run enrich-abstract --manifest manifest.jsonl
+#   -> stdout: (empty — nothing emitted)
+#   -> manifest: {"stage":"enrich-abstract","event":"quarantined","url":"https://scholar.google.com/...","reason":"no-doi","title":"Deep Learning"}
+```
+
+**DOI not in OpenAlex**:
+
+```bash
+echo '{"title":"Obscure Paper","doi":"10.9999/does-not-exist","abstract":null,"abstract_present":false}' \
+  | uv run enrich-abstract --manifest manifest.jsonl
+#   -> manifest: {"stage":"enrich-abstract","event":"quarantined","reason":"doi-not-found","doi":"10.9999/does-not-exist",...}
+```
+
+### Composition with other steps
+
+`enrich-abstract` sits between `snowball`/`discover-batch` and `abstract-filter`:
+
+```bash
+# Snowball a seed → enrich refs that lack abstracts → filter on-topic → fetch
+uv run snowball 10.18653/v1/N19-1423 --email "$OPENALEX_EMAIL" \
+  | uv run enrich-abstract --email "$OPENALEX_EMAIL" \
+  | uv run abstract-filter --topic "pre-trained language models" \
+  | uv run rank-cited --top 10 \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+
+# Or enrich after a multi-source discover-batch
+uv run discover-batch "sparse mixture-of-experts" "expert choice routing" \
+  --email "$OPENALEX_EMAIL" \
+  | uv run enrich-abstract --email "$OPENALEX_EMAIL" \
+  | uv run abstract-filter --topic "sparse mixture-of-experts language models"
+```
