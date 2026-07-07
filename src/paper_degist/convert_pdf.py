@@ -84,6 +84,13 @@ def convert_pdf(
     if pages is None:
         # render_pdf already wrote the quarantine record; nothing more to do.
         return None
+    if not pages:
+        _quarantine(
+            manifest_path,
+            pdf=str(pdf_path),
+            reason="render produced no pages",
+        )
+        return None
 
     page_markdowns: list[str] = []
     for page in pages:
@@ -97,7 +104,15 @@ def convert_pdf(
                 reason=f"OCR failed for page: {page.name}",
             )
             return None
-        page_markdowns.append(Path(md_path).read_text(encoding="utf-8"))
+        try:
+            page_markdowns.append(Path(md_path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            _quarantine(
+                manifest_path,
+                pdf=str(pdf_path),
+                reason=f"unreadable OCR output for page {page.name}: {exc}",
+            )
+            return None
 
     stitched = _PAGE_SEP.join(page_markdowns)
     # Atomic write: stage under a sibling so a killed write never leaves a

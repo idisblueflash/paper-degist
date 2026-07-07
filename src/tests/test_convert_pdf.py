@@ -191,6 +191,11 @@ def test_render_failure_does_not_write_md(tmp_path):
     assert not pdf.with_suffix(".md").exists()
 
 
+def test_empty_rendered_page_list_returns_none(tmp_path):
+    result, _, _ = _run(tmp_path, name="Empty_Render.pdf", pages=())
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # AC3 — quarantine: OCR failure on a page
 # ---------------------------------------------------------------------------
@@ -234,6 +239,28 @@ def test_ocr_failure_manifest_records_the_failing_page(tmp_path):
     records = _records(manifest)
     cv = next(r for r in records if r.get("stage") == "convert-pdf")
     assert "p0001" in cv["reason"]
+
+
+def test_unreadable_ocr_markdown_returns_none(tmp_path):
+    pdf = tmp_path / "Unreadable_OCR_Output.pdf"
+    pdf.write_bytes(b"%PDF-1.7 fake")
+    bad_md = tmp_path / "out" / DEFAULT_MODEL / "p0001.md"
+    bad_md.parent.mkdir(parents=True)
+    bad_md.write_bytes(b"\xff\xfe\x00")
+
+    def ocr_fn(page, model, *, out_dir, manifest_path, **kwargs):
+        return bad_md
+
+    result = convert_pdf(
+        pdf,
+        pages_dir=tmp_path / "pages",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        render_fn=_fake_render(("p0001.png",)),
+        ocr_fn=ocr_fn,
+    )
+
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
