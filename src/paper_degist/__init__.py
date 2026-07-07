@@ -30,6 +30,7 @@ _STEPS = [
     ("abstract-filter", "Filter candidates by abstract similarity to a topic (US26)."),
     ("rank-cited", "Rank candidates by citation count, keep the top N (US32)."),
     ("snowball", "Expand a seed paper into its references and citers via OpenAlex (US33)."),
+    ("enrich-abstract", "Fill missing abstracts for candidates by DOI via OpenAlex (US34)."),
 ]
 
 app = typer.Typer(
