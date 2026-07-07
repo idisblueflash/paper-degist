@@ -83,17 +83,23 @@ def _target_path(url: str, files_dir: Path) -> Path:
 # Known wall signatures (US35): markup a bot-wall / challenge page carries that a
 # real paper page does not. Deliberately specific — a bare "cloudflare" would
 # false-positive on the huge fraction of legitimate paper hosts served *via*
-# Cloudflare's CDN; these are the interstitial/challenge markers a *blocking*
-# page emits. A newly-seen signature is one entry here (rule 02: the manifest of
-# wall captures is the queue of cases), never a new code path.
-_WALL_MARKERS = (
+# Cloudflare's CDN. A newly-seen signature is one entry here (rule 02: the
+# manifest of wall captures is the queue of cases), never a new code path.
+#
+# Split by *where* it is safe to match (Codex review): the structural challenge
+# tokens live in a script src / challenge blob a real paper page never carries,
+# so they are matched anywhere in the HTML; the interstitial *phrases* ("just a
+# moment…") are ordinary English that could appear in a paper's body prose, so
+# they are matched only against the rendered ``<title>``.
+_WALL_BODY_MARKERS = (
     "challenge-platform",  # the /cdn-cgi/challenge-platform/ JS challenge script
     "cf-chl-",  # Cloudflare challenge widget id prefix
     "cf_chl_opt",  # Cloudflare challenge options blob
-    "just a moment...",  # the classic CF interstitial title
-    "checking your browser before accessing",  # CF anti-bot interstitial
-    "attention required! | cloudflare",  # CF block page title
-    "enable javascript and cookies to continue",  # CF challenge body
+)
+_WALL_TITLE_MARKERS = (
+    "just a moment",  # the classic CF interstitial title
+    "attention required!",  # CF block page title ("Attention Required! | Cloudflare")
+    "checking your browser",  # CF anti-bot interstitial title
 )
 
 # Stop-words dropped from a URL's slug before the title comparison: a shared
@@ -103,6 +109,18 @@ _WALL_MARKERS = (
 # never flagged — the safe direction (a missed wall, never a false quarantine).
 _SLUG_STOPWORDS = frozenset(
     {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with"}
+)
+
+# Generic path / repository furniture that identifies no paper. A basename built
+# only from these (``viewcontent.cgi``, ``download/pdf``) carries no title token
+# to compare, so the title check must abstain rather than treat "viewcontent" as
+# a word the paper's title should echo (Codex review — false-positive on
+# CGI/repository basenames). Dropped alongside digits and stop-words.
+_GENERIC_SLUG_TOKENS = frozenset(
+    {
+        "abs", "article", "cgi", "content", "doi", "download", "file", "fulltext",
+        "full", "get", "htm", "html", "index", "paper", "pdf", "view", "viewcontent",
+    }
 )
 
 
@@ -134,7 +152,13 @@ def _url_content_tokens(url: str) -> frozenset[str]:
     """
     basename = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
     tokens = _slug_tokens(basename)
-    return frozenset(t for t in tokens if not t.isdigit() and t not in _SLUG_STOPWORDS)
+    return frozenset(
+        t
+        for t in tokens
+        if not t.isdigit()
+        and t not in _SLUG_STOPWORDS
+        and t not in _GENERIC_SLUG_TOKENS
+    )
 
 
 def _wall_reason(url: str, html: str) -> Optional[str]:
@@ -148,12 +172,18 @@ def _wall_reason(url: str, html: str) -> Optional[str]:
     ``None`` (save it). No LLM, no judgement beyond these markers.
     """
     lowered = html.lower()
-    for marker in _WALL_MARKERS:
+    for marker in _WALL_BODY_MARKERS:
         if marker in lowered:
             return f"looks like a wall, not the paper: bot-wall marker {marker!r}"
 
-    url_tokens = _url_content_tokens(url)
     title = _rendered_title(html)
+    if title is not None:
+        lowered_title = title.lower()
+        for marker in _WALL_TITLE_MARKERS:
+            if marker in lowered_title:
+                return f"looks like a wall, not the paper: interstitial title {marker!r}"
+
+    url_tokens = _url_content_tokens(url)
     if url_tokens and title is not None and not (url_tokens & _slug_tokens(title)):
         # A rendered title that echoes *no* content word of the requested slug is
         # some other page (a wall's own title, an unrelated paper), not the paper

@@ -732,3 +732,45 @@ def test_wall_capture_reason_is_distinct_from_a_nav_failure(tmp_path: Path):
     _, _, wall_m = _run(tmp_path / "wall", url=WALL_URL, fetch_rendered=_render(CLOUDFLARE_WALL))
     _, _, nav_m = _run(tmp_path / "nav", url=NAV_FAIL_URL, fetch_rendered=_boom)
     assert _only_record(wall_m)["reason"] != _only_record(nav_m)["reason"]
+
+
+# --- Codex review: tighten the false-positive surface (AC3 is the priority) ---
+
+
+def test_wall_reason_ignores_an_interstitial_phrase_in_body_prose():
+    # A real paper page whose *body* prose contains "just a moment..." (title still
+    # reflects the slug) is not a wall — phrase markers match the <title>, not
+    # arbitrary body text (Codex: whole-HTML scan false-positive).
+    page = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><p>Wait just a moment... the retrieval effect is robust.</p></body></html>"
+    )
+    assert _wall_reason(WALL_URL, page) is None
+
+
+def test_wall_reason_flags_a_cloudflare_interstitial_title():
+    # A challenge page whose <title> is the interstitial but which carries no
+    # challenge *script* is still caught — via the title marker.
+    page = "<html><head><title>Just a moment...</title></head><body>x</body></html>"
+    assert _wall_reason(WALL_URL, page) is not None
+
+
+def test_wall_reason_ignores_a_noscript_javascript_notice():
+    # "enable javascript and cookies to continue" is legit boilerplate on many
+    # pages; dropping it as a marker means a real, correctly-titled paper carrying
+    # it is not flagged (Codex: over-broad marker).
+    page = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><noscript>Please enable JavaScript and cookies to continue.</noscript>"
+        "<h1>Retrieval Practice Produces More Learning</h1></body></html>"
+    )
+    assert _wall_reason(WALL_URL, page) is None
+
+
+def test_wall_reason_abstains_on_a_generic_repository_basename():
+    # A non-descriptive CGI/repository basename (viewcontent.cgi) carries no
+    # paper-identifying token, so a differing title must not be judged a wall
+    # (Codex: false-positive on DOI/repository basenames).
+    cgi_url = "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"
+    other = "<html><head><title>Rowan University Digital Works Home</title></head><body>x</body></html>"
+    assert _wall_reason(cgi_url, other) is None
