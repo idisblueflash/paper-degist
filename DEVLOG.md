@@ -1829,3 +1829,23 @@ location, the case not yet handled, and the trigger that should make us fix it.
   hits OpenAlex by DOI, adds `cited_by`, and pipes into `rank-cited`.
 - **Status:** OPEN. Deferred to a later enrichment story; the per-candidate
   `filtered / no-cited-by` rows in `manifest.jsonl` are the queue to work from.
+
+## snowball — OpenAlex batch ref filter uses ids.openalex: not openalex_ids: (US33)
+
+- **Where:** `src/paper_degist/snowball.py::_default_fetch_refs`.
+- **Case:** Initial draft used `filter=openalex_ids:W1|W2` which returns 400.
+  The correct OpenAlex filter for batch ID lookup is `filter=ids.openalex:W1|W2`
+  (discovered in E2E phase 7 against BERT's reference list).
+- **Status:** RESOLVED in the initial implementation.
+
+## snowball — arXiv preprint DOIs not reliably found by OpenAlex via doi: path (US33)
+
+- **Where:** `src/paper_degist/snowball.py::_default_fetch_seed`.
+- **Case:** `works/doi:10.48550/arxiv.1706.03762` returns 404. arXiv preprint
+  DOIs are not always indexed under their preprint DOI on OpenAlex; the paper
+  may appear only under its journal DOI (e.g. NeurIPS Proceedings). Cleaned:
+  the step quarantines these as `seed-not-found` rather than crashing.
+- **Trigger to fix:** when operators commonly seed from arXiv preprints. Add a
+  fallback: if the doi: path 404s, search by title or arXiv ID. Also accept a
+  bare OpenAlex Work URL as the seed argument (e.g. `https://openalex.org/W…`).
+- **Status:** OPEN. Operators can use a journal DOI or OpenAlex URL directly.
