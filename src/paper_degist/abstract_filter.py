@@ -134,7 +134,12 @@ def _quarantine(manifest_path: Path, *, url: str, reason: str, **fields: object)
     )
 
 
-def load_candidates(text: str, *, manifest_path: Path = Path("manifest.jsonl")) -> list[dict]:
+def load_candidates(
+    text: str,
+    *,
+    manifest_path: Path = Path("manifest.jsonl"),
+    stage: str = "abstract-filter",
+) -> list[dict]:
     """Parse candidate JSONL into records, quarantining any line that is not a
     JSON **object**.
 
@@ -143,6 +148,8 @@ def load_candidates(text: str, *, manifest_path: Path = Path("manifest.jsonl")) 
     line that does not parse, or parses to a non-object (a bare scalar/array that
     ``candidate.get(...)`` would ``AttributeError`` on), is skipped to the
     manifest with a distinct reason, and the well-formed candidates still run.
+    Every candidate-JSONL consumer shares this loader; ``stage`` names the
+    calling step on the quarantine rows (``rank-cited`` reuses it, US32).
     """
     manifest_path = Path(manifest_path)
     candidates: list[dict] = []
@@ -152,16 +159,20 @@ def load_candidates(text: str, *, manifest_path: Path = Path("manifest.jsonl")) 
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
-            _quarantine(
+            _manifest.append(
                 manifest_path,
+                stage=stage,
+                event="quarantined",
                 url="",
                 reason=f"unparseable candidate line {lineno}: {exc}",
                 line=line[:500],
             )
             continue
         if not isinstance(record, dict):
-            _quarantine(
+            _manifest.append(
                 manifest_path,
+                stage=stage,
+                event="quarantined",
                 url="",
                 reason=f"non-object candidate line {lineno}: got {type(record).__name__}",
                 line=line[:500],
