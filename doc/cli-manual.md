@@ -226,6 +226,56 @@ uv run convert-html files/paper.pdf
 
 ---
 
+## `convert-pdf` — PDF paper → Markdown via page-by-page OCR (US3)
+
+Convert a saved `files/<name>.pdf` into `files/<name>.md` by rendering each
+page with Ghostscript (`render-pdf`) and OCRing it with the registered model
+(`ocr-page`). Pages are stitched in order with a `---` page separator. The
+default model is `deepseek-ocr-2` — the bench winner from US19–23/28 (lowest
+text edit distance, highest table TEDS).
+
+The OCR server (LM Studio) must be running with the model loaded before this
+step is invoked (see `ocr-page`'s notes on LM Studio lifecycle). Ghostscript
+(`gs`) must be on `$PATH`.
+
+```
+uv run convert-pdf files/paper.pdf
+uv run convert-pdf files/paper.pdf --model deepseek-ocr-2
+```
+
+- **Argument**: `pdf` — the `.pdf` file to convert (must exist).
+- **Options**: `--model` (default `deepseek-ocr-2`), `--pages-dir` (default
+  `pages`), `--out-dir` (default `out`), `--manifest` (default
+  `manifest.jsonl`).
+- **Output**: the saved `files/<name>.md` path on stdout.
+- **Quarantined** (exit 0, note on stderr):
+  - The requested model is not in the OCR registry (no rendering attempted).
+  - Ghostscript cannot render the PDF (corrupt/unrenderable).
+  - Any page OCR call fails or the server is unreachable — no partial
+    Markdown is saved.
+
+### Examples
+
+```bash
+# Happy path — renders all pages, OCRs each, stitches to Markdown
+uv run convert-pdf files/Attention_Is_All_You_Need.pdf
+#   -> files/Attention_Is_All_You_Need.md
+
+# Re-run is a no-op (idempotent — existing .md is returned, no OCR called)
+uv run convert-pdf files/Attention_Is_All_You_Need.pdf
+#   -> files/Attention_Is_All_You_Need.md  (prints the existing file, exits 0)
+
+# Wrong (unregistered) model quarantines before any rendering
+uv run convert-pdf files/Deep_Residual_Learning_for_Image_Recognition.pdf --model no-such-model
+#   -> stderr: quarantined (see manifest.jsonl): files/Deep_Residual_Learning_for_Image_Recognition.pdf
+```
+
+`convert-pdf` composes with `fetch-one` (which saves the `.pdf`) and feeds
+`convert-html`'s sibling position in the pipeline — both converge on
+`files/<name>.md`.
+
+---
+
 ## `resolve-oa` — recover an open-access copy of a failed fetch (US9 / US10 / US30)
 
 When `fetch-one` quarantines a URL (typically a `403`), ask whether the paper is
