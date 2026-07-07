@@ -47,6 +47,7 @@ timeless spec and carry no status marker.
 | [US 32](user-stories/us-32-rank-cited.md)                    | Rank candidates by citation count, keep the top N                      | `rank-cited`      | ✅ Done                            |
 | [US 33](user-stories/us-33-snowball.md)                      | Snowball a seed paper's references and citers via OpenAlex             | `snowball`        | ✅ Done                            |
 | [US 34](user-stories/us-34-enrich-abstract.md)               | Fill missing abstracts for candidates by DOI via OpenAlex              | `enrich-abstract` | ✅ Done                            |
+| [US 36](user-stories/us-36-collect-papers.md)                | Collect converted papers to a target folder                            | `collect-papers`  | ✅ Done                            |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
