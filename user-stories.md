@@ -44,6 +44,7 @@ timeless spec and carry no status marker.
 | [US 29](user-stories/us-29-discover-openalex.md)             | Discover candidates by topic via OpenAlex (keyless + mailto)           | `discover`        | ✅ Done                            |
 | [US 30](user-stories/us-30-openalex-oa-fallback.md)          | Cross-check open access against OpenAlex when Unpaywall says closed    | `resolve-oa`      | ✅ Done                            |
 | [US 31](user-stories/us-31-discover-batch-merge.md)          | Fan a topic across queries and sources, merge the union                | `discover-batch`  | ✅ Done                            |
+| [US 32](user-stories/us-32-rank-cited.md)                    | Rank candidates by citation count, keep the top N                      | `rank-cited`      | ✅ Done                            |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).

@@ -35,6 +35,7 @@ from paper_degist.embed_text import app as embed_text_app
 import paper_degist.abstract_filter as abstract_filter_mod
 from paper_degist.abstract_filter import app as abstract_filter_app
 from paper_degist.fetch_one import app as fetch_one_app
+from paper_degist.rank_cited import app as rank_cited_app
 from paper_degist.ocr_batch import app as ocr_batch_app
 from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
@@ -1100,3 +1101,62 @@ def test_ocr_report_runs_as_a_script_via_the_main_guard(tmp_path: Path):
         cwd=Path.cwd(),
     )
     assert result.returncode == 0, result.stderr
+
+
+# --- rank-cited CLI: most-cited-first JSONL to stdout, pure and offline ---
+
+
+def _rank_cited_cli(tmp_path: Path, candidates, *, args=()):
+    src = tmp_path / "candidates.jsonl"
+    src.write_text("".join(json.dumps(c) + "\n" for c in candidates), encoding="utf-8")
+    return runner.invoke(
+        rank_cited_app,
+        [str(src), "--manifest", str(tmp_path / "manifest.jsonl"), *args],
+    )
+
+
+def test_rank_cited_cli_prints_most_cited_first(tmp_path: Path):
+    result = _rank_cited_cli(
+        tmp_path,
+        [
+            {"title": "REALM: Retrieval-Augmented LM Pre-Training", "url": "https://doi.org/10.48550/arxiv.2002.08909", "cited_by": 830},
+            {"title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP", "url": "https://doi.org/10.48550/arxiv.2005.11401", "cited_by": 4210},
+        ],
+    )
+    titles = [json.loads(line)["title"] for line in result.stdout.strip().splitlines()]
+    assert titles == [
+        "Retrieval-Augmented Generation for Knowledge-Intensive NLP",
+        "REALM: Retrieval-Augmented LM Pre-Training",
+    ]
+
+
+def test_rank_cited_cli_reads_stdin_when_no_file(tmp_path: Path):
+    candidates = [
+        {"title": "ColBERT: Efficient and Effective Passage Search", "url": "https://doi.org/10.1145/3397271.3401075", "cited_by": 1840},
+        {"title": "DPR: Dense Passage Retrieval for Open-Domain QA", "url": "https://doi.org/10.18653/v1/2020.emnlp-main.550", "cited_by": 5310},
+    ]
+    stdin = "".join(json.dumps(c) + "\n" for c in candidates)
+    result = runner.invoke(
+        rank_cited_app,
+        ["--manifest", str(tmp_path / "manifest.jsonl")],
+        input=stdin,
+    )
+    assert result.exit_code == 0
+    titles = [json.loads(line)["title"] for line in result.stdout.strip().splitlines()]
+    assert titles[0] == "DPR: Dense Passage Retrieval for Open-Domain QA"
+
+
+def test_rank_cited_cli_empty_rank_exits_zero_with_stderr_note(tmp_path: Path):
+    result = _rank_cited_cli(
+        tmp_path,
+        [{"title": "Linformer: Self-Attention with Linear Complexity", "url": "https://arxiv.org/abs/2006.04768"}],
+    )
+    assert result.exit_code == 0
+
+
+def test_rank_cited_cli_missing_file_exits_nonzero(tmp_path: Path):
+    result = runner.invoke(
+        rank_cited_app,
+        [str(tmp_path / "no_such.jsonl"), "--manifest", str(tmp_path / "manifest.jsonl")],
+    )
+    assert result.exit_code != 0

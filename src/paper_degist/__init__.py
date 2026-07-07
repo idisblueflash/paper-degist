@@ -28,6 +28,7 @@ _STEPS = [
     ("discover", "Discover candidate papers by topic from arXiv or Semantic Scholar (US25)."),
     ("discover-batch", "Fan topic queries across discover sources, merge the union (US31)."),
     ("abstract-filter", "Filter candidates by abstract similarity to a topic (US26)."),
+    ("rank-cited", "Rank candidates by citation count, keep the top N (US32)."),
 ]
 
 app = typer.Typer(

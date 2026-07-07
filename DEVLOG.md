@@ -1812,5 +1812,20 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** the first sibling step that reads a multi-record JSONL
   stream from an upstream pipe. Extract `load_candidates`' skip-malformed-line
   shape into a shared `_jsonl` reader and route that step through it, test-first.
-- **Status:** RESOLVED for `abstract_filter` (US26); OPEN as a shared-helper
+- **Status:** RESOLVED for `abstract_filter` (US26) and `rank_cited` (US32)
+  via the same `load_candidates(text, stage=…)` call; OPEN as a shared-helper
   extraction for any future JSONL-consuming step.
+
+## rank_cited — citation enrichment for arXiv candidates is deferred (US32)
+
+- **Where:** `src/paper_degist/rank_cited.py::rank_cited`.
+- **Case not handled:** arXiv candidates never carry `cited_by` (the API has no
+  citation field), so they always land in a `filtered / no-cited-by` row and
+  are cut before ranking. A later enrichment step could look up each arXiv
+  DOI against OpenAlex to fill the count before rank-cited runs.
+- **Trigger to fix:** when the operator's pool has a meaningful share of
+  arXiv-only candidates and the no-cited-by drop rate is unacceptably high.
+  Build `enrich-abstract` (US34) or a dedicated `enrich-cited-by` step that
+  hits OpenAlex by DOI, adds `cited_by`, and pipes into `rank-cited`.
+- **Status:** OPEN. Deferred to a later enrichment story; the per-candidate
+  `filtered / no-cited-by` rows in `manifest.jsonl` are the queue to work from.
