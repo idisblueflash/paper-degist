@@ -106,12 +106,31 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to fix:** when US 3/US 4 land. Add a `convert` step that classifies
   by suffix and dispatches to `convert_html` or the PDF path, mirroring
   `fetch_one`'s Content-Type dispatch; quarantine unknown extensions.
-- **Status:** OPEN (top-level dispatcher). Mitigated: `convert_html` now
-  classifies its *own* input first — a non-`.html`/`.htm` file is quarantined
-  (reason `"not an HTML file (unexpected extension …)"`) instead of being
-  markdownified into a garbage `.md` (Codex review). So the `.html` handler is
-  safe to invoke directly today; the deferred work is only the shared front
-  door that routes `.pdf` vs `.html`.
+- **Status:** PARTIALLY ADDRESSED by US3. `convert-pdf` (US3) is the `.pdf`
+  branch — it classifies its own input by calling `render_pdf` (which guards
+  the `%PDF` magic bytes), then OCRs each page with `ocr-page`. Both
+  `convert-html` and `convert-pdf` now self-classify and can be invoked
+  directly. A shared top-level `convert` dispatcher that routes by extension
+  (`.pdf` → `convert-pdf`, `.html` → `convert-html`, unknown → quarantine)
+  is the remaining deferred work.
+- **Trigger to fix:** when a caller wants to hand a file of unknown type to a
+  single entry point. Add a `convert` step that classifies by suffix and
+  dispatches, mirroring `fetch_one`'s Content-Type dispatch.
+
+## convert_pdf — non-stop finish_reason not detected at the convert-pdf level
+
+- **Where:** `src/paper_degist/convert_pdf.py::convert_pdf` (calls `ocr_page`
+  per page; reads only success/None from the return value).
+- **Case not handled:** US3 AC3 says a page that returns a non-`stop`
+  `finish_reason` (truncation) should be quarantined. `ocr_page` logs the
+  `finish_reason` in the manifest as provenance but always returns the saved
+  path (not `None`) for a non-stop 200 — so `convert_pdf` cannot detect it
+  without reading back the manifest. A truncated page is currently stitched
+  as partial Markdown rather than triggering a quarantine.
+- **Trigger to fix:** the first real paper whose stitched output is visibly
+  truncated mid-page. Extend `ocr_page`'s return contract to surface
+  `finish_reason` (e.g. return an `OcrResult` namedtuple) so `convert_pdf`
+  can gate on it, driven by a failing test on a mocked non-stop response.
 
 ## parse_url CLI — console entry point (`main`) is not unit-tested
 
