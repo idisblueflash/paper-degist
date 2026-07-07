@@ -16,6 +16,7 @@ Runnable from the command line (rule 03):
     uv run convert-pdf files/paper.pdf --model deepseek-ocr-2
 """
 
+import time
 from pathlib import Path
 from typing import Annotated, Callable, Optional
 
@@ -53,6 +54,8 @@ def convert_pdf(
     render_fn: RenderFn = render_pdf,
     ocr_fn: OcrFn = ocr_page,
     registry: dict = REGISTRY,
+    page_gap: float = 0.0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> Optional[Path]:
     """Convert ``files/<name>.pdf`` to ``files/<name>.md`` via page-by-page OCR.
 
@@ -96,7 +99,9 @@ def convert_pdf(
     # never collide on p0001.md / p0002.md in the flat out/<model>/ directory.
     pdf_out_dir = out_dir / pdf_path.stem
     page_markdowns: list[str] = []
-    for page in pages:
+    for i, page in enumerate(pages):
+        if i > 0 and page_gap > 0:
+            sleep(page_gap)
         md_path = ocr_fn(page, model_id, out_dir=pdf_out_dir, manifest_path=manifest_path)
         if md_path is None:
             # This page's OCR failed; ocr_page wrote its own quarantine record.
@@ -154,6 +159,10 @@ def run(
         Path,
         typer.Option(help="manifest of quarantined inputs"),
     ] = Path("manifest.jsonl"),
+    page_gap: Annotated[
+        float,
+        typer.Option(help="seconds to wait between page OCR calls (0 = no gap)"),
+    ] = 0.0,
 ) -> None:
     """Convert the PDF to Markdown; print the saved .md path, or a quarantine note on stderr."""
     target = convert_pdf(
@@ -162,6 +171,7 @@ def run(
         pages_dir=pages_dir,
         out_dir=out_dir,
         manifest_path=manifest,
+        page_gap=page_gap,
     )
     if target is None:
         typer.echo(f"quarantined (see {manifest}): {pdf}", err=True)
