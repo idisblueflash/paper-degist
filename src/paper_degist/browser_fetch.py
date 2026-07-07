@@ -48,6 +48,11 @@ import typer
 from paper_degist import _manifest
 from paper_degist._cli import invoke
 
+# Reuse fetch_one's slug tokenizer (US13) — the *same* lowercase-alphanumeric
+# token comparison, so the wall's title/slug check never drifts from the
+# filename↔title check. Imported as a module attribute for the shared shape.
+from paper_degist.fetch_one import _slug_tokens
+
 # Reuse browser-up's CDP reachability probe — the *same* classify signal, with
 # its ``trust_env=False`` proxy fix — so the two steps never drift. Imported as a
 # module attribute so a test (or the CLI) can monkeypatch it here too.
@@ -73,6 +78,93 @@ def _target_path(url: str, files_dir: Path) -> Path:
     if basename.lower().endswith((".html", ".htm")):
         return Path(files_dir) / basename
     return Path(files_dir) / f"{basename}.html"
+
+
+# Known wall signatures (US35): markup a bot-wall / challenge page carries that a
+# real paper page does not. Deliberately specific — a bare "cloudflare" would
+# false-positive on the huge fraction of legitimate paper hosts served *via*
+# Cloudflare's CDN; these are the interstitial/challenge markers a *blocking*
+# page emits. A newly-seen signature is one entry here (rule 02: the manifest of
+# wall captures is the queue of cases), never a new code path.
+_WALL_MARKERS = (
+    "challenge-platform",  # the /cdn-cgi/challenge-platform/ JS challenge script
+    "cf-chl-",  # Cloudflare challenge widget id prefix
+    "cf_chl_opt",  # Cloudflare challenge options blob
+    "just a moment...",  # the classic CF interstitial title
+    "checking your browser before accessing",  # CF anti-bot interstitial
+    "attention required! | cloudflare",  # CF block page title
+    "enable javascript and cookies to continue",  # CF challenge body
+)
+
+# Stop-words dropped from a URL's slug before the title comparison: a shared
+# *content* word (not "and"/"the") is what signals the rendered title reflects
+# the requested paper. Pure-digit tokens (a publication id like ``220320021``)
+# are dropped too, so an id-only slug (arXiv's ``1706.03762``) is unjudgeable and
+# never flagged — the safe direction (a missed wall, never a false quarantine).
+_SLUG_STOPWORDS = frozenset(
+    {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with"}
+)
+
+
+def _rendered_title(html: str) -> Optional[str]:
+    """The text of the rendered HTML's ``<title>``, or ``None`` if it has none.
+
+    Reads the title from an in-memory HTML *string* (the check runs before the
+    save, so there is no file yet) — the string-input twin of ``fetch_one``'s
+    path-based ``_html_title``.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    if soup.title is None:
+        return None
+    title = soup.title.get_text().strip()
+    return title or None
+
+
+def _url_content_tokens(url: str) -> frozenset[str]:
+    """Content tokens of the URL's paper slug — digits and stop-words removed.
+
+    The requested paper's identity lives in the path basename
+    (``220320021_Spaced_Repetition_and_Long-Term_Retention``); the numeric
+    publication id and stop-words are noise, so the remaining tokens
+    (``spaced``, ``repetition``, ``long``, ``term``, ``retention``) are what a
+    genuine rendered ``<title>`` should echo. Empty ⇒ the slug carries no
+    judgeable content (an id-only slug), so the title check abstains.
+    """
+    basename = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+    tokens = _slug_tokens(basename)
+    return frozenset(t for t in tokens if not t.isdigit() and t not in _SLUG_STOPWORDS)
+
+
+def _wall_reason(url: str, html: str) -> Optional[str]:
+    """Classify a rendered page: a wall reason if it is not the paper, else ``None``.
+
+    Two cheap, deterministic signals (US35): a **known wall marker** in the body
+    (a Cloudflare challenge/interstitial), or a rendered ``<title>`` that **shares
+    no content token** with the requested URL's paper slug (the page is *some*
+    paper, but not the one we asked for). Either ⇒ a distinct "looks like a wall,
+    not the paper" reason so the caller quarantines **before** saving; neither ⇒
+    ``None`` (save it). No LLM, no judgement beyond these markers.
+    """
+    lowered = html.lower()
+    for marker in _WALL_MARKERS:
+        if marker in lowered:
+            return f"looks like a wall, not the paper: bot-wall marker {marker!r}"
+
+    url_tokens = _url_content_tokens(url)
+    title = _rendered_title(html)
+    if url_tokens and title is not None and not (url_tokens & _slug_tokens(title)):
+        # A rendered title that echoes *no* content word of the requested slug is
+        # some other page (a wall's own title, an unrelated paper), not the paper
+        # we asked for. Abstain when the slug has no content tokens (id-only) or
+        # the page has no <title> — the safe direction is a missed wall, never a
+        # false quarantine of a real capture (AC3).
+        return (
+            f"looks like a wall, not the paper: rendered title {title!r} "
+            f"does not reflect the requested URL"
+        )
+    return None
 
 
 @contextmanager
@@ -259,6 +351,21 @@ def _dispatch_url(
             url=url,
             cdp_url=cdp_url,
             reason=f"navigation failed: {exc}",
+        )
+        return None
+
+    wall = _wall_reason(url, html)
+    if wall is not None:
+        # The render succeeded but returned a wall (login/consent/Cloudflare), not
+        # the paper (US35). Quarantine with a **distinct** reason **before** the
+        # save, so the wall never becomes the sticky idempotent artifact (AC4) —
+        # a later logged-in run can recapture the same URL. Never crash.
+        _manifest.append(
+            manifest_path,
+            stage="browser-fetch",
+            url=url,
+            cdp_url=cdp_url,
+            reason=wall,
         )
         return None
 
