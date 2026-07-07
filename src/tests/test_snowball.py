@@ -6,9 +6,10 @@ OpenAlex shapes; distinct real papers label each scenario (rule 08).
 """
 
 import json
+import unittest.mock as mock
 from pathlib import Path
 
-from paper_degist.snowball import snowball
+from paper_degist.snowball import _default_fetch_seed, snowball
 
 
 # ---------------------------------------------------------------------------
@@ -302,3 +303,24 @@ def test_no_url_work_leaves_filtered_manifest_row(tmp_path: Path):
                        direction="refs")
     rows = _manifest_rows(manifest)
     assert any(r.get("event") == "filtered" and r.get("reason") == "no-url" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# _default_fetch_seed — DOI URL normalization (Codex finding)
+# ---------------------------------------------------------------------------
+
+
+def test_default_fetch_seed_strips_doi_url_prefix():
+    """_default_fetch_seed normalises 'https://doi.org/10.x/y' to bare '10.x/y'."""
+    with mock.patch("paper_degist.snowball._openalex.fetch_work_by_doi",
+                    return_value={"id": "W1"}) as m:
+        _default_fetch_seed("https://doi.org/10.1234/test-doi", email=None)
+    m.assert_called_once_with("10.1234/test-doi", None)
+
+
+def test_default_fetch_seed_leaves_bare_doi_unchanged():
+    """_default_fetch_seed leaves a bare DOI 'bare-doi' unchanged."""
+    with mock.patch("paper_degist.snowball._openalex.fetch_work_by_doi",
+                    return_value={"id": "W2"}) as m:
+        _default_fetch_seed("10.5555/bare-doi", email=None)
+    m.assert_called_once_with("10.5555/bare-doi", None)

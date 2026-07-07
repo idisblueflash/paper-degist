@@ -34,6 +34,7 @@ from paper_degist.discover_batch import app as discover_batch_app
 from paper_degist.embed_text import app as embed_text_app
 import paper_degist.abstract_filter as abstract_filter_mod
 from paper_degist.abstract_filter import app as abstract_filter_app
+from paper_degist.enrich_abstract import app as enrich_abstract_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.rank_cited import app as rank_cited_app
 from paper_degist.snowball import app as snowball_app
@@ -1177,4 +1178,41 @@ def test_snowball_cli_seed_not_found_exits_zero(tmp_path: Path):
             snowball_app,
             ["10.9999/fake-doi", "--manifest", str(tmp_path / "manifest.jsonl")],
         )
+    assert result.exit_code == 0
+
+
+# --- enrich-abstract CLI ---
+
+
+def test_enrich_abstract_cli_enriches_candidate(tmp_path: Path):
+    """Candidate with no abstract is enriched when OpenAlex returns a work."""
+    import unittest.mock as mock
+
+    inverted = {"BERT": [0], "is": [1], "great": [2]}
+    work = {"id": "https://openalex.org/W1", "abstract_inverted_index": inverted}
+    candidate = json.dumps({"title": "BERT", "doi": "10.18653/v1/N19-1423",
+                            "url": "https://doi.org/10.18653/v1/N19-1423",
+                            "abstract": None, "abstract_present": False})
+
+    with mock.patch("paper_degist.enrich_abstract._default_fetch_work",
+                    return_value=work):
+        result = runner.invoke(
+            enrich_abstract_app,
+            ["--manifest", str(tmp_path / "manifest.jsonl")],
+            input=candidate + "\n",
+        )
+    assert result.exit_code == 0
+    assert "BERT is great" in result.output
+
+
+def test_enrich_abstract_cli_no_doi_exits_zero(tmp_path: Path):
+    """Candidate with no DOI quarantines cleanly, exit 0."""
+    candidate = json.dumps({"title": "No DOI Paper",
+                            "url": "https://example.com",
+                            "abstract": None, "abstract_present": False})
+    result = runner.invoke(
+        enrich_abstract_app,
+        ["--manifest", str(tmp_path / "manifest.jsonl")],
+        input=candidate + "\n",
+    )
     assert result.exit_code == 0

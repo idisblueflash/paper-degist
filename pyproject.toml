@@ -41,6 +41,7 @@ discover-batch = "paper_degist.discover_batch:main"
 abstract-filter = "paper_degist.abstract_filter:main"
 rank-cited = "paper_degist.rank_cited:main"
 snowball = "paper_degist.snowball:main"
+enrich-abstract = "paper_degist.enrich_abstract:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

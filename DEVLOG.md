@@ -1849,3 +1849,15 @@ location, the case not yet handled, and the trigger that should make us fix it.
   fallback: if the doi: path 404s, search by title or arXiv ID. Also accept a
   bare OpenAlex Work URL as the seed argument (e.g. `https://openalex.org/W…`).
 - **Status:** OPEN. Operators can use a journal DOI or OpenAlex URL directly.
+
+## enrich_abstract — Semantic Scholar and arXiv abstract lanes are deferred (US34)
+
+- **Where:** `src/paper_degist/enrich_abstract.py::enrich_abstract`.
+- **Cases not handled:** (a) A candidate without a DOI can be looked up by title
+  on Semantic Scholar — deferred to a follow-up story. (b) An arXiv candidate
+  whose DOI is `10.48550/arxiv.*` may 404 on OpenAlex (same arXiv preprint DOI
+  issue as US33); a fallback to the arXiv abstract API by arXiv ID is deferred.
+- **Trigger to fix:** when operators notice abstract-less arXiv candidates still
+  flowing through to abstract-filter as `abstract_present: false` despite the
+  enrich step. Add an arXiv ID fallback lane driven by a failing scenario.
+- **Status:** OPEN. Documented in the US34 spec's "Later stages" section.

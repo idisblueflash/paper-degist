@@ -79,7 +79,8 @@ def _candidates_from_page(page: dict, manifest_path: Path) -> list[dict]:
 
 
 def _default_fetch_seed(doi: str, email: Optional[str]) -> dict:
-    return _openalex.fetch_work_by_doi(doi, email)
+    bare = _bare_doi(doi) or doi  # strip https://doi.org/ prefix when present
+    return _openalex.fetch_work_by_doi(bare, email)
 
 
 def _default_fetch_refs(ref_ids: list[str], email: Optional[str]) -> dict:
@@ -115,12 +116,18 @@ def snowball(
     max_citers: int = DEFAULT_MAX,
     email: Optional[str] = None,
     manifest_path: Path = Path("manifest.jsonl"),
-    _fetch_seed: Callable = _default_fetch_seed,
-    _fetch_refs: Callable = _default_fetch_refs,
-    _fetch_citers: Callable = _default_fetch_citers,
+    _fetch_seed: Optional[Callable] = None,
+    _fetch_refs: Optional[Callable] = None,
+    _fetch_citers: Optional[Callable] = None,
 ) -> Optional[list[dict]]:
     """Expand a seed DOI into its reference/citer candidates (US33)."""
     manifest_path = Path(manifest_path)
+    if _fetch_seed is None:
+        _fetch_seed = _default_fetch_seed
+    if _fetch_refs is None:
+        _fetch_refs = _default_fetch_refs
+    if _fetch_citers is None:
+        _fetch_citers = _default_fetch_citers
 
     # Resolve the seed (AC5).
     try:
