@@ -110,23 +110,31 @@ def test_seed_not_found_leaves_manifest_row(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_refs_direction_emits_referenced_works(tmp_path: Path):
+def test_refs_direction_emits_first_referenced_work(tmp_path: Path):
     seed = _work("W100", doi="10.48550/arxiv.1706.03762", title="Attention Is All You Need",
                  referenced_works=["W200", "W300"])
     ref1 = _work("W200", doi="10.5555/lstm", title="Long Short-Term Memory", cited_by=2800)
     ref2 = _work("W300", doi="10.5555/seq2seq", title="Sequence to Sequence Learning", cited_by=5100)
 
-    def fetch_seed(doi, email):
-        return seed
-
-    def fetch_refs(ref_ids, email):
-        return _results_page([ref1, ref2])
-
     result, _ = _run(tmp_path, "10.48550/arxiv.1706.03762",
-                     fetch_seed=fetch_seed, fetch_refs=fetch_refs, direction="refs")
-    assert result is not None
+                     fetch_seed=lambda *a, **kw: seed,
+                     fetch_refs=lambda *a, **kw: _results_page([ref1, ref2]),
+                     direction="refs")
     titles = [r["title"] for r in result]
     assert "Long Short-Term Memory" in titles
+
+
+def test_refs_direction_emits_second_referenced_work(tmp_path: Path):
+    seed = _work("W100", doi="10.48550/arxiv.1706.03762", title="Attention Is All You Need",
+                 referenced_works=["W200", "W300"])
+    ref1 = _work("W200", doi="10.5555/lstm", title="Long Short-Term Memory", cited_by=2800)
+    ref2 = _work("W300", doi="10.5555/seq2seq", title="Sequence to Sequence Learning", cited_by=5100)
+
+    result, _ = _run(tmp_path, "10.48550/arxiv.1706.03762",
+                     fetch_seed=lambda *a, **kw: seed,
+                     fetch_refs=lambda *a, **kw: _results_page([ref1, ref2]),
+                     direction="refs")
+    titles = [r["title"] for r in result]
     assert "Sequence to Sequence Learning" in titles
 
 
@@ -224,7 +232,7 @@ def test_max_refs_caps_the_reference_list(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_no_url_work_is_filtered_not_emitted(tmp_path: Path):
+def test_good_work_passes_through_when_another_has_no_url(tmp_path: Path):
     seed = _work("W100", doi="10.48550/arxiv.2112.10741", title="Gato",
                  referenced_works=["W_nouri", "W_good"])
     no_url_work = {"id": None, "doi": None, "title": "Opaque Work", "authorships": [],
@@ -232,13 +240,53 @@ def test_no_url_work_is_filtered_not_emitted(tmp_path: Path):
                    "oa_locations": [], "locations": [], "referenced_works": []}
     good_work = _work("W_good", doi="10.5555/good", title="Perceiver IO", cited_by=500)
 
-    result, manifest = _run(tmp_path, "10.48550/arxiv.2112.10741",
-                            fetch_seed=lambda *a, **kw: seed,
-                            fetch_refs=lambda *a, **kw: _results_page([no_url_work, good_work]),
-                            direction="refs")
+    result, _ = _run(tmp_path, "10.48550/arxiv.2112.10741",
+                     fetch_seed=lambda *a, **kw: seed,
+                     fetch_refs=lambda *a, **kw: _results_page([no_url_work, good_work]),
+                     direction="refs")
     titles = [r["title"] for r in result]
     assert "Perceiver IO" in titles
+
+
+def test_no_url_work_is_excluded_from_output(tmp_path: Path):
+    seed = _work("W100", doi="10.48550/arxiv.2112.10741", title="Gato",
+                 referenced_works=["W_nouri", "W_good"])
+    no_url_work = {"id": None, "doi": None, "title": "Opaque Work", "authorships": [],
+                   "abstract_inverted_index": None, "best_oa_location": None,
+                   "oa_locations": [], "locations": [], "referenced_works": []}
+    good_work = _work("W_good", doi="10.5555/good", title="Perceiver IO", cited_by=500)
+
+    result, _ = _run(tmp_path, "10.48550/arxiv.2112.10741",
+                     fetch_seed=lambda *a, **kw: seed,
+                     fetch_refs=lambda *a, **kw: _results_page([no_url_work, good_work]),
+                     direction="refs")
+    titles = [r["title"] for r in result]
     assert "Opaque Work" not in titles
+
+
+def test_seed_with_no_openalex_id_quarantines_citers_lane(tmp_path: Path):
+    """Seed whose 'id' is None → citers lane quarantines; refs can still run."""
+    seed_no_id = {
+        "id": None,
+        "doi": "https://doi.org/10.1234/no-id",
+        "referenced_works": [],
+        "authorships": [],
+        "abstract_inverted_index": None,
+        "best_oa_location": None,
+        "oa_locations": [],
+        "locations": [],
+    }
+    _, manifest = _run(
+        tmp_path,
+        "10.1234/no-id",
+        fetch_seed=lambda *a, **kw: seed_no_id,
+        direction="both",
+    )
+    rows = _manifest_rows(manifest)
+    assert any(
+        r.get("event") == "quarantined" and "seed-missing-id" in r.get("reason", "")
+        for r in rows
+    )
 
 
 def test_no_url_work_leaves_filtered_manifest_row(tmp_path: Path):

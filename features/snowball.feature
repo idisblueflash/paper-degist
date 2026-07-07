@@ -12,14 +12,14 @@ Feature: snowball — expand a seed paper into references and citers via OpenAle
       | Sequence to Sequence Learning      |
 
   Scenario: AC2 — citers direction emits papers that cite the seed
-    Given a seed paper "10.48550/arxiv.1706.03762" with citers:
-      | openalex_id | doi          | title                                               | cited_by |
-      | W400        | 10.5555/bert | BERT: Pre-training of Deep Bidirectional Transformers | 42000   |
+    Given a seed paper "10.18653/v1/N19-1423" with citers:
+      | openalex_id | doi                    | title                                               | cited_by |
+      | W400        | 10.5555/roberta        | RoBERTa: A Robustly Optimized BERT Pretraining Approach | 18000  |
     When snowball runs with direction "citers"
-    Then the snowball output titles include "BERT: Pre-training of Deep Bidirectional Transformers"
+    Then the snowball output titles include "RoBERTa: A Robustly Optimized BERT Pretraining Approach"
 
   Scenario: AC3 — both direction emits refs then citers, deduplicating overlaps
-    Given a seed paper "10.48550/arxiv.1706.03762" with references:
+    Given a seed paper "10.1162/tacl_a_00051" with references:
       | openalex_id | doi             | title                         | cited_by |
       | W200        | 10.5555/lstm    | Long Short-Term Memory        | 2800     |
     And the same seed has citers:

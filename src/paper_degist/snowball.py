@@ -174,19 +174,28 @@ def snowball(
 
     # AC2: papers that cite the seed.
     if direction in ("citers", "both"):
-        try:
-            citers_page = _fetch_citers(seed_id, max_citers, email)
-        except Exception as exc:
+        if not seed_id:
             _manifest.append(
                 manifest_path,
                 stage="snowball",
                 event="quarantined",
                 url=seed,
-                reason=f"api-error fetching citers: {exc}",
+                reason="seed-missing-id: cannot fetch citers without an OpenAlex Work ID",
             )
         else:
-            citer_records = _candidates_from_page(citers_page, manifest_path)
-            _add(citer_records[:max_citers])
+            try:
+                citers_page = _fetch_citers(seed_id, max_citers, email)
+            except Exception as exc:
+                _manifest.append(
+                    manifest_path,
+                    stage="snowball",
+                    event="quarantined",
+                    url=seed,
+                    reason=f"api-error fetching citers: {exc}",
+                )
+            else:
+                citer_records = _candidates_from_page(citers_page, manifest_path)
+                _add(citer_records[:max_citers])
 
     return records
 
