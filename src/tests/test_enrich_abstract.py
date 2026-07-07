@@ -189,6 +189,37 @@ def test_no_abstract_on_record_manifest_row_reason(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_abstract_present_integer_one_passes_through(tmp_path: Path):
+    """abstract_present=1 (integer) should pass through like True, not trigger enrichment."""
+    called = []
+    c = _candidate(doi="10.5555/int-flag", abstract="Existing abstract",
+                   abstract_present=True)
+    c["abstract_present"] = 1  # integer truthy, not True
+    _run(tmp_path, [c], fetch_work=lambda doi, email: called.append(doi) or _work())
+    assert called == []
+
+
+def test_whitespace_doi_quarantines_as_no_doi(tmp_path: Path):
+    """A whitespace-only doi field should quarantine as no-doi, not hit the API."""
+    c = {"title": "Whitespace DOI Paper", "doi": "   ",
+         "url": "https://example.com", "abstract": None, "abstract_present": False}
+    result, manifest = _run(tmp_path, [c])
+    assert result == []
+    rows = _manifest_rows(manifest)
+    assert any(r.get("reason") == "no-doi" for r in rows)
+
+
+def test_whitespace_only_abstract_quarantines_as_no_abstract_on_record(tmp_path: Path):
+    """A work whose reconstructed abstract is whitespace-only quarantines."""
+    inverted = {" ": [0], "  ": [1]}  # whitespace-only tokens
+    c = _candidate(doi="10.5555/whitespace-abstract", abstract_present=False)
+    fetch = lambda doi, email: _work(abstract_inverted_index=inverted)
+    result, manifest = _run(tmp_path, [c], fetch_work=fetch)
+    assert result == []
+    rows = _manifest_rows(manifest)
+    assert any(r.get("reason") == "no-abstract-on-record" for r in rows)
+
+
 def test_rest_continue_when_one_quarantines(tmp_path: Path):
     no_doi = _candidate(title="No DOI Paper", abstract_present=False)
     good = _candidate(doi="10.5555/good-paper", title="Good Paper", abstract_present=False)

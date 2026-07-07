@@ -54,9 +54,9 @@ def enrich_abstract(
             emitted.append(candidate)
             continue
 
-        # Extract DOI (AC3: quarantine if none).
+        # Extract DOI (AC3: quarantine if none or whitespace-only).
         raw_doi = candidate.get("doi")
-        doi = _bare_doi(raw_doi) if raw_doi else None
+        doi = (_bare_doi(raw_doi) or "").strip() if raw_doi else None
         if not doi:
             _manifest.append(
                 manifest_path,
@@ -86,7 +86,7 @@ def enrich_abstract(
         # AC5: no abstract on record — quarantine.
         inverted = work.get("abstract_inverted_index")
         abstract = reconstruct_abstract(inverted)
-        if not abstract:
+        if not (abstract and abstract.strip()):
             _manifest.append(
                 manifest_path,
                 stage="enrich-abstract",
