@@ -1524,3 +1524,103 @@ uv run discover-batch "contrastive speech representations" "wav2vec self-supervi
 
 Every dropped candidate (`beyond-top`, `no-cited-by`, `empty-rank`) leaves a
 `filtered` or `quarantined` row in `manifest.jsonl` — nothing is silently lost.
+
+---
+
+## `snowball` — expand a seed paper into its references and citers (US33)
+
+Given a seed DOI (or OpenAlex URL), emit the papers it cites (`--direction
+refs`), the papers that cite it (`--direction citers`), or both (`--direction
+both`, the default) as discover-shaped candidate JSONL. The output is the same
+schema as `discover --source openalex` and drops straight into `abstract-filter`,
+`rank-cited`, or `fetch-one`. No LLM call, one API key optional (the OpenAlex
+polite-pool email).
+
+```
+uv run snowball <seed-doi-or-url> [--direction refs|citers|both]
+                [--max-refs N] [--max-citers N]
+                [--email you@example.com] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `seed` — a bare DOI (e.g. `10.18653/v1/N19-1423`) or an
+  OpenAlex Work URL. If the seed cannot be resolved, the step quarantines and
+  exits 0 — nothing crashes.
+- **`--direction`**: `refs` — the papers the seed cites (its reference list);
+  `citers` — the papers that cite the seed; `both` (default) — refs first, then
+  citers, deduped by OpenAlex Work ID.
+- **`--max-refs N`** (default 200): cap the reference candidates to the first
+  N entries from the seed's `referenced_works` list.
+- **`--max-citers N`** (default 200): cap the citer candidates to the N most-cited
+  papers that cite the seed (OpenAlex returns them `cited_by_count:desc`).
+- **`--email`** (or `OPENALEX_EMAIL` env var): contact email for OpenAlex's polite
+  pool (faster rate limit). **Optional** — omitting it only warns on stderr.
+- **`--manifest`** (default `manifest.jsonl`): where filtered and quarantined
+  records land.
+- **Output**: one JSONL record per candidate on stdout — same schema as
+  `discover --source openalex` (`title`, `authors`, `abstract`, `url`, `source`,
+  `source_id`, `doi`, `pdf_url`, `cited_by`). Refs appear before citers in
+  `--direction both`; deduplication is by `source_id` (OpenAlex Work ID).
+- **No-URL works filtered**: a paper in the seed's refs or citers with no DOI
+  and no OpenAlex ID is a `filtered/no-url` manifest row — it is skipped, the
+  rest still emit.
+- **Quarantine, not a crash** (rule 02). Three cases land in the manifest and
+  exit cleanly (exit 0):
+  - `seed-not-found` — the seed DOI returned a 404 from OpenAlex; nothing emitted.
+  - `api-error` — OpenAlex returned a non-404 error for the seed or for a batch
+    fetch; that lane is skipped, the other may still run.
+  - `seed-missing-id` — the seed work record has no OpenAlex ID; the citers lane
+    cannot run (no `cites:` filter key); refs can still emit.
+
+### Happy path
+
+```bash
+export OPENALEX_EMAIL=you@example.com
+
+# Refs and citers of BERT — prints up to 400 candidates (200 refs + 200 citers)
+uv run snowball 10.18653/v1/N19-1423 --email "$OPENALEX_EMAIL"
+#   -> {"title":"RoBERTa: A Robustly Optimized BERT …","cited_by":18240,"source":"openalex",…}
+#      … (one JSONL line per candidate)
+
+# Refs only, capped to the top 50 (by position in referenced_works)
+uv run snowball 10.18653/v1/N19-1423 --direction refs --max-refs 50 --email "$OPENALEX_EMAIL"
+
+# Pipe into rank-cited, then fetch the top 5 most-cited seeds
+uv run snowball 10.18653/v1/N19-1423 --email "$OPENALEX_EMAIL" \
+  | uv run rank-cited --top 5 \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | xargs -I{} uv run fetch-one "{}"
+```
+
+### Quarantine examples
+
+**Unresolvable seed** (DOI not in OpenAlex):
+
+```bash
+uv run snowball 10.9999/does-not-exist --email "$OPENALEX_EMAIL"
+#   -> stderr: quarantined (see manifest.jsonl): seed could not be resolved
+#   -> manifest: {"stage":"snowball","event":"quarantined","url":"10.9999/does-not-exist",
+#                 "reason":"seed-not-found: Client error '404 Not Found' …"}
+```
+
+**Seed work with no OpenAlex ID** (citers lane skips):
+
+```bash
+uv run snowball 10.1234/malformed-record --email "$OPENALEX_EMAIL"
+#   -> manifest: {"stage":"snowball","event":"quarantined","url":"10.1234/malformed-record",
+#                 "reason":"seed-missing-id: cannot fetch citers without an OpenAlex Work ID"}
+#   -> refs lane still runs if the seed has referenced_works
+```
+
+### Composition with other steps
+
+`snowball` is the upstream expansion step that feeds the same filter/rank/fetch
+chain as `discover`:
+
+```bash
+# Snowball a seed → filter to on-topic → fetch the top PDF candidates
+uv run snowball 10.48550/arxiv.1706.03762 --email "$OPENALEX_EMAIL" --direction both \
+  | uv run abstract-filter --topic "self-attention for sequence modeling" \
+  | uv run rank-cited --top 10 \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+```
