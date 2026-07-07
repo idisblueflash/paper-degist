@@ -1446,3 +1446,81 @@ uv run discover-batch "contrastive speech representations" "wav2vec self-supervi
 Inspect `manifest.jsonl` for everything that could not be handled
 automatically — each line names the `stage`, the input, and the `reason`, which
 tells you (or the next code branch) exactly what to do next.
+
+---
+
+## `rank-cited` — rank a candidate list by citation count, keep the top N (US32)
+
+Sort a pool of candidates by their `cited_by` count (descending) and keep
+the top N most-cited. Outputs the surviving records as JSONL (unchanged),
+most-cited first — a drop-in between `abstract-filter` and `fetch-one`.
+
+This step is pure, offline arithmetic — no API call, no LLM, no network.
+`cited_by: 0` is a usable count (a new paper ranks last); a missing or
+non-integer `cited_by` is a classified drop, not a crash.
+
+```
+uv run rank-cited [candidates.jsonl] [--top N] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `candidates.jsonl` — candidate JSONL from `discover`,
+  `discover-batch`, or `abstract-filter`. Omit to read **stdin**.
+- **`--top N`**: keep the N most-cited candidates (default: 20). `--top 0`
+  quarantines and emits nothing.
+- **`--manifest`**: path to the shared manifest (default: `manifest.jsonl`).
+
+### Happy path
+
+```bash
+uv run rank-cited candidates.jsonl --top 5
+# -> {"title": "Attention Is All You Need", "cited_by": 9041, ...}
+# -> {"title": "BERT: Pre-training of Deep Bidirectional Transformers", "cited_by": 8200, ...}
+# ...
+# -> manifest: {"stage":"rank-cited","event":"filtered","url":"…","reason":"beyond-top","cited_by":187}
+```
+
+### Quarantine examples
+
+**No usable `cited_by` on a candidate** (arXiv record without a count):
+
+```bash
+echo '{"title": "Mamba: Linear-Time Sequence Modeling", "url": "https://arxiv.org/abs/2312.00752", "source": "arxiv"}' \
+  | uv run rank-cited --manifest manifest.jsonl
+# (nothing on stdout — no rankable candidates)
+# stderr: quarantined (see manifest.jsonl): nothing rankable among 1 candidate(s) — no usable cited_by
+# -> manifest: {"stage":"rank-cited","event":"quarantined","candidates":1,"reason":"empty-rank: ..."}
+```
+
+**Malformed input line** (truncated pipe or hand-edited JSONL):
+
+```bash
+printf '{"title": "FlashAttention", "cited_by": 3200}\n{"cited_by": 41, "titl\n' \
+  | uv run rank-cited
+# -> the truncated line is quarantined; the well-formed record still ranks
+# -> manifest: {"stage":"rank-cited","event":"quarantined","url":"","reason":"unparseable candidate line 2: ..."}
+```
+
+### Composition with other steps
+
+`rank-cited` sits between `discover`/`abstract-filter` and `fetch-one`. Two
+typical compositions:
+
+```bash
+# Rank before abstract-filter: keep the famous papers regardless of abstract wording
+uv run discover-batch "mixture of experts" "sparse gating" --email you@example.com \
+  | uv run rank-cited --top 20 \
+  | uv run abstract-filter --topic "sparse mixture-of-experts language models" \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+
+# Rank after abstract-filter: most-cited of the on-topic shortlist
+uv run discover-batch "contrastive speech representations" "wav2vec self-supervised" \
+  --email you@example.com \
+  | uv run abstract-filter --topic "contrastive learning for speech representations" \
+  | uv run rank-cited --top 10 \
+  | python3 -c 'import sys,json; [print(json.loads(l)["url"]) for l in sys.stdin]' \
+  | uv run fetch-one
+```
+
+Every dropped candidate (`beyond-top`, `no-cited-by`, `empty-rank`) leaves a
+`filtered` or `quarantined` row in `manifest.jsonl` — nothing is silently lost.
