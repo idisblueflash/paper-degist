@@ -36,6 +36,7 @@ import paper_degist.abstract_filter as abstract_filter_mod
 from paper_degist.abstract_filter import app as abstract_filter_app
 from paper_degist.fetch_one import app as fetch_one_app
 from paper_degist.rank_cited import app as rank_cited_app
+from paper_degist.snowball import app as snowball_app
 from paper_degist.ocr_batch import app as ocr_batch_app
 from paper_degist.ocr_page import app as ocr_page_app
 from paper_degist.parse_url import app as parse_url_app
@@ -1160,3 +1161,20 @@ def test_rank_cited_cli_missing_file_exits_nonzero(tmp_path: Path):
         [str(tmp_path / "no_such.jsonl"), "--manifest", str(tmp_path / "manifest.jsonl")],
     )
     assert result.exit_code != 0
+
+
+# --- snowball CLI: seed-not-found quarantines cleanly, exit 0 ---
+
+
+def test_snowball_cli_seed_not_found_exits_zero(tmp_path: Path):
+    import unittest.mock as mock
+
+    with mock.patch(
+        "paper_degist.snowball._default_fetch_seed",
+        side_effect=RuntimeError("404 not found"),
+    ):
+        result = runner.invoke(
+            snowball_app,
+            ["10.9999/fake-doi", "--manifest", str(tmp_path / "manifest.jsonl")],
+        )
+    assert result.exit_code == 0

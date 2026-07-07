@@ -29,6 +29,7 @@ _STEPS = [
     ("discover-batch", "Fan topic queries across discover sources, merge the union (US31)."),
     ("abstract-filter", "Filter candidates by abstract similarity to a topic (US26)."),
     ("rank-cited", "Rank candidates by citation count, keep the top N (US32)."),
+    ("snowball", "Expand a seed paper into its references and citers via OpenAlex (US33)."),
 ]
 
 app = typer.Typer(
