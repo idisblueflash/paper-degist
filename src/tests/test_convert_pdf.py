@@ -123,6 +123,38 @@ def test_pages_are_stitched_in_order(tmp_path):
     assert text.index("FIRST") < text.index("SECOND")
 
 
+def test_two_pdfs_do_not_share_ocr_output_dir(tmp_path):
+    """Pages from different PDFs must not collide on the same out/<model>/pNNNN.md."""
+    shared_out = tmp_path / "out"
+
+    def tracking_ocr(out_dirs):
+        def ocr_fn(page, model, *, out_dir, manifest_path, **kwargs):
+            out_dirs.append(Path(out_dir))
+            target = Path(out_dir) / model.replace("/", "_") / (Path(page).stem + ".md")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"ocr of {Path(page).stem}", encoding="utf-8")
+            return target
+
+        return ocr_fn
+
+    for pdf_name in ("Paper_Alpha.pdf", "Paper_Beta.pdf"):
+        pdf = tmp_path / pdf_name
+        pdf.write_bytes(b"%PDF-1.7 fake")
+        out_dirs: list[Path] = []
+        convert_pdf(
+            pdf,
+            pages_dir=tmp_path / "pages",
+            out_dir=shared_out,
+            manifest_path=tmp_path / "manifest.jsonl",
+            render_fn=_fake_render(("p0001.png",)),
+            ocr_fn=tracking_ocr(out_dirs),
+        )
+        # Each PDF must have its own OCR subdir, not the bare shared_out
+        for d in out_dirs:
+            assert d != shared_out, f"ocr_fn was called with the bare out_dir for {pdf_name}"
+            assert pdf.stem in str(d), f"out_dir {d} does not include the PDF stem {pdf.stem!r}"
+
+
 # ---------------------------------------------------------------------------
 # AC2 — idempotent skip: existing .md is returned unchanged
 # ---------------------------------------------------------------------------
