@@ -92,9 +92,12 @@ def convert_pdf(
         )
         return None
 
+    # Scope the OCR output dir to the PDF stem so pages from different PDFs
+    # never collide on p0001.md / p0002.md in the flat out/<model>/ directory.
+    pdf_out_dir = out_dir / pdf_path.stem
     page_markdowns: list[str] = []
     for page in pages:
-        md_path = ocr_fn(page, model_id, out_dir=out_dir, manifest_path=manifest_path)
+        md_path = ocr_fn(page, model_id, out_dir=pdf_out_dir, manifest_path=manifest_path)
         if md_path is None:
             # This page's OCR failed; ocr_page wrote its own quarantine record.
             # Quarantine the whole PDF so no partial .md is saved.
