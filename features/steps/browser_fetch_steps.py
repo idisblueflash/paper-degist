@@ -131,3 +131,51 @@ def step_file_unchanged(context):
 @then("no new record is appended to the manifest")
 def step_no_new_record(context):
     assert not context.manifest.exists(), f"unexpected manifest: {context.manifest}"
+
+
+# --- US35: a wall (Cloudflare / a different paper) captured instead of the paper ---
+
+# A Cloudflare challenge page: renders fine, carries the challenge script, and its
+# <title> is the interstitial — not the requested paper.
+_CLOUDFLARE_WALL = (
+    "<html><head><title>Just a moment...</title></head><body>"
+    '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script>'
+    "</body></html>"
+)
+
+# A page that renders a *different* paper: no wall marker, but the <title> shares
+# no content word with the requested URL's slug.
+_WRONG_PAPER = (
+    "<html><head><title>The Psychology of Everyday Things</title></head>"
+    "<body><h1>The Psychology of Everyday Things</h1></body></html>"
+)
+
+
+@given('a dev-mode Chrome that renders a Cloudflare challenge for "{url}"')
+def step_renders_cloudflare_wall(context, url):
+    _fakes(context)
+    context.deps["probe_cdp"] = lambda _url: True
+    context.url = url
+    context.deps["fetch_rendered"] = lambda cdp_url, target: _CLOUDFLARE_WALL
+
+
+@given('a dev-mode Chrome that renders a different paper for "{url}"')
+def step_renders_different_paper(context, url):
+    _fakes(context)
+    context.deps["probe_cdp"] = lambda _url: True
+    context.url = url
+    context.deps["fetch_rendered"] = lambda cdp_url, target: _WRONG_PAPER
+
+
+@given('a dev-mode Chrome that renders the genuine paper titled "{title}" for "{url}"')
+def step_renders_genuine_paper(context, title, url):
+    _fakes(context)
+    context.deps["probe_cdp"] = lambda _url: True
+    context.url = url
+    html = f"<html><head><title>{title}</title></head><body><h1>{title}</h1></body></html>"
+    context.deps["fetch_rendered"] = lambda cdp_url, target: html
+
+
+@when("browser-fetch classifies the rendered capture")
+def step_classifies_capture(context):
+    _run_bf(context)

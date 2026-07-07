@@ -26,8 +26,11 @@ from contextlib import contextmanager
 from paper_degist.browser_fetch import (
     _fetch_on_new_tab,
     _no_proxy_for,
+    _rendered_title,
     _target_path,
     _teardown,
+    _url_content_tokens,
+    _wall_reason,
     browser_fetch,
     browser_fetch_batch,
 )
@@ -615,3 +618,159 @@ def test_fetch_on_new_tab_leaves_the_context_open_for_the_next_url():
     ctx = _FakeContext(page)
     _fetch_on_new_tab(ctx, OK_URL, timeout_ms=30000)
     assert ctx.closed is False
+
+
+# ======================================================================== #
+# US35 — detect a wall page captured instead of the paper (_wall_reason)
+# ======================================================================== #
+#
+# browser-fetch trusts whatever Chrome renders, so a login / consent / Cloudflare
+# wall renders *successfully* and is saved as if it were the paper. _wall_reason
+# classifies the rendered HTML on two cheap deterministic signals — a known wall
+# marker, or a <title> that shares no content token with the requested URL's
+# paper slug — so the caller quarantines *before* the save (the wall never
+# becomes the sticky idempotent artifact).
+
+# The AC's URLs, each distinct and self-describing (rule 08).
+WALL_URL = "https://www.researchgate.net/publication/221609650_Retrieval_Practice_Produces_More_Learning"
+MISMATCH_URL = "https://www.academia.edu/38654201/Distributed_Practice_in_Verbal_Recall_Tasks"
+
+# A Cloudflare challenge page (AC1): renders fine, carries the challenge script,
+# and its <title> is the CF interstitial — not the requested paper.
+CLOUDFLARE_WALL = (
+    "<html><head><title>Just a moment...</title></head><body>"
+    '<div class="cf-wrapper"><script src="/cdn-cgi/challenge-platform/h/b/orchestrate">'
+    "</script></div></body></html>"
+)
+
+# A page that renders a *different* paper than the one requested (AC2): no wall
+# marker, but the <title> shares no content word with MISMATCH_URL's slug.
+WRONG_PAPER = (
+    "<html><head><title>The Psychology of Everyday Things | ResearchGate</title></head>"
+    "<body><h1>The Psychology of Everyday Things</h1></body></html>"
+)
+
+# The genuine paper (AC3): the rendered <title> echoes the requested slug.
+GENUINE_PAPER = (
+    "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+    "<body><h1>Retrieval Practice Produces More Learning</h1></body></html>"
+)
+
+
+# --- AC1: a known Cloudflare wall marker → a wall reason ---
+
+
+def test_wall_reason_flags_a_cloudflare_challenge_marker():
+    assert _wall_reason(WALL_URL, CLOUDFLARE_WALL) is not None
+
+
+# --- AC2: a rendered title that reflects no content word of the URL slug → wall ---
+
+
+def test_wall_reason_flags_a_title_that_does_not_reflect_the_url():
+    assert _wall_reason(MISMATCH_URL, WRONG_PAPER) is not None
+
+
+# --- AC3: a genuine paper whose title echoes the requested slug → not a wall ---
+
+
+def test_wall_reason_passes_a_genuine_paper_page():
+    assert _wall_reason(WALL_URL, GENUINE_PAPER) is None
+
+
+# --- safe abstain: no <title> to judge, and no wall marker → not flagged ---
+
+
+def test_wall_reason_abstains_when_the_page_has_no_title():
+    titleless = "<html><body><h1>Distributed Practice in Verbal Recall Tasks</h1></body></html>"
+    assert _wall_reason(MISMATCH_URL, titleless) is None
+
+
+# --- safe abstain: an id-only slug carries no content token to compare ---
+
+
+def test_wall_reason_abstains_on_an_id_only_url_slug():
+    # arXiv's numeric slug (1706.03762) has no content word, so even a differing
+    # title cannot be judged a mismatch — the safe direction (no false quarantine).
+    arxiv = "https://arxiv.org/abs/1706.03762"
+    other_title = "<html><head><title>An Unrelated Survey</title></head><body>x</body></html>"
+    assert _wall_reason(arxiv, other_title) is None
+
+
+def test_url_content_tokens_drop_the_numeric_id_and_stopwords():
+    assert _url_content_tokens(WALL_URL) == frozenset(
+        {"retrieval", "practice", "produces", "more", "learning"}
+    )
+
+
+def test_rendered_title_reads_the_title_from_an_html_string():
+    assert _rendered_title(GENUINE_PAPER) == "Retrieval Practice Produces More Learning"
+
+
+# --- AC1/AC4: a wall capture is quarantined *before* the save (never sticky) ---
+
+
+def test_wall_capture_returns_none(tmp_path: Path):
+    result, _, _ = _run(tmp_path, url=WALL_URL, fetch_rendered=_render(CLOUDFLARE_WALL))
+    assert result is None
+
+
+def test_wall_capture_saves_no_file(tmp_path: Path):
+    # The check runs before write_text, so the wall never becomes the idempotent
+    # "already saved" artifact of AC4 — a later logged-in run can recapture it.
+    _, files, _ = _run(tmp_path, url=WALL_URL, fetch_rendered=_render(CLOUDFLARE_WALL))
+    assert not files.exists()
+
+
+def test_wall_capture_reason_flags_a_wall(tmp_path: Path):
+    _, _, manifest = _run(tmp_path, url=WALL_URL, fetch_rendered=_render(CLOUDFLARE_WALL))
+    assert "wall" in _only_record(manifest)["reason"]
+
+
+def test_wall_capture_reason_is_distinct_from_a_nav_failure(tmp_path: Path):
+    # The manifest must tell "captured a wall" apart from "browser could not load".
+    _, _, wall_m = _run(tmp_path / "wall", url=WALL_URL, fetch_rendered=_render(CLOUDFLARE_WALL))
+    _, _, nav_m = _run(tmp_path / "nav", url=NAV_FAIL_URL, fetch_rendered=_boom)
+    assert _only_record(wall_m)["reason"] != _only_record(nav_m)["reason"]
+
+
+# --- Codex review: tighten the false-positive surface (AC3 is the priority) ---
+
+
+def test_wall_reason_ignores_an_interstitial_phrase_in_body_prose():
+    # A real paper page whose *body* prose contains "just a moment..." (title still
+    # reflects the slug) is not a wall — phrase markers match the <title>, not
+    # arbitrary body text (Codex: whole-HTML scan false-positive).
+    page = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><p>Wait just a moment... the retrieval effect is robust.</p></body></html>"
+    )
+    assert _wall_reason(WALL_URL, page) is None
+
+
+def test_wall_reason_flags_a_cloudflare_interstitial_title():
+    # A challenge page whose <title> is the interstitial but which carries no
+    # challenge *script* is still caught — via the title marker.
+    page = "<html><head><title>Just a moment...</title></head><body>x</body></html>"
+    assert _wall_reason(WALL_URL, page) is not None
+
+
+def test_wall_reason_ignores_a_noscript_javascript_notice():
+    # "enable javascript and cookies to continue" is legit boilerplate on many
+    # pages; dropping it as a marker means a real, correctly-titled paper carrying
+    # it is not flagged (Codex: over-broad marker).
+    page = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><noscript>Please enable JavaScript and cookies to continue.</noscript>"
+        "<h1>Retrieval Practice Produces More Learning</h1></body></html>"
+    )
+    assert _wall_reason(WALL_URL, page) is None
+
+
+def test_wall_reason_abstains_on_a_generic_repository_basename():
+    # A non-descriptive CGI/repository basename (viewcontent.cgi) carries no
+    # paper-identifying token, so a differing title must not be judged a wall
+    # (Codex: false-positive on DOI/repository basenames).
+    cgi_url = "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"
+    other = "<html><head><title>Rowan University Digital Works Home</title></head><body>x</body></html>"
+    assert _wall_reason(cgi_url, other) is None
