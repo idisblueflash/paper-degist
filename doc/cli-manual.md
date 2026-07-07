@@ -1764,3 +1764,67 @@ uv run discover-batch "sparse mixture-of-experts" "expert choice routing" \
   | uv run enrich-abstract --email "$OPENALEX_EMAIL" \
   | uv run abstract-filter --topic "sparse mixture-of-experts language models"
 ```
+
+---
+
+## `collect-papers` — collect converted MDs to a target folder (US 36)
+
+Copy all `.md` files from a topic folder (`files/<topic>/`) into a target
+directory. The topic folder is the `--files-dir` value used when `fetch-one` and
+`browser-fetch` fetched the batch, so no extra configuration is needed — the
+folder is already the grouping unit.
+
+```
+uv run collect-papers TOPIC --dest DIR
+uv run collect-papers TOPIC --dest DIR [--files-dir files/] [--skip-existing]
+```
+
+- **Argument**: `TOPIC` — the subfolder name under `--files-dir`
+  (e.g. `mnemonic-method`).
+- **Options**: `--dest` (required: target directory), `--files-dir` (default
+  `files/`), `--skip-existing` (skip instead of overwrite when the file already
+  exists in dest).
+- **Output**: the copied paths, one per line on stdout.
+- **Non-existent topic folder**: exits non-zero with an error on stderr — never
+  silently copies nothing.
+- **Empty topic folder** (no `.md` files yet): exits 0 with a warning on stderr.
+- **Idempotent**: re-running overwrites by default; `--skip-existing` skips
+  already-present files so partial runs stay safe.
+
+**Happy path** — copy all converted papers for the `mnemonic-method` topic:
+
+```bash
+uv run collect-papers mnemonic-method \
+  --dest /Users/husongtao/Projects/research-room/raw
+# -> /Users/husongtao/Projects/paper-degist-02/files/mnemonic-method/ *.md
+#    copied to research-room/raw/
+```
+
+**Skip files already in dest** — safe for incremental top-ups:
+
+```bash
+uv run collect-papers mnemonic-method \
+  --dest /Users/husongtao/Projects/research-room/raw \
+  --skip-existing
+```
+
+**Non-existent topic** → exits 1:
+
+```bash
+uv run collect-papers no-such-topic --dest /tmp/raw
+# stderr: topic folder does not exist: files/no-such-topic
+# exit: 1
+```
+
+### Composition with other steps
+
+`collect-papers` is the final delivery step after the full convert pipeline:
+
+```bash
+# Fetch a topic batch, convert, then stage to the research room
+uv run fetch-one "$url" --files-dir files/mnemonic-method
+uv run convert-html files/mnemonic-method/paper.html     # or convert-pdf
+uv run collect-papers mnemonic-method \
+  --dest /Users/husongtao/Projects/research-room/raw
+```
+```
