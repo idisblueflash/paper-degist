@@ -123,6 +123,72 @@ def test_pages_are_stitched_in_order(tmp_path):
     assert text.index("FIRST") < text.index("SECOND")
 
 
+# ---------------------------------------------------------------------------
+# page_gap — inter-page recovery gap (PoC for RAM-pressure mitigation)
+# ---------------------------------------------------------------------------
+
+
+def _fake_sleep():
+    def sleep(seconds):
+        sleep.calls.append(seconds)
+    sleep.calls = []
+    return sleep
+
+
+def test_page_gap_is_waited_between_pages(tmp_path):
+    """A non-zero page_gap must be slept between every pair of pages."""
+    pdf = tmp_path / "Spaced_Repetition_Gap_Test.pdf"
+    pdf.write_bytes(b"%PDF-1.7 fake")
+    sleep = _fake_sleep()
+    convert_pdf(
+        pdf,
+        pages_dir=tmp_path / "pages",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        render_fn=_fake_render(("p0001.png", "p0002.png", "p0003.png")),
+        ocr_fn=_fake_ocr(),
+        page_gap=7.0,
+        sleep=sleep,
+    )
+    assert sleep.calls == [7.0, 7.0]
+
+
+def test_page_gap_not_waited_before_first_page(tmp_path):
+    """The gap must NOT be waited before the very first page OCR call."""
+    pdf = tmp_path / "Keyword_Method_Gap_Test.pdf"
+    pdf.write_bytes(b"%PDF-1.7 fake")
+    sleep = _fake_sleep()
+    convert_pdf(
+        pdf,
+        pages_dir=tmp_path / "pages",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        render_fn=_fake_render(("p0001.png", "p0002.png")),
+        ocr_fn=_fake_ocr(),
+        page_gap=7.0,
+        sleep=sleep,
+    )
+    assert len(sleep.calls) == 1  # only between page 1→2, not before page 1
+
+
+def test_zero_page_gap_waits_nothing(tmp_path):
+    """Default gap=0 must never call sleep."""
+    pdf = tmp_path / "Mnemonic_NoGap_Test.pdf"
+    pdf.write_bytes(b"%PDF-1.7 fake")
+    sleep = _fake_sleep()
+    convert_pdf(
+        pdf,
+        pages_dir=tmp_path / "pages",
+        out_dir=tmp_path / "out",
+        manifest_path=tmp_path / "manifest.jsonl",
+        render_fn=_fake_render(("p0001.png", "p0002.png")),
+        ocr_fn=_fake_ocr(),
+        page_gap=0.0,
+        sleep=sleep,
+    )
+    assert sleep.calls == []
+
+
 def test_two_pdfs_do_not_share_ocr_output_dir(tmp_path):
     """Pages from different PDFs must not collide on the same out/<model>/pNNNN.md."""
     shared_out = tmp_path / "out"
