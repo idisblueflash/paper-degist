@@ -271,20 +271,31 @@ location, the case not yet handled, and the trigger that should make us fix it.
   (known login/consent markers, or a title/URL mismatch) that quarantines with a
   distinct "looks like a wall, not the paper" reason, driven by a captured
   wall-page fixture.
-- **Status:** OPEN — **confirmed live by the US15 real E2E (2026-07-04).** Fetching
-  `…/220320021_Spaced_Repetition_and_Long-Term_Retention` through a real dev-mode
-  Chrome **not logged in to ResearchGate** saved a 939 KB HTML that was a
-  Cloudflare-gated "Request PDF" page (markers `cloudflare` / `challenge-platform`,
-  and a `<title>` for an *unrelated* paper) — recorded `saved`, exactly the
-  wall-as-paper case. Two concrete signals a fix could use surfaced here: the
-  Cloudflare challenge markers, and a **title/slug mismatch** between the URL and
-  the rendered `<title>`. Operationally the precondition is that the researcher
-  logs the profile into the host first (US15 defers in-script auth by design).
-  **Stickiness (Codex review):** because the save writes a real file and re-runs
-  skip an existing target (AC4 idempotency), a bad wall capture is *permanently*
-  treated as a success — recovering it needs deleting the saved `.html` (and its
-  manifest row) by hand. A future wall-signature check would need to run **before**
-  the save so a wall never becomes the sticky artifact in the first place.
+- **Status:** RESOLVED by US35. `browser_fetch._wall_reason(url, html)` classifies
+  the rendered capture on two cheap deterministic signals — a known bot-wall marker
+  (`_WALL_MARKERS`: the Cloudflare `challenge-platform` script, `Just a moment...`
+  interstitial, `Attention Required! | Cloudflare` block, etc.) and a rendered
+  `<title>` that shares **no content token** with the requested URL's paper slug
+  (`_url_content_tokens`, reusing US13's `_slug_tokens`, digits + stop-words
+  dropped). Either → a distinct `"looks like a wall, not the paper: …"` quarantine.
+  Crucially the check runs in `_dispatch_url` **before** `write_text`, so a wall
+  never becomes the sticky idempotent artifact the Codex note warned about (AC4) —
+  a later logged-in run recaptures the same URL. The marker set was kept
+  deliberately specific (no bare `cloudflare`, which would false-positive on the
+  huge fraction of legit paper hosts served *via* the Cloudflare CDN), and the
+  title check **abstains** when the slug is id-only (arXiv `1706.03762`) or the page
+  has no `<title>` — the safe direction is a missed wall, never a false quarantine
+  of a real capture (AC3). **Confirmed live (US35 real E2E, 2026-07-07):** the same
+  ResearchGate URL fetched through a real dev-mode Chrome (not logged in) rendered a
+  935 KB Cloudflare wall whose `<title>` was for an *unrelated* paper ("Efficient
+  Algorithms for Decision Tree Cross-validation… | Request PDF"); `_wall_reason`
+  flagged it on the `challenge-platform` marker — pre-US35 this exact page was saved
+  as `saved`. A genuine non-walled page (`…/wiki/Spaced_repetition`) still saved with
+  no false quarantine and a second run was idempotent (one manifest row). Note: when
+  the wall never *settles* (Cloudflare keeps polling so `networkidle` times out), the
+  capture quarantines one step earlier as `navigation failed` — a different but
+  equally clean branch. Deferred follow-ups (per-host login/consent taxonomy;
+  title/slug threshold calibration) are named in the US35 spec's "Later stages".
 
 ## browser_fetch — proxy env broke the CDP connection (fixed in the US15 E2E)
 

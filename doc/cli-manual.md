@@ -401,6 +401,16 @@ result. It **never** launches or kills Chrome (that is `browser-up`) and never
 logs in or solves a captcha for you (deciding *which* URLs need the browser is
 US17).
 
+Before it saves, it checks the rendered page is the **paper**, not a **wall**
+(US35): a login / consent / Cloudflare page renders successfully, so without this
+check its HTML would be saved as if it were the content — and, because re-runs
+skip an existing file, that bad capture would be *permanently* treated as a
+success. `browser-fetch` quarantines a wall **before** writing the file (so it
+never becomes the sticky artifact), recognizing it by a known bot-wall marker (the
+Cloudflare `challenge-platform` script, a `Just a moment…` interstitial, …) or a
+rendered `<title>` that reflects **none** of the requested URL's paper slug. When
+you have logged the profile into the host, re-running recaptures the real paper.
+
 It reads a **list** of URLs and reuses **one** warm connection across the whole
 batch (US16): it probes the CDP endpoint once, then opens and closes a *tab* per
 URL against that single session — so every URL rides the same warm, authenticated
@@ -429,6 +439,10 @@ uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir file
     — the CDP endpoint is unreachable; run `browser-up` first, then re-run.
   - `navigation failed: …` — Chrome was reachable but that URL's navigation
     errored or timed out.
+  - `looks like a wall, not the paper: …` — the page rendered, but it is a
+    login / consent / Cloudflare wall (a known marker, or a `<title>` that does
+    not reflect the URL), so it is quarantined **before** the save (US35); log the
+    profile into the host and re-run to capture the real paper.
   - `browser session failed to open: …` — the endpoint answered the probe but
     the session could not be opened (e.g. a non-Chrome debug server, or Chrome
     lost between probe and connect); the remaining URLs quarantine, never crash.
@@ -464,6 +478,14 @@ uv run browser-fetch urls.txt
 #   -> stdout: (empty — nothing saved)
 #   -> stderr: 2 of 2 URL(s) quarantined (see manifest.jsonl)
 #   -> manifest: {"stage":"browser-fetch","reason":"no dev-mode browser endpoint reachable …"}
+
+# A wall, not the paper (US35): the profile is not logged into the host, so the
+# host renders a Cloudflare / login page. It is quarantined *before* any file is
+# saved, so a later logged-in run can recapture the same URL.
+echo "https://www.researchgate.net/publication/221609650_Retrieval_Practice_Produces_More_Learning" \
+  | uv run browser-fetch --cdp "$endpoint"
+#   -> stdout: (empty — nothing saved)
+#   -> manifest: {"stage":"browser-fetch","reason":"looks like a wall, not the paper: bot-wall marker 'challenge-platform'"}
 ```
 
 ---
