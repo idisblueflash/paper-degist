@@ -39,6 +39,7 @@ embed-text = "paper_degist.embed_text:main"
 discover = "paper_degist.discover:main"
 discover-batch = "paper_degist.discover_batch:main"
 abstract-filter = "paper_degist.abstract_filter:main"
+rank-cited = "paper_degist.rank_cited:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
