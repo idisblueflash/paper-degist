@@ -95,7 +95,11 @@ def convert_html(
         existing = target.read_text(encoding="utf-8")
         stamped = _frontmatter.apply(existing, meta)
         if stamped != existing:
-            target.write_text(stamped, encoding="utf-8")
+            # Atomic backfill: stage under a sibling and rename, so a killed write
+            # never leaves a truncated/half-stamped .md (mirrors convert_pdf).
+            staging = target.with_name(target.name + ".writing")
+            staging.write_text(stamped, encoding="utf-8")
+            staging.rename(target)
         return target
     target.write_text(_frontmatter.apply(markdown, meta), encoding="utf-8")
     return target

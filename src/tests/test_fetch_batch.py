@@ -126,6 +126,15 @@ def test_record_without_url_does_not_stop_the_batch(tmp_path):
     assert [p.name for p in saved] == ["2602.00762.pdf"]
 
 
+def test_non_string_url_is_quarantined(tmp_path):
+    _saved, _files, manifest = _run(
+        tmp_path,
+        [{"url": ["https://arxiv.org/pdf/2602.00762.pdf"]}],  # url is a list, not a str
+        fetch=lambda url: PDF,
+    )
+    assert _records(manifest)[0]["stage"] == "fetch-batch"
+
+
 def test_malformed_json_line_is_quarantined(tmp_path):
     candidates = tmp_path / "candidates.jsonl"
     candidates.write_text("{not valid json\n", encoding="utf-8")

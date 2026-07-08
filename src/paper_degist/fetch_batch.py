@@ -63,8 +63,10 @@ def fetch_batch(
             continue
 
         url = record.get("url") if isinstance(record, dict) else None
-        if not url:
-            _quarantine(manifest_path, reason="candidate record has no url", line=line)
+        if not (isinstance(url, str) and url.strip()):
+            # No url, or a non-string url (a list/number) that would crash the
+            # fetch/path handling — quarantine as malformed rather than crash.
+            _quarantine(manifest_path, reason="candidate record has no usable url", line=line)
             continue
 
         source = fetch_one(url, files_dir=files_dir, manifest_path=manifest_path, fetch=fetch)

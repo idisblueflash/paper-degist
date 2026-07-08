@@ -52,6 +52,28 @@ def test_load_non_dict_sidecar_is_none(tmp_path):
     assert _frontmatter.load_sidecar(source) is None
 
 
+def test_load_invalid_utf8_sidecar_is_none(tmp_path):
+    source = tmp_path / "binary.pdf"
+    _frontmatter.sidecar_path(source).write_bytes(b"\xff\xfe not utf-8")
+    assert _frontmatter.load_sidecar(source) is None
+
+
+# --- sidecar merge: a sparser re-write never erases a captured non-null field ---
+
+def test_write_sidecar_preserves_existing_non_null(tmp_path):
+    source = tmp_path / "smart.pdf"
+    _frontmatter.write_sidecar(source, {"doi": "10.5555/smart", "venue": "ACL"})
+    _frontmatter.write_sidecar(source, {"url": "https://arxiv.org/abs/2602.00762"})  # sparser
+    assert _frontmatter.load_sidecar(source)["doi"] == "10.5555/smart"
+
+
+def test_write_sidecar_new_non_null_overrides(tmp_path):
+    source = tmp_path / "smart.pdf"
+    _frontmatter.write_sidecar(source, {"venue": None})
+    _frontmatter.write_sidecar(source, {"venue": "NeurIPS"})
+    assert _frontmatter.load_sidecar(source)["venue"] == "NeurIPS"
+
+
 # ---------------------------------------------------------------------------
 # apply — no meta / fresh stamp / already stamped
 # ---------------------------------------------------------------------------
@@ -68,3 +90,20 @@ def test_apply_prepends_block_ahead_of_body():
 def test_apply_is_idempotent_when_already_stamped():
     stamped = _frontmatter.render({"url": "u"}) + "# Body\n"
     assert _frontmatter.apply(stamped, {"url": "different"}) == stamped
+
+
+def test_body_starting_with_thematic_break_is_not_frontmatter():
+    # A leading `---` horizontal rule (no closing fence) is not a frontmatter
+    # block — it must still be stamped, not mistaken for one.
+    assert _frontmatter.has_frontmatter("---\n\nIntro paragraph\n") is False
+
+
+def test_apply_backfills_a_thematic_break_body():
+    body = "---\n\nIntro paragraph\n"
+    out = _frontmatter.apply(body, {"url": "u"})
+    assert out == _frontmatter.render({"url": "u"}) + body
+
+
+def test_crlf_stamped_block_is_detected_as_frontmatter():
+    stamped = "---\r\nurl: u\r\n---\r\n\r\n# Body\r\n"
+    assert _frontmatter.has_frontmatter(stamped) is True

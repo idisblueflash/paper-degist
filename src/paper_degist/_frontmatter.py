@@ -45,10 +45,16 @@ def sidecar_path(source: Path) -> Path:
 
 
 def write_sidecar(source: Path, meta: dict) -> Path:
-    """Write ``{FIELDS}`` (null-filled) as the source's sidecar JSON; return it."""
-    ordered = {key: meta.get(key) for key in FIELDS}
+    """Write ``{FIELDS}`` as the source's sidecar JSON (merging any existing); return it.
+
+    A field the new ``meta`` leaves ``None`` keeps the value an earlier write
+    captured, so a sparser re-fetch of the same file never erases a DOI/venue
+    already recorded — a non-null new value still wins (a correction).
+    """
+    existing = load_sidecar(source) or {}
+    merged = {key: meta.get(key) if meta.get(key) is not None else existing.get(key) for key in FIELDS}
     target = sidecar_path(source)
-    target.write_text(json.dumps(ordered) + "\n", encoding="utf-8")
+    target.write_text(json.dumps(merged) + "\n", encoding="utf-8")
     return target
 
 
@@ -61,7 +67,7 @@ def load_sidecar(source: Path) -> Optional[dict]:
     target = sidecar_path(source)
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     # A well-formed but non-object sidecar (a stray list/number) is not usable
     # as a field map — treat it like an absent sidecar rather than crash later.
@@ -69,8 +75,20 @@ def load_sidecar(source: Path) -> Optional[dict]:
 
 
 def has_frontmatter(text: str) -> bool:
-    """Whether ``text`` already begins with a frontmatter block (idempotency)."""
-    return text.startswith(_FENCE)
+    """Whether ``text`` already begins with a *complete* frontmatter block.
+
+    A real block opens with a ``---`` line and has a matching ``---`` line to
+    close it. Requiring the close means a body that merely starts with a ``---``
+    thematic break (no closing fence) is *not* mistaken for frontmatter — it
+    still gets stamped — while an already-stamped file (including a CRLF one) is
+    left alone. A leading UTF-8 BOM is tolerated.
+    """
+    if text.startswith("﻿"):
+        text = text[1:]
+    lines = text.split("\n")
+    if not lines or lines[0].rstrip("\r") != "---":
+        return False
+    return any(line.rstrip("\r") == "---" for line in lines[1:])
 
 
 def apply(markdown: str, meta: Optional[dict]) -> str:
