@@ -49,7 +49,7 @@ timeless spec and carry no status marker.
 | [US 34](user-stories/us-34-enrich-abstract.md)               | Fill missing abstracts for candidates by DOI via OpenAlex              | `enrich-abstract` | ✅ Done                            |
 | [US 35](user-stories/us-35-detect-wall-not-paper.md)         | Detect a wall page captured instead of the paper (before the save)     | `browser-fetch`   | ✅ Done                            |
 | [US 36](user-stories/us-36-collect-papers.md)                | Collect converted papers to a target folder                            | `collect-papers`  | ✅ Done                            |
-| [US 37](user-stories/us-37-provenance-frontmatter.md)        | Provenance frontmatter (doi/url/pdf_url/venue) on each collected paper  | `fetch-batch`     | 🚧 In progress                     |
+| [US 37](user-stories/us-37-provenance-frontmatter.md)        | Provenance frontmatter (doi/url/pdf_url/venue) on each collected paper  | `fetch-batch`     | ✅ Done                            |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).
