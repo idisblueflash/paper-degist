@@ -9,6 +9,7 @@ code test — never one bundle.
 import json
 from pathlib import Path
 
+from paper_degist import _frontmatter
 from paper_degist.convert_html import convert_html, html_to_markdown
 
 
@@ -75,6 +76,49 @@ def test_returns_md_path_alongside_html(tmp_path: Path):
 def test_writes_converted_markdown_to_the_md_file(tmp_path: Path):
     result, _, _ = _run(tmp_path)
     assert result.read_text(encoding="utf-8").startswith("# Title")
+
+
+# --- US37: provenance frontmatter stamped from the sidecar ---
+
+_META = {"doi": "10.5555/attn", "url": "https://doi.org/10.5555/attn",
+         "pdf_url": "https://arxiv.org/pdf/1706.03762.pdf", "venue": "NeurIPS"}
+
+
+def test_fresh_convert_with_sidecar_stamps_frontmatter(tmp_path: Path):
+    html = _write_html(tmp_path, "attention.html", _PAPER_BODY)
+    _frontmatter.write_sidecar(html, _META)
+    target = convert_html(html, manifest_path=tmp_path / "manifest.jsonl")
+    assert target.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_fresh_convert_without_sidecar_has_no_frontmatter(tmp_path: Path):
+    target, _html, _m = _run(tmp_path)
+    assert not target.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_backfill_injects_frontmatter_into_existing_md(tmp_path: Path):
+    html = _write_html(tmp_path, "resnet.html", _PAPER_BODY)
+    html.with_suffix(".md").write_text("# Deep Residual Learning\n", encoding="utf-8")
+    _frontmatter.write_sidecar(html, _META)
+    target = convert_html(html, manifest_path=tmp_path / "manifest.jsonl")
+    assert target.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_backfill_preserves_the_existing_body(tmp_path: Path):
+    html = _write_html(tmp_path, "resnet.html", _PAPER_BODY)
+    html.with_suffix(".md").write_text("# Deep Residual Learning\n", encoding="utf-8")
+    _frontmatter.write_sidecar(html, _META)
+    target = convert_html(html, manifest_path=tmp_path / "manifest.jsonl")
+    assert target.read_text(encoding="utf-8").endswith("# Deep Residual Learning\n")
+
+
+def test_existing_md_with_frontmatter_is_not_double_stamped(tmp_path: Path):
+    html = _write_html(tmp_path, "bert.html", _PAPER_BODY)
+    already = _frontmatter.render(_META) + "# BERT\n"
+    html.with_suffix(".md").write_text(already, encoding="utf-8")
+    _frontmatter.write_sidecar(html, _META)
+    target = convert_html(html, manifest_path=tmp_path / "manifest.jsonl")
+    assert target.read_text(encoding="utf-8") == already
 
 
 # --- idempotent skip: an existing .md is left untouched ---

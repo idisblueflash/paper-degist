@@ -17,7 +17,7 @@ import typer
 
 from markdownify import markdownify
 
-from paper_degist import _manifest
+from paper_degist import _frontmatter, _manifest
 from paper_degist._cli import invoke
 
 # Below this many non-whitespace characters, the extracted Markdown is treated
@@ -85,10 +85,19 @@ def convert_html(
         _quarantine(manifest_path, path=str(path), reason="HTML too thin")
         return None
 
+    # US37: the source's sidecar (if any) carries the paper's provenance; stamp it
+    # as frontmatter. No sidecar → no frontmatter (pre-US37 output unchanged).
+    meta = _frontmatter.load_sidecar(path)
     target = path.with_suffix(".md")
     if target.exists():
-        return target  # idempotent skip — never overwrite
-    target.write_text(markdown, encoding="utf-8")
+        # An existing .md is left untouched — unless it predates the sidecar and
+        # carries no frontmatter yet, in which case backfill it in place (US37 AC6).
+        existing = target.read_text(encoding="utf-8")
+        stamped = _frontmatter.apply(existing, meta)
+        if stamped != existing:
+            target.write_text(stamped, encoding="utf-8")
+        return target
+    target.write_text(_frontmatter.apply(markdown, meta), encoding="utf-8")
     return target
 
 

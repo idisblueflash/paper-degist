@@ -22,7 +22,7 @@ from typing import Annotated, Callable, Optional
 
 import typer
 
-from paper_degist import _manifest
+from paper_degist import _frontmatter, _manifest
 from paper_degist._cli import invoke
 from paper_degist.ocr_page import REGISTRY, ocr_page
 from paper_degist.render_pdf import render_pdf
@@ -79,9 +79,20 @@ def convert_pdf(
         )
         return None
 
+    # US37: the source's sidecar (if any) carries the paper's provenance; it is
+    # stamped as frontmatter on the stitched Markdown below. No sidecar → none.
+    meta = _frontmatter.load_sidecar(pdf_path)
     target = pdf_path.with_suffix(".md")
     if target.exists():
-        return target  # idempotent skip — never overwrite
+        # Leave an existing .md untouched — unless it predates the sidecar and
+        # carries no frontmatter yet, in which case backfill it in place (US37 AC6).
+        existing = target.read_text(encoding="utf-8")
+        stamped = _frontmatter.apply(existing, meta)
+        if stamped != existing:
+            staging = target.with_name(target.name + ".writing")
+            staging.write_text(stamped, encoding="utf-8")
+            staging.rename(target)
+        return target
 
     pages = render_fn(pdf_path, pages_dir=pages_dir, manifest_path=manifest_path)
     if pages is None:
@@ -122,7 +133,7 @@ def convert_pdf(
             )
             return None
 
-    stitched = _PAGE_SEP.join(page_markdowns)
+    stitched = _frontmatter.apply(_PAGE_SEP.join(page_markdowns), meta)
     # Atomic write: stage under a sibling so a killed write never leaves a
     # partial file the idempotency skip would accept as a complete convert.
     staging = target.with_name(target.name + ".writing")
