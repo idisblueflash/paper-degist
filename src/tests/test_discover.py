@@ -172,6 +172,23 @@ def test_openalex_tags_the_source():
     assert first.source == "openalex"
 
 
+def test_openalex_captures_venue_from_primary_location():
+    data = {"results": [{"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1/x",
+                         "primary_location": {"source": {"display_name": "Cognition"}}}]}
+    assert parse_openalex_json(data)[0].venue == "Cognition"
+
+
+def test_openalex_venue_absent_is_none():
+    # The molecular-gnn fixture carries no primary_location/host_venue.
+    assert parse_openalex_json(_openalex_data())[0].venue is None
+
+
+def test_openalex_venue_appears_in_the_record():
+    data = {"results": [{"id": "https://openalex.org/W2", "doi": "https://doi.org/10.2/y",
+                         "primary_location": {"source": {"display_name": "Nature"}}}]}
+    assert parse_openalex_json(data)[0].to_record()["venue"] == "Nature"
+
+
 def test_openalex_extracts_the_cited_by_count():
     first = parse_openalex_json(_openalex_data())[0]
     assert first.cited_by == 3010

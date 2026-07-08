@@ -91,6 +91,7 @@ class Candidate:
     tldr: Optional[str] = None
     pdf_url: Optional[str] = None
     cited_by: Optional[int] = None
+    venue: Optional[str] = None
 
     def to_record(self) -> dict:
         """The JSONL record: always-present fields, plus the optional ones."""
@@ -112,6 +113,8 @@ class Candidate:
             record["pdf_url"] = self.pdf_url
         if self.cited_by is not None:
             record["cited_by"] = self.cited_by
+        if self.venue:
+            record["venue"] = self.venue
         return record
 
 
@@ -293,6 +296,7 @@ def parse_openalex_json(data: dict) -> list[Candidate]:
                 doi=doi,
                 pdf_url=_openalex.pdf_url_from_work(work),
                 cited_by=work.get("cited_by_count"),
+                venue=_openalex.venue_from_work(work),
             )
         )
     return candidates

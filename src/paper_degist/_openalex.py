@@ -85,3 +85,17 @@ def pdf_url_from_work(work: dict) -> Optional[str]:
         if isinstance(location, dict) and location.get("is_oa") and location.get("pdf_url"):
             return location["pdf_url"]
     return None
+
+
+def venue_from_work(work: dict) -> Optional[str]:
+    """The publication venue of a Work (US37 frontmatter), or ``None``.
+
+    The current API names the venue under ``primary_location.source.display_name``;
+    a legacy record carries it under ``host_venue.display_name``. A preprint with
+    no venue (an arXiv-only Work) yields ``None`` rather than a fabricated name.
+    """
+    source = (work.get("primary_location") or {}).get("source") or {}
+    if source.get("display_name"):
+        return source["display_name"]
+    host_venue = work.get("host_venue") or {}
+    return host_venue.get("display_name") or None
