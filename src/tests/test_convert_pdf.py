@@ -336,48 +336,44 @@ def test_empty_rendered_page_list_returns_none(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AC3 — quarantine: OCR failure on a page
+# AC3 — page OCR failure: skip-and-continue with a visible placeholder
+#
+# A single failed page must NOT abort the whole PDF (issue #67). The document
+# is still saved; the bad page gets an HTML comment placeholder so the reader
+# sees exactly where the gap is.
 # ---------------------------------------------------------------------------
 
 
-def test_ocr_failure_returns_none(tmp_path):
-    result, _, _ = _run(
-        tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0001.png"}
-    )
-    assert result is None
-
-
-def test_ocr_failure_does_not_write_md(tmp_path):
+def test_ocr_failure_on_one_page_still_returns_md_path(tmp_path):
     result, pdf, _ = _run(
         tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0001.png"}
     )
-    assert not pdf.with_suffix(".md").exists()
+    assert result == pdf.with_suffix(".md")
 
 
-def test_ocr_failure_quarantines_to_manifest(tmp_path):
-    _, _, manifest = _run(
+def test_ocr_failure_on_one_page_still_saves_md(tmp_path):
+    _, pdf, _ = _run(
         tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0001.png"}
     )
-    records = _records(manifest)
-    assert any(r.get("stage") == "convert-pdf" for r in records)
+    assert pdf.with_suffix(".md").exists()
 
 
-def test_ocr_failure_manifest_records_the_pdf(tmp_path):
-    _, pdf, manifest = _run(
+def test_ocr_failure_emits_placeholder_for_the_failed_page(tmp_path):
+    result, _, _ = _run(
         tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0001.png"}
     )
-    records = _records(manifest)
-    cv = next(r for r in records if r.get("stage") == "convert-pdf")
-    assert cv["pdf"] == str(pdf)
+    assert "<!-- OCR FAILED: p0001.png -->" in result.read_text(encoding="utf-8")
 
 
-def test_ocr_failure_manifest_records_the_failing_page(tmp_path):
-    _, _, manifest = _run(
-        tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0001.png"}
+def test_ocr_failure_placeholder_preserves_other_pages(tmp_path):
+    content_map = {"p0002.png": "# Good page content"}
+    result, _, _ = _run(
+        tmp_path,
+        name="GPT4_Technical_Report.pdf",
+        none_for={"p0001.png"},
+        content_map=content_map,
     )
-    records = _records(manifest)
-    cv = next(r for r in records if r.get("stage") == "convert-pdf")
-    assert "p0001" in cv["reason"]
+    assert "# Good page content" in result.read_text(encoding="utf-8")
 
 
 def test_unreadable_ocr_markdown_returns_none(tmp_path):

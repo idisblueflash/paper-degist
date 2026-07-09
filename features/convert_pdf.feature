@@ -19,9 +19,8 @@ Feature: Convert PDF to Markdown via OCR (US3)
     When I run convert-pdf on "files/Deep_Residual_Learning.pdf"
     Then "files/Deep_Residual_Learning.md" is returned unchanged
 
-  Scenario: OCR failure — page quarantined, no partial Markdown saved
+  Scenario: OCR failure — failed page gets a placeholder, Markdown is still saved
     Given a saved PDF file "files/GPT4_Technical_Report.pdf"
     And OCR will fail for a page of "files/GPT4_Technical_Report.pdf"
     When I run convert-pdf on "files/GPT4_Technical_Report.pdf"
-    Then no Markdown file is saved for "files/GPT4_Technical_Report.pdf"
-    And a quarantine record is written to manifest.jsonl with stage "convert-pdf"
+    Then "files/GPT4_Technical_Report.md" is saved with a placeholder for the failed page
