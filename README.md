@@ -1,6 +1,12 @@
 # paper-degist
 
-Convert papers (PDF/HTML) into Markdown for an LLM wiki.
+Discover papers by topic, fetch them, and convert them (PDF/HTML) into Markdown
+for an LLM wiki.
+
+Give paper-degist a topic and it searches the literature (arXiv, Semantic
+Scholar, OpenAlex, SerpAPI), fetches each paper's file — recovering bot-walled
+sources through an open-access or browser lane — and converts the result to
+Markdown with provenance frontmatter.
 
 paper-degist is a pipeline of small, independent command-line steps. Each step
 does one thing, reads from a file or stdin, writes to stdout, and **never calls
