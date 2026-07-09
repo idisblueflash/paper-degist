@@ -30,9 +30,22 @@ import typer
 from paper_degist import _manifest, _openalex
 from paper_degist._cli import invoke
 
-# An OA lookup maps a DOI to its open-access PDF URL, or ``None`` for closed
-# access; it may raise to signal an API/network error (caller quarantines it).
-OALookup = Callable[[str], Optional[str]]
+class _OALanding:
+    """Unpaywall (or a mock) confirms is_oa=True but has only a landing URL, not a direct PDF.
+
+    Returned by ``_pdf_url_from_unpaywall`` when ``is_oa`` is True but every
+    location's ``url_for_pdf`` is absent. Distinct from ``None`` (closed access)
+    so callers can surface the landing URL instead of mislabelling the paper closed.
+    """
+
+    def __init__(self, url: Optional[str]) -> None:
+        self.url = url
+
+
+# An OA lookup maps a DOI to its open-access PDF URL (str), an _OALanding when
+# the paper is open but only a landing page is available, or None for genuinely
+# closed access; it may raise to signal an API/network error (caller quarantines).
+OALookup = Callable[[str], "str | _OALanding | None"]
 
 # A title→DOI lookup (US10) maps a title to a confidently-matched DOI, or
 # ``None`` when no confident match exists; it may raise to signal an API error.
@@ -123,8 +136,19 @@ def resolve_oa(
     except Exception as exc:  # API/network error — quarantine, do not crash
         _quarantine(manifest_path, url=url, doi=doi, reason=f"OA lookup error: {exc}")
         return None
+
+    if isinstance(pdf_url, _OALanding):
+        # is_oa=True but only a landing page — never say "closed access" here.
+        landing = pdf_url.url
+        if landing:
+            reason = f"open access, no direct PDF link — route to browser/human lane: {landing}"
+        else:
+            reason = "open access, no direct PDF link (no landing URL found)"
+        _quarantine(manifest_path, url=url, doi=doi, reason=reason)
+        return None
+
     if pdf_url is not None:
-        return pdf_url  # Unpaywall resolved it — the fallback is never called.
+        return pdf_url  # Unpaywall resolved a direct PDF — the fallback is never called.
 
     return _resolve_via_openalex(url, doi, manifest_path, oa_fallback)
 
@@ -224,14 +248,15 @@ def _quarantine(manifest_path: Path, *, url: str, doi: Optional[str], reason: st
     _manifest.append(manifest_path, stage="resolve-oa", **fields)
 
 
-def _pdf_url_from_unpaywall(data: dict) -> Optional[str]:
-    """Return the first open-access *PDF* URL in an Unpaywall response, or None.
+def _pdf_url_from_unpaywall(data: dict) -> "str | _OALanding | None":
+    """Return the first open-access *PDF* URL in an Unpaywall response.
 
-    Only ``url_for_pdf`` counts: a bare ``url`` is a landing page, not a file
-    ``fetch-one`` can download, so we never return it (else a non-PDF would be
-    printed as if it were the paper). Scans ``best_oa_location`` first, then
-    every ``oa_locations`` entry. Returns None when the paper is closed *or*
-    open with no direct PDF link.
+    Only ``url_for_pdf`` counts as a direct PDF; a bare ``url`` is a landing page
+    that ``fetch-one`` cannot download. When ``is_oa`` is True but no location
+    carries a ``url_for_pdf``, returns ``_OALanding`` (carrying the best landing
+    URL) so the caller can surface it — NOT ``None``, which would lose the "open"
+    signal and cause the paper to be mislabelled "closed access". Returns ``None``
+    only when ``is_oa`` is False (genuinely closed).
     """
     if not data.get("is_oa"):
         return None
@@ -240,7 +265,9 @@ def _pdf_url_from_unpaywall(data: dict) -> Optional[str]:
         pdf = (loc or {}).get("url_for_pdf")
         if pdf:
             return pdf
-    return None
+    # is_oa=True but no direct PDF anywhere: surface the best landing URL.
+    best = data.get("best_oa_location") or {}
+    return _OALanding((best or {}).get("url"))
 
 
 # Crossref's bibliographic query always returns a best-effort top match, even

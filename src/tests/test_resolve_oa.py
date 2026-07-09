@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from paper_degist.resolve_oa import (
+    _OALanding,
     _doi_from_crossref,
     _openalex_oa_lookup,
     _pdf_url_from_unpaywall,
@@ -130,11 +131,24 @@ def test_unpaywall_best_location_pdf_is_returned():
     assert _pdf_url_from_unpaywall(data) == "https://oa.org/p.pdf"
 
 
-def test_unpaywall_landing_page_without_pdf_is_none():
-    # is_oa but only a landing-page url (no url_for_pdf) must NOT be returned:
-    # fetch-one cannot download an HTML landing page as the paper.
+def test_unpaywall_open_landing_only_is_not_returned_as_str():
+    # is_oa=True with only a landing page: must NOT return a str — fetch-one cannot
+    # download an HTML landing page, so the caller must never treat it as a PDF URL.
     data = {"is_oa": True, "best_oa_location": {"url": "https://oa.org/landing", "url_for_pdf": None}}
-    assert _pdf_url_from_unpaywall(data) is None
+    assert not isinstance(_pdf_url_from_unpaywall(data), str)
+
+
+def test_unpaywall_open_landing_only_returns_oa_landing():
+    # is_oa=True with only a landing URL: returned as an _OALanding, never None
+    # (None would lose the "open" signal and get mislabelled "closed access").
+    data = {"is_oa": True, "best_oa_location": {"url": "https://hal.science/hal-00572075", "url_for_pdf": None}}
+    assert isinstance(_pdf_url_from_unpaywall(data), _OALanding)
+
+
+def test_unpaywall_open_landing_only_carries_the_landing_url():
+    data = {"is_oa": True, "best_oa_location": {"url": "https://hal.science/hal-00572075", "url_for_pdf": None}}
+    result = _pdf_url_from_unpaywall(data)
+    assert result.url == "https://hal.science/hal-00572075"
 
 
 def test_unpaywall_falls_back_to_a_later_location_pdf():
@@ -181,6 +195,35 @@ def test_closed_access_manifest_records_the_doi(tmp_path: Path):
 def test_closed_access_manifest_records_resolve_oa_stage(tmp_path: Path):
     _, manifest = _run(tmp_path, oa_lookup=_closed)
     assert _only_record(manifest)["stage"] == "resolve-oa"
+
+
+# --- open-access landing-only: is_oa=True but no direct PDF (the bug case) ---
+
+
+def _open_landing(landing_url):
+    """Mock oa_lookup: is_oa=True but only a landing page, no direct PDF."""
+    return lambda doi: _OALanding(landing_url)
+
+
+def test_open_landing_returns_none(tmp_path: Path):
+    result, _ = _run(tmp_path, oa_lookup=_open_landing("https://hal.science/hal-00572075"))
+    assert result is None
+
+
+def test_open_landing_writes_a_manifest_record(tmp_path: Path):
+    _, manifest = _run(tmp_path, oa_lookup=_open_landing("https://hal.science/hal-00572075"))
+    assert manifest.exists()
+
+
+def test_open_landing_reason_does_not_say_closed_access(tmp_path: Path):
+    # Unpaywall says is_oa=True: the quarantine reason must never claim "closed access".
+    _, manifest = _run(tmp_path, oa_lookup=_open_landing("https://hal.science/hal-00572075"))
+    assert "closed access" not in _only_record(manifest)["reason"]
+
+
+def test_open_landing_reason_surfaces_the_landing_url(tmp_path: Path):
+    _, manifest = _run(tmp_path, oa_lookup=_open_landing("https://cogentoa.com/article/10.1080/2331186x.2017.1287391"))
+    assert "https://cogentoa.com/article/10.1080/2331186x.2017.1287391" in _only_record(manifest)["reason"]
 
 
 # --- AC5: no recoverable DOI is quarantined without an OA lookup ---
