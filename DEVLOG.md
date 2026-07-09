@@ -3,6 +3,27 @@
 Small, non-blocking issues noticed during development. Each names the code
 location, the case not yet handled, and the trigger that should make us fix it.
 
+## fetch_batch — sidecar only on the direct fetch lane (US37)
+
+- **Location:** `fetch_batch.fetch_batch` drives `fetch_one` only.
+- **Case not handled:** papers landed by `browser-fetch` (US15) or
+  `recover-blocked` (US17) get no `<stem>.meta.json` sidecar, so their `.md`
+  carries no provenance frontmatter — only the direct `fetch_one` lane writes one.
+- **Trigger:** when a topic's collected set must be *fully* stamped, teach the
+  browser/recover lanes (or a post-pass keyed on the candidate record) to write
+  the sidecar regardless of which lane fetched the file. Named in US37 "Later
+  stages".
+
+## discover — venue only captured for OpenAlex candidates (US37)
+
+- **Location:** `discover.parse_openalex_json` → `_openalex.venue_from_work`.
+- **Case not handled:** arXiv (`parse_arxiv_atom`) and Semantic Scholar
+  (`parse_s2_json`) records carry no `venue`, so their frontmatter emits
+  `venue: null`. Only OpenAlex exposes `primary_location.source.display_name`.
+- **Trigger:** if arXiv/S2 papers need a real venue, map their id/DOI to a venue
+  (e.g. via an OpenAlex lookup) before writing the sidecar. Named in US37
+  "Later stages".
+
 ## parse_url — trailing-punctuation stripping is heuristic
 
 - **Where:** `src/paper_degist/parse_url.py` (`_URL_RE` + `rstrip(".,;")`).

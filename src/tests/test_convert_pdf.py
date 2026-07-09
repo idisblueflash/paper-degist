@@ -8,6 +8,7 @@ Distinct example PDF names label what each case exercises (rule 08).
 import json
 from pathlib import Path
 
+from paper_degist import _frontmatter
 from paper_degist.convert_pdf import DEFAULT_MODEL, convert_pdf
 from paper_degist.ocr_page import REGISTRY
 
@@ -66,10 +67,16 @@ def _run(
     render_fail=False,
     none_for=(),
     content_map=None,
+    meta=None,
+    existing_md=None,
 ):
     """Arrange a PDF-like file and run convert_pdf; return (result, pdf, manifest)."""
     pdf = tmp_path / name
     pdf.write_bytes(b"%PDF-1.7 fake")
+    if meta is not None:
+        _frontmatter.write_sidecar(pdf, meta)
+    if existing_md is not None:
+        pdf.with_suffix(".md").write_text(existing_md, encoding="utf-8")
     manifest = tmp_path / "manifest.jsonl"
     result = convert_pdf(
         pdf,
@@ -121,6 +128,40 @@ def test_pages_are_stitched_in_order(tmp_path):
     result, _, _ = _run(tmp_path, content_map=content_map)
     text = result.read_text(encoding="utf-8")
     assert text.index("FIRST") < text.index("SECOND")
+
+
+# ---------------------------------------------------------------------------
+# US37 — provenance frontmatter stamped from the sidecar
+# ---------------------------------------------------------------------------
+
+_META = {"doi": "10.48550/arxiv.2602.00762", "url": "https://doi.org/10.48550/arxiv.2602.00762",
+         "pdf_url": "https://arxiv.org/pdf/2602.00762.pdf", "venue": None}
+
+
+def test_fresh_convert_with_sidecar_stamps_frontmatter(tmp_path):
+    result, _pdf, _m = _run(tmp_path, name="SMART.pdf", meta=_META)
+    assert result.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_fresh_convert_without_sidecar_has_no_frontmatter(tmp_path):
+    result, _pdf, _m = _run(tmp_path, name="SMART.pdf")
+    assert not result.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_backfill_injects_frontmatter_into_existing_md(tmp_path):
+    result, _pdf, _m = _run(tmp_path, name="GPT.pdf", meta=_META, existing_md="# GPT body\n")
+    assert result.read_text(encoding="utf-8").startswith("---\n")
+
+
+def test_backfill_preserves_the_existing_body(tmp_path):
+    result, _pdf, _m = _run(tmp_path, name="GPT.pdf", meta=_META, existing_md="# GPT body\n")
+    assert result.read_text(encoding="utf-8").endswith("# GPT body\n")
+
+
+def test_existing_md_with_frontmatter_is_not_double_stamped(tmp_path):
+    already = _frontmatter.render(_META) + "# T5 body\n"
+    result, _pdf, _m = _run(tmp_path, name="T5.pdf", meta=_META, existing_md=already)
+    assert result.read_text(encoding="utf-8") == already
 
 
 # ---------------------------------------------------------------------------

@@ -212,6 +212,11 @@ uv run convert-html files/paper.html --manifest manifest.jsonl
 - **Quarantined**: a non-`.html` extension (e.g. you pointed it at a `.pdf`), an
   undecodable (non-UTF-8) file, or Markdown below the content-density threshold
   (a hollow JS-rendered SPA shell — "HTML too thin").
+- **Provenance frontmatter** (US37): if a `<stem>.meta.json` sidecar exists
+  (written by `fetch-batch`), the `.md` is prefixed with a YAML frontmatter block
+  (`doi`/`url`/`pdf_url`/`venue`). No sidecar → no frontmatter. An existing
+  frontmatter-less `.md` is backfilled in place; an already-stamped one is left
+  untouched (idempotent).
 
 ### Examples
 
@@ -253,6 +258,10 @@ uv run convert-pdf files/paper.pdf --model deepseek-ocr-2
   - Ghostscript cannot render the PDF (corrupt/unrenderable).
   - Any page OCR call fails or the server is unreachable — no partial
     Markdown is saved.
+- **Provenance frontmatter** (US37): like `convert-html`, a `<stem>.meta.json`
+  sidecar (from `fetch-batch`) is stamped as YAML frontmatter on the stitched
+  `.md`; no sidecar leaves the output unchanged, and an existing `.md` is
+  backfilled or left untouched (idempotent).
 
 ### Examples
 
@@ -1788,6 +1797,66 @@ uv run discover-batch "sparse mixture-of-experts" "expert choice routing" \
 ```
 
 ---
+
+## `fetch-batch` — fetch a candidate batch, capturing provenance (US37)
+
+Drive `fetch-one` over a whole candidates JSONL and, for each fetched paper,
+write a `<stem>.meta.json` **sidecar** carrying its provenance
+(`doi`/`url`/`pdf_url`/`venue`) next to the saved file. The convert steps read
+that sidecar and stamp the values as YAML frontmatter onto the `.md`, so a
+paper's durable citation and download links travel with the file instead of
+being discarded at fetch time.
+
+```
+uv run fetch-batch CANDIDATES_JSONL
+uv run fetch-batch CANDIDATES_JSONL [--files-dir files/] [--manifest manifest.jsonl]
+```
+
+- **Argument**: `CANDIDATES_JSONL` — a discover / rank-cited output, one
+  candidate record per line (each with a `url`, optionally `doi`/`pdf_url`/`venue`).
+- **Options**: `--files-dir` (default `files/`; use `files/<topic>/` to group a
+  topic), `--manifest` (default `manifest.jsonl`).
+- **Output**: each saved file path, one per line on stdout.
+- **Sidecar**: `<stem>.meta.json` with all four keys, `null` when the record
+  lacked one. The stem is exactly the file `fetch_one` saved, so the sidecar
+  always matches its source.
+- **Quarantine** (rule 02, `stage: fetch-batch`): a record with no `url`, or a
+  malformed JSON line, is appended to the manifest and skipped. A URL that
+  `fetch_one` itself quarantines (a bot wall, an HTTP error) gets no sidecar and
+  the batch continues — never crashes, never calls an LLM.
+
+**Happy path** — fetch a topic's candidates and capture provenance:
+
+```bash
+uv run fetch-batch candidates.jsonl --files-dir files/mnemonic-method
+# -> files/mnemonic-method/1706.03762.pdf
+#    + files/mnemonic-method/1706.03762.meta.json
+#      {"doi":"10.48550/arXiv.1706.03762","url":"https://arxiv.org/pdf/1706.03762",
+#       "pdf_url":"https://arxiv.org/pdf/1706.03762","venue":"NeurIPS 2017"}
+```
+
+**Quarantine** — a candidate record with no URL is skipped, batch continues:
+
+```bash
+uv run fetch-batch candidates.jsonl --files-dir files/mnemonic-method
+# stderr (only if nothing saved): no files saved (see manifest.jsonl)
+# manifest: {"stage":"fetch-batch","record":"{\"doi\": \"10.1/no-url\"}",
+#            "reason":"candidate record has no url"}
+```
+
+### Composition with other steps
+
+`fetch-batch` replaces a per-URL `fetch-one` loop when you have a candidates
+JSONL and want provenance frontmatter downstream:
+
+```bash
+# Discover → rank → fetch the batch (with provenance) → convert → collect
+uv run discover-batch "mnemonic method" --email "$OPENALEX_EMAIL" > cands.jsonl
+uv run rank-cited cands.jsonl --top 30 > top.jsonl
+uv run fetch-batch top.jsonl --files-dir files/mnemonic-method
+uv run convert-html files/mnemonic-method/paper.html   # stamps the frontmatter
+uv run collect-papers mnemonic-method --dest /path/to/research-room/raw
+```
 
 ## `collect-papers` — collect converted MDs to a target folder (US 36)
 

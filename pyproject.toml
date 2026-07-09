@@ -15,6 +15,7 @@ dependencies = [
     "markdownify>=1.2.3",
     "playwright>=1.61.0",
     "pypdf>=6.14.2",
+    "pyyaml>=6.0.3",
     "rapidfuzz>=3.14.5",
     "typer>=0.26.8",
 ]
@@ -43,6 +44,7 @@ abstract-filter = "paper_degist.abstract_filter:main"
 rank-cited = "paper_degist.rank_cited:main"
 snowball = "paper_degist.snowball:main"
 enrich-abstract = "paper_degist.enrich_abstract:main"
+fetch-batch = "paper_degist.fetch_batch:main"
 collect-papers = "paper_degist.collect_papers:main"
 
 [tool.pytest.ini_options]
