@@ -25,6 +25,8 @@ from paper_degist._cli import invoke
 from paper_degist.abstract_filter import candidate_doi_key
 from paper_degist.discover import (
     ARXIV_MIN_INTERVAL,
+    OPENALEX_MIN_INTERVAL,
+    S2_MIN_INTERVAL,
     Search,
     _build_registry,
     discover,
@@ -33,6 +35,16 @@ from paper_degist.discover import (
 # The zero-setup default: the keyless pair. Key-gated sources (s2 with a key,
 # scholar/scholar-author) join via repeated --source.
 DEFAULT_SOURCES = ["arxiv", "openalex"]
+
+# Per-source politeness intervals the fan-out spaces *consecutive calls to the
+# same source* by (US38). The first call to any source never waits; only the
+# second-and-later hit on that source pays. Sources not listed (e.g. SerpAPI
+# scholar lanes) are not paced here.
+SOURCE_MIN_INTERVAL = {
+    "arxiv": ARXIV_MIN_INTERVAL,
+    "openalex": OPENALEX_MIN_INTERVAL,
+    "s2": S2_MIN_INTERVAL,
+}
 
 
 def merge_keys(record: dict) -> list[tuple]:
@@ -68,15 +80,17 @@ def discover_batch(
     manifest_path = Path(manifest_path)
     merged: list[dict] = []
     kept_at: dict[tuple, int] = {}
-    arxiv_called = False
+    called_sources: set[str] = set()
     for query in queries:
         for source in sources:
-            if source == "arxiv":
-                # arXiv's published etiquette: ~3 s between calls. Only a
-                # *second* arXiv call waits (AC7); other sources never do.
-                if arxiv_called:
-                    pause(ARXIV_MIN_INTERVAL)
-                arxiv_called = True
+            # Politeness pacing (US31 AC7 / US38 AC5): space *consecutive* calls
+            # to the same source by its interval. The first call to a source
+            # never waits; a paced source's second-and-later hit does. Sources
+            # with no configured interval (SerpAPI lanes) never wait.
+            interval = SOURCE_MIN_INTERVAL.get(source)
+            if interval and source in called_sources:
+                pause(interval)
+            called_sources.add(source)
             records = discover(
                 query, source, manifest_path=manifest_path, registry=registry
             )

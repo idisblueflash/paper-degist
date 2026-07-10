@@ -360,12 +360,42 @@ def test_consecutive_arxiv_calls_are_spaced_by_the_etiquette_interval(tmp_path: 
     assert waits == [ARXIV_MIN_INTERVAL]
 
 
-def test_non_arxiv_sources_never_wait(tmp_path: Path):
+def test_first_call_to_a_source_never_waits(tmp_path: Path):
+    # US38 AC5: no wait before the *first* call to a source (openalex, one query).
     waits: list[float] = []
     _run(
         tmp_path,
-        ["sparse autoencoder interpretability", "dictionary learning features"],
+        ["sparse autoencoder interpretability"],
         {"openalex": _recording_search([_candidate(source="openalex")])},
         pause=waits.append,
     )
     assert waits == []
+
+
+# --- US38 AC5: every keyless source is paced, not only arXiv ---
+
+
+def test_consecutive_openalex_calls_are_spaced_by_its_interval(tmp_path: Path):
+    from paper_degist.discover import OPENALEX_MIN_INTERVAL
+
+    waits: list[float] = []
+    _run(
+        tmp_path,
+        ["dictionary learning features", "monosemantic neuron probes"],
+        {"openalex": _recording_search([_candidate(source="openalex")])},
+        pause=waits.append,
+    )
+    assert waits == [OPENALEX_MIN_INTERVAL]
+
+
+def test_consecutive_s2_calls_are_spaced_by_its_interval(tmp_path: Path):
+    from paper_degist.discover import S2_MIN_INTERVAL
+
+    waits: list[float] = []
+    _run(
+        tmp_path,
+        ["chain of thought faithfulness", "process reward models"],
+        {"s2": _recording_search([_candidate(source="s2")])},
+        pause=waits.append,
+    )
+    assert waits == [S2_MIN_INTERVAL]
