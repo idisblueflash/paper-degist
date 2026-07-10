@@ -384,12 +384,10 @@ def ocr_page(
         start = time.monotonic()
         try:
             response = post(model_id, spec.prompt, page_path, endpoint)
-        except ClientRequestError as exc:
-            # Deterministic — retrying a rejected request cannot help; fail fast
-            # with a distinct reason rather than burning the retry budget.
-            _quarantine(manifest_path, page=str(page_path), model=model_id, reason=str(exc))
-            return None
         except TransportError as exc:
+            # Covers both TransportError (502/empty body) and ClientRequestError
+            # (4xx): issue #67 showed that 400 from the OCR backend is transient —
+            # re-runs succeed. Retry the full budget before quarantining.
             last_error = exc
             continue
         markdown = spec.postprocess(response.content)

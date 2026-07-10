@@ -3,6 +3,18 @@
 Small, non-blocking issues noticed during development. Each names the code
 location, the case not yet handled, and the trigger that should make us fix it.
 
+## ocr_page — transient 400 treated as deterministic (issue #67) — RESOLVED
+
+- **Location:** `ocr_page.ocr_page` retry loop; `convert_pdf.convert_pdf` page loop.
+- **Case not handled:** the OCR backend (`deepseek-ocr-2`) intermittently returns
+  HTTP 400 on otherwise-valid pages. The old code fast-failed on `ClientRequestError`
+  without retrying, then `convert_pdf` aborted the entire PDF. A ~3% per-page rate
+  produced ~100% document loss for any PDF hit.
+- **Fix (PR #67-fix):** 400s are now retried up to the attempt budget like 502s
+  (removed the fast-fail branch in `ocr_page`). If a page still fails after retries,
+  `convert_pdf` emits `<!-- OCR FAILED: <page> -->` and continues, so the document
+  is never lost for one bad page.
+
 ## fetch_batch — sidecar only on the direct fetch lane (US37)
 
 - **Location:** `fetch_batch.fetch_batch` drives `fetch_one` only.
@@ -1949,3 +1961,26 @@ location, the case not yet handled, and the trigger that should make us fix it.
   (`SOURCE_MIN_INTERVAL`: arXiv 3 s, OpenAlex/S2 1 s), not just arXiv. Follow-ups
   (global token-bucket, jitter, per-source retry tuning) are deferred in the US38
   spec's "Later stages".
+## resolve_oa — landing-only OA papers surfaced but not auto-fetched
+
+- **Where:** `src/paper_degist/resolve_oa.py::_pdf_url_from_unpaywall` /
+  `resolve_oa` (the `_OALanding` branch).
+- **Fixed case:** an `is_oa=True` paper whose Unpaywall record has no
+  `url_for_pdf` (only a landing `url`) is no longer mislabelled "closed access".
+  It is now quarantined with `open access, no direct PDF link — route to
+  browser/human lane: <url>`, surfacing the landing URL. Verified end-to-end
+  through the installed CLI on the three bug-report DOIs (2026-07-09):
+  - `10.7554/eLife.00013` → `https://doi.org/10.7554/elife.00013`
+  - `10.1191/0267658304sr233oa` (Barcroft 2004) → `https://hal.science/hal-00572075`
+  - `10.1080/2331186x.2017.1287391` (Cogent 2017) → `https://doi.org/10.1080/2331186x.2017.1287391`
+- **Case not handled:** the surfaced URL is a *landing page*, not a PDF, so
+  `fetch-one` still cannot download it. All three papers are downloadable
+  **manually** from the surfaced URL, but each takes a few clicks to find the
+  actual PDF link (e.g. HAL needs `…/hal-00572075/document`; the `doi.org`
+  landings redirect to the publisher, then to a "Download PDF" button).
+- **Trigger to fix:** the bug's optional suggestion #3 — derive the PDF URL for
+  known repository hosts (HAL `…/document`, PMC `…/pdf/…`) before quarantining,
+  so green OA is auto-recovered instead of hand-clicked. Add a host-pattern
+  derivation lane driven by a failing scenario per host.
+- **Status:** Landing-URL surfacing RESOLVED (PR #66, commit `a2b89a9`).
+  Auto-derivation of the PDF from the landing URL is OPEN.
