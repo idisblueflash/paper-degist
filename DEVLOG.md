@@ -1925,6 +1925,42 @@ location, the case not yet handled, and the trigger that should make us fix it.
   enrich step. Add an arXiv ID fallback lane driven by a failing scenario.
 - **Status:** OPEN. Documented in the US34 spec's "Later stages" section.
 
+## discover — a 429 rate-limit is quarantined, never retried or backed off (US38)
+
+- **Where:** `src/paper_degist/discover.py::discover` (the generic
+  `except Exception` at ~line 582) and the source adapters (`_arxiv_search`,
+  `_openalex_search`, `_s2_search`) that `raise_for_status()`.
+- **Case not handled:** an HTTP 429 (or a `Retry-After`) is caught by the same
+  generic `except` as any other API error and quarantined as
+  `api-error: HTTPStatusError`. That pair's results are **silently dropped** —
+  no bounded retry, no exponential backoff, no honoring `Retry-After`. A
+  rate-limit is now a *known, recurring* case, so per rule 02 it should become
+  its own code branch (retry with backoff) rather than fall through to the
+  catch-all quarantine.
+- **Second gap — asymmetric pacing.** In the fan-out driver
+  (`discover_batch.discover_batch`) only **arXiv** waits between calls
+  (`ARXIV_MIN_INTERVAL`, 3 s). OpenAlex and Semantic Scholar get **no**
+  inter-call pace, so a wide N-queries × M-sources fan-out can trip their
+  free-tier limits by cumulative volume (the loop is already serial, so the risk
+  is total request count, not concurrency).
+- **Trigger to fix:** when a real topic sweep (many queries × keyless sources)
+  starts losing pairs to `api-error: HTTPStatusError` 429s. Split 429 out as a
+  distinct retriable case with bounded exponential backoff honoring
+  `Retry-After` (quarantine only after the budget is exhausted, with a distinct
+  reason like `rate-limited-exhausted`), and give OpenAlex/S2 a small inter-call
+  pace mirroring arXiv's etiquette constant. **Do not** drop the fan-out — it is
+  US31's whole value (cross-query/source recall); the fix is robustness, not
+  removal.
+- **Status:** RESOLVED by US38. `discover` now classifies a typed `RateLimited`
+  (HTTP 429, translated at the adapter boundary via `_raise_for_status` /
+  `_rate_limited_for`) into a retry-with-backoff branch — bounded by
+  `--max-retries`, honoring `Retry-After` (capped at `RETRY_MAX_DELAY`), through
+  an injected `pause` — and quarantines as the distinct `rate-limited-exhausted`
+  only after the budget is spent; a non-429 error still quarantines immediately
+  as `api-error`. `discover-batch` now paces every keyless source
+  (`SOURCE_MIN_INTERVAL`: arXiv 3 s, OpenAlex/S2 1 s), not just arXiv. Follow-ups
+  (global token-bucket, jitter, per-source retry tuning) are deferred in the US38
+  spec's "Later stages".
 ## resolve_oa — landing-only OA papers surfaced but not auto-fetched
 
 - **Where:** `src/paper_degist/resolve_oa.py::_pdf_url_from_unpaywall` /

@@ -30,6 +30,7 @@ Runnable from the command line (rule 03):
 
 import json
 import sys
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,11 +41,16 @@ import typer
 from paper_degist import _manifest, _openalex
 from paper_degist._cli import invoke
 
-# arXiv asks for a ~3 s delay between calls (its published rate-limit etiquette).
-# discover issues one query per run, so a single call needs no wait; the constant
-# is encoded once here for the deferred batch driver (see DEVLOG / "Later stages")
-# that walks several queries and must space its hits.
+# Per-source politeness intervals the batch driver (US31/US38) paces each source
+# by. discover issues one query per run, so a single call never waits; these are
+# encoded here for discover-batch, which walks several queries and paces every
+# later call to a source by its interval. arXiv's ~3 s is its published
+# rate-limit etiquette; OpenAlex and Semantic Scholar are keyless free tiers
+# paced more lightly so a wide fan-out does not trip their limits by cumulative
+# volume (US38).
 ARXIV_MIN_INTERVAL = 3.0
+OPENALEX_MIN_INTERVAL = 1.0
+S2_MIN_INTERVAL = 1.0
 
 ARXIV_ENDPOINT = "https://export.arxiv.org/api/query"
 S2_ENDPOINT = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -65,6 +71,84 @@ class MissingKeyError(Exception):
     distinct ``missing-key`` reason — classified offline like the source name,
     never confused with a live ``api-error``.
     """
+
+
+class RateLimited(Exception):
+    """A source answered with an HTTP 429 rate-limit (US38).
+
+    A *typed* signal, raised by an adapter that translates a 429 (see
+    ``_raise_for_status``), so ``discover`` can tell a **transient** rate-limit
+    apart from a hard ``api-error`` and retry it with backoff rather than
+    quarantine on the first hit. ``retry_after`` carries the server's
+    ``Retry-After`` interval in seconds when it sent one, else ``None`` (fall
+    back to the exponential schedule).
+    """
+
+    def __init__(self, message: str = "HTTP 429 Too Many Requests", *, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# US38 backoff policy. A 429 is retried up to MAX_RETRIES times; each wait is the
+# server's Retry-After when present, else an exponential schedule
+# (RETRY_BASE_DELAY * 2**attempt), both capped at RETRY_MAX_DELAY so a hostile or
+# malformed Retry-After can never stall the run. Waits go through an injected
+# pause so tests never really sleep (AC6).
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0
+RETRY_MAX_DELAY = 60.0
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Parse a ``Retry-After`` header into seconds, or ``None`` if absent/odd.
+
+    Honors the numeric-seconds form (the common case); the HTTP-date form is
+    ignored (falls back to the exponential schedule) rather than mis-parsed.
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _backoff_delay(attempt: int, retry_after: Optional[float]) -> float:
+    """The wait before the next retry: Retry-After if given, else exponential.
+
+    Both are capped at ``RETRY_MAX_DELAY`` (``attempt`` is 0-based).
+    """
+    if retry_after is not None:
+        return min(retry_after, RETRY_MAX_DELAY)
+    return min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
+
+
+def _rate_limited_for(resp) -> Optional[RateLimited]:
+    """A ``RateLimited`` (carrying any ``Retry-After``) if ``resp`` is a 429, else None.
+
+    The single 429 classifier both adapter shapes share: the direct-httpx
+    adapters check the response *before* raising (``_raise_for_status``), and the
+    OpenAlex adapter — whose raise is buried in ``_openalex._get`` — checks the
+    response hung off the caught ``HTTPStatusError``.
+    """
+    if resp is not None and resp.status_code == 429:
+        return RateLimited(retry_after=_parse_retry_after(resp.headers.get("Retry-After")))
+    return None
+
+
+def _raise_for_status(resp) -> None:
+    """Raise on an error response, translating a 429 into ``RateLimited``.
+
+    Where the direct-httpx adapters (arXiv, S2) route their status check, so a
+    real rate-limit becomes the typed signal ``discover`` retries on (US38),
+    while every other 4xx/5xx keeps raising ``httpx.HTTPStatusError`` (→
+    ``api-error``, unchanged).
+    """
+    rate_limited = _rate_limited_for(resp)
+    if rate_limited is not None:
+        raise rate_limited
+    resp.raise_for_status()
 
 
 @dataclass(frozen=True)
@@ -469,7 +553,7 @@ def _arxiv_search(max_results: int) -> Search:
             timeout=30.0,
             follow_redirects=True,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         return parse_arxiv_atom(resp.text)
 
     return search
@@ -487,14 +571,22 @@ def _openalex_search(max_results: int, email: Optional[str]) -> Search:
     """
 
     def search(query: str) -> list[Candidate]:
-        data = _openalex.search_works(
-            {
-                "filter": f"title_and_abstract.search:{query}",
-                "sort": "cited_by_count:desc",
-                "per-page": max_results,
-            },
-            email,
-        )
+        import httpx
+
+        try:
+            data = _openalex.search_works(
+                {
+                    "filter": f"title_and_abstract.search:{query}",
+                    "sort": "cited_by_count:desc",
+                    "per-page": max_results,
+                },
+                email,
+            )
+        except httpx.HTTPStatusError as exc:  # translate a 429 into the retry signal (US38)
+            rate_limited = _rate_limited_for(exc.response)
+            if rate_limited is not None:
+                raise rate_limited from exc
+            raise
         return parse_openalex_json(data)
 
     return search
@@ -521,7 +613,7 @@ def _s2_search(max_results: int, api_key: Optional[str]) -> Search:
             timeout=30.0,
             follow_redirects=True,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         return parse_s2_json(resp.json())
 
     return search
@@ -544,6 +636,8 @@ def discover(
     *,
     manifest_path: Path = Path("manifest.jsonl"),
     registry: dict[str, Search],
+    pause: Callable[[float], None] = time.sleep,
+    max_retries: int = MAX_RETRIES,
 ) -> Optional[list[dict]]:
     """Search ``source`` for ``query``; return the candidate records, or None.
 
@@ -569,24 +663,43 @@ def discover(
         )
         return None
 
-    try:
-        candidates = search(query)
-    except MissingKeyError as exc:  # key-gated source, no key — offline, distinct
-        _quarantine(
-            manifest_path,
-            source=source,
-            query=query,
-            reason=f"missing-key: {exc}",
-        )
-        return None
-    except Exception as exc:  # API error / rate-limit — quarantine, do not crash
-        _quarantine(
-            manifest_path,
-            source=source,
-            query=query,
-            reason=f"api-error: {type(exc).__name__}: {exc}",
-        )
-        return None
+    # Layer 2 classifies the *transport outcome* (rule 02). A typed 429
+    # (RateLimited) is a transient case: back off and retry up to max_retries
+    # before quarantining with a DISTINCT reason (US38) — never confused with a
+    # hard api-error, which quarantines immediately with no retry.
+    attempt = 0
+    while True:
+        try:
+            candidates = search(query)
+            break
+        except MissingKeyError as exc:  # key-gated source, no key — offline, distinct
+            _quarantine(
+                manifest_path,
+                source=source,
+                query=query,
+                reason=f"missing-key: {exc}",
+            )
+            return None
+        except RateLimited as exc:  # transient 429 — back off and retry (US38)
+            if attempt >= max_retries:
+                _quarantine(
+                    manifest_path,
+                    source=source,
+                    query=query,
+                    reason=f"rate-limited-exhausted: 429 after {max_retries} retries",
+                )
+                return None
+            pause(_backoff_delay(attempt, exc.retry_after))
+            attempt += 1
+            continue
+        except Exception as exc:  # hard API/network error — quarantine, do not crash
+            _quarantine(
+                manifest_path,
+                source=source,
+                query=query,
+                reason=f"api-error: {type(exc).__name__}: {exc}",
+            )
+            return None
 
     if not candidates:
         _quarantine(
@@ -652,6 +765,13 @@ def run(
         int,
         typer.Option("--max-results", help="cap on candidates to request (first page)"),
     ] = 25,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            help="how many times to retry a rate-limited (HTTP 429) source with backoff",
+        ),
+    ] = MAX_RETRIES,
     s2_api_key: Annotated[
         Optional[str],
         typer.Option(envvar="S2_API_KEY", help="optional Semantic Scholar API key"),
@@ -686,6 +806,7 @@ def run(
         source,
         manifest_path=manifest,
         registry=_build_registry(max_results, s2_api_key, email, serpapi_key),
+        max_retries=max_retries,
     )
     if records is None:
         # Quarantine is an expected outcome, not a crash: note it and exit clean.

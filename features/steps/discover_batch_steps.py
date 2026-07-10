@@ -231,3 +231,10 @@ def step_batch_quarantined(context, reason):
 @then("the batch waited the arXiv etiquette interval between the arXiv calls")
 def step_batch_waited(context):
     assert context.batch_waits == [ARXIV_MIN_INTERVAL], context.batch_waits
+
+
+@then("the batch waited the OpenAlex interval between the OpenAlex calls")
+def step_batch_waited_openalex(context):
+    from paper_degist.discover import OPENALEX_MIN_INTERVAL
+
+    assert context.batch_waits == [OPENALEX_MIN_INTERVAL], context.batch_waits

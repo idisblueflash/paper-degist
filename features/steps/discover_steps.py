@@ -75,10 +75,36 @@ def step_source_empty(context, source):
     context.registry = {source: _recording_search(context, candidates=[])}
 
 
-@given('an "{source}" source that rate-limits the search')
-def step_source_rate_limited(context, source):
-    error = RuntimeError("HTTP 429 Too Many Requests")
+@given('an "{source}" source that errors')
+def step_source_errors(context, source):
+    # A hard, opaque API/network failure (not a typed 429) → immediate api-error.
+    error = RuntimeError("HTTP 500 Internal Server Error")
     context.registry = {source: _recording_search(context, error=error)}
+
+
+@given('an "{source}" source that always rate-limits')
+def step_source_always_rate_limited(context, source):
+    # A typed 429 on every attempt (US38): discover retries, then exhausts.
+    from paper_degist.discover import RateLimited
+
+    context.registry = {source: _recording_search(context, error=RateLimited())}
+
+
+@given('an "{source}" source that rate-limits once then returns {count:d} candidates')
+def step_source_rate_limited_once(context, source, count):
+    # A typed 429 on the first attempt, then hits (US38): the retry recovers.
+    from paper_degist.discover import RateLimited
+
+    context.searched = []
+    hits = [_candidate(source)] * count
+
+    def search(query):
+        context.searched.append(query)
+        if len(context.searched) == 1:
+            raise RateLimited()
+        return list(hits)
+
+    context.registry = {source: search}
 
 
 @given('an "{source}" work whose abstract arrives as an inverted index')
@@ -182,6 +208,23 @@ def step_search(context, source):
     # Default to an empty registry so an unknown source touches no adapter.
     registry = getattr(context, "registry", {})
     context.result = discover(context.query, source, manifest_path=context.manifest, registry=registry)
+
+
+@when('discover searches the "{source}" source with a retry budget of {budget:d}')
+def step_search_with_budget(context, source, budget):
+    # US38: exercise the retry/backoff path with an injected no-op pause so the
+    # scenario never really sleeps, and the given budget.
+    root = _root(context)
+    context.manifest = root / "manifest.jsonl"
+    registry = getattr(context, "registry", {})
+    context.result = discover(
+        context.query,
+        source,
+        manifest_path=context.manifest,
+        registry=registry,
+        pause=lambda _seconds: None,
+        max_retries=budget,
+    )
 
 
 @then("{count:d} candidate records are emitted")

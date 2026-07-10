@@ -10,6 +10,10 @@ Every command is invoked with `uv run <name>` (rule 01 — never bare `python`).
 Run `uv run <name> --help` for the authoritative option list; this manual adds
 the examples and the *why*.
 
+To run the pipeline **from any folder** (one self-contained folder per topic)
+instead of `uv run` inside the repo, install the console scripts globally — see
+[`global-install.md`](global-install.md).
+
 ## Conventions shared by every step
 
 - **Input**: a file or URL argument; `parse-url` also reads **stdin** when the
@@ -1186,11 +1190,19 @@ uv run discover <query> [--source arxiv|s2|openalex|scholar|scholar-author]
   key is rate-limited to 429** (see the story). An unknown source (e.g. `pubmed`)
   quarantines **offline**, without touching the network.
 - **Options**: `--max-results` (cap on the first page requested; default `25`),
-  `--s2-api-key` (optional Semantic Scholar key, or the `S2_API_KEY` env var —
-  raises the rate limit), `--email` (contact email for OpenAlex's faster **polite
-  pool**, or the `OPENALEX_EMAIL` env var — see below), `--serpapi-key` (**required**
-  for `scholar` / `scholar-author`, or the `SERPAPI_API_KEY` env var — see below),
+  `--max-retries` (how many times to retry a **rate-limited** source — HTTP 429 —
+  with backoff before quarantining; default `3`, US38 — see below), `--s2-api-key`
+  (optional Semantic Scholar key, or the `S2_API_KEY` env var — raises the rate
+  limit), `--email` (contact email for OpenAlex's faster **polite pool**, or the
+  `OPENALEX_EMAIL` env var — see below), `--serpapi-key` (**required** for
+  `scholar` / `scholar-author`, or the `SERPAPI_API_KEY` env var — see below),
   `--manifest`.
+- **Rate-limit backoff** (US38): a **429** is treated as a *transient, retriable*
+  case distinct from a hard error. `discover` retries the source up to
+  `--max-retries` times with exponential backoff, honoring the server's
+  `Retry-After` header when present (capped), and only quarantines — with the
+  distinct `rate-limited-exhausted` reason — once the budget is spent. Every other
+  API/network error still quarantines **immediately** as `api-error`, no retry.
 - **`openalex` specifics** (US29): OpenAlex is **keyless**. `--email` /
   `OPENALEX_EMAIL` is *politeness*, not access — supplying it uses the faster
   polite pool; **omitting it still runs** on the common pool and only **warns**
@@ -1225,8 +1237,11 @@ uv run discover <query> [--source arxiv|s2|openalex|scholar|scholar-author]
   - `unknown source: '…' not in registry` — the `--source` is not an adapter; the
     network is **never touched**.
   - `empty-result: the search returned no candidates` — the query matched nothing.
-  - `api-error: <Type>: …` — the API errored / rate-limited (e.g. S2's keyless
-    `429`); the diagnostic is included.
+  - `api-error: <Type>: …` — the API errored (non-429); the diagnostic is
+    included. Quarantined immediately, no retry.
+  - `rate-limited-exhausted: 429 after N retries` (US38) — the source kept
+    returning HTTP 429 through all `--max-retries` backoff attempts; distinct from
+    a hard `api-error`.
   - `missing-key: no SerpAPI key …` (US27) — a `scholar` / `scholar-author` run
     with no key; quarantined **before** the network, distinct from `api-error`.
 
@@ -1323,8 +1338,9 @@ in one command and emit **one merged, deduplicated candidate list**. Pure
 composition — each (query, source) pair goes through the same `discover` core,
 so every per-pair behaviour (adapter quirks, quarantine reasons, per-run
 manifest rows) is exactly `discover`'s. What the driver adds: fan-out that
-survives a failing pair, ~3 s etiquette spacing between consecutive arXiv
-calls, and a DOI-then-`(source, source_id)` dedup of the union.
+survives a failing pair, **per-source** politeness spacing between consecutive
+calls to the same source (arXiv ~3 s, OpenAlex/S2 ~1 s — US38; the first call to
+a source never waits), and a DOI-then-`(source, source_id)` dedup of the union.
 
 ```
 uv run discover-batch [<query>...] [--source arxiv --source openalex ...]
@@ -1350,10 +1366,11 @@ uv run discover-batch [<query>...] [--source arxiv --source openalex ...]
   `abstract-filter`. Every dropped duplicate leaves a
   `{"stage":"discover-batch","event":"filtered", …}` manifest record with a
   distinct reason (`dedup-doi` / `dedup-source-id`).
-- **Resilience** (rule 02): a pair that rate-limits or matches nothing is
-  quarantined by `discover`'s own path and takes out **only itself**; the other
-  pairs still merge. A batch where **every** pair yields nothing quarantines
-  with a distinct `empty-batch` reason and exits 0.
+- **Resilience** (rule 02): a pair that matches nothing — or stays rate-limited
+  through `discover`'s 429 backoff (US38) — is quarantined by `discover`'s own
+  path and takes out **only itself**; the other pairs still merge. A batch where
+  **every** pair yields nothing quarantines with a distinct `empty-batch` reason
+  and exits 0.
 - **Output**: the merged JSONL on stdout (same common schema as `discover`) —
   a drop-in to `abstract-filter` — plus one `discover-batch` summary manifest
   record (`queries`, `sources`, merged `result_count`) after the per-pair rows.

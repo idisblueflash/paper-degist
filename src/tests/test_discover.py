@@ -16,6 +16,7 @@ import pytest
 from paper_degist.discover import (
     Candidate,
     MissingKeyError,
+    RateLimited,
     _build_registry,
     discover,
     parse_arxiv_atom,
@@ -612,11 +613,28 @@ def _boom_search():
     return search
 
 
-def _run(tmp_path: Path, *, query="sparse mixture-of-experts routing", source="arxiv", search=None):
-    """Run discover with a one-source registry backed by the given fake Search."""
+def _run(
+    tmp_path: Path,
+    *,
+    query="sparse mixture-of-experts routing",
+    source="arxiv",
+    search=None,
+    pause=None,
+    max_retries=None,
+):
+    """Run discover with a one-source registry backed by the given fake Search.
+
+    ``pause``/``max_retries`` are threaded only when given, so retry-path tests
+    inject a no-op pause (never really sleep) and a small budget (rule 05).
+    """
     manifest = tmp_path / "manifest.jsonl"
     registry = {source if search else "arxiv": search or _hits_search([_one_candidate()])}
-    result = discover(query, source, manifest_path=manifest, registry=registry)
+    extra = {}
+    if pause is not None:
+        extra["pause"] = pause
+    if max_retries is not None:
+        extra["max_retries"] = max_retries
+    result = discover(query, source, manifest_path=manifest, registry=registry, **extra)
     return result, manifest
 
 
@@ -733,6 +751,141 @@ def test_empty_and_api_error_reasons_are_distinct(tmp_path: Path):
 def test_api_error_does_not_crash_and_records_the_exception(tmp_path: Path):
     _, manifest = _run(tmp_path, search=_error_search(ValueError("bad gateway")))
     assert "bad gateway" in _only_record(manifest)["reason"]
+
+
+# --- US38 AC1-4,6: a typed 429 rate-limit retries with backoff; distinct reason ---
+
+
+def _rate_limited_then_hits(candidates, *, times=1, retry_after=None):
+    """A Search that raises RateLimited ``times`` then returns the candidates."""
+
+    def search(query):
+        if search.raised < times:
+            search.raised += 1
+            raise RateLimited(retry_after=retry_after)
+        return list(candidates)
+
+    search.raised = 0
+    return search
+
+
+def _always_rate_limited(retry_after=None):
+    """A Search that raises RateLimited on every call — a persistent 429."""
+
+    def search(query):
+        search.calls += 1
+        raise RateLimited(retry_after=retry_after)
+
+    search.calls = 0
+    return search
+
+
+def _noop_pause(_seconds):
+    return None
+
+
+def test_rate_limit_then_success_returns_the_recovered_hits(tmp_path: Path):
+    # AC1: one 429, then the retry succeeds — the pair is NOT quarantined.
+    result, _ = _run(
+        tmp_path, search=_rate_limited_then_hits([_one_candidate()]), pause=_noop_pause
+    )
+    assert result[0]["title"] == "Switch Transformers"
+
+
+def test_persistent_rate_limit_exhausts_the_budget_and_returns_none(tmp_path: Path):
+    # AC2: every attempt 429s — quarantined after the budget, returns None.
+    result, _ = _run(
+        tmp_path, search=_always_rate_limited(), pause=_noop_pause, max_retries=2
+    )
+    assert result is None
+
+
+def test_exhausted_rate_limit_reason_is_rate_limited_exhausted(tmp_path: Path):
+    # AC2: the DISTINCT reason — a transient 429 that never cleared, not api-error.
+    _, manifest = _run(
+        tmp_path, search=_always_rate_limited(), pause=_noop_pause, max_retries=2
+    )
+    assert "rate-limited-exhausted" in _only_record(manifest)["reason"]
+
+
+def test_exhausted_rate_limit_reason_is_not_api_error(tmp_path: Path):
+    # AC4 mirror: the rate-limit reason is distinct from the hard-error reason.
+    _, manifest = _run(
+        tmp_path, search=_always_rate_limited(), pause=_noop_pause, max_retries=1
+    )
+    assert "api-error" not in _only_record(manifest)["reason"]
+
+
+def test_backoff_waits_follow_the_exponential_schedule(tmp_path: Path):
+    # AC6: every wait goes through the injected pause; no Retry-After → 1, 2, 4…
+    waits: list[float] = []
+    _run(tmp_path, search=_always_rate_limited(), pause=waits.append, max_retries=3)
+    assert waits == [1.0, 2.0, 4.0]
+
+
+def test_retry_after_header_is_honored_over_the_default_schedule(tmp_path: Path):
+    # AC3: the server's Retry-After interval is used instead of the exponential.
+    waits: list[float] = []
+    _run(
+        tmp_path,
+        search=_always_rate_limited(retry_after=7.0),
+        pause=waits.append,
+        max_retries=2,
+    )
+    assert waits == [7.0, 7.0]
+
+
+def test_retry_after_is_capped_at_the_ceiling(tmp_path: Path):
+    # AC3: a hostile/huge Retry-After can never stall the run past the cap.
+    from paper_degist.discover import RETRY_MAX_DELAY
+
+    waits: list[float] = []
+    _run(
+        tmp_path,
+        search=_always_rate_limited(retry_after=99999.0),
+        pause=waits.append,
+        max_retries=1,
+    )
+    assert waits == [RETRY_MAX_DELAY]
+
+
+def test_a_generic_api_error_is_not_retried(tmp_path: Path):
+    # AC4: a non-429 error quarantines immediately — the adapter is called once.
+    def search(query):
+        search.calls += 1
+        raise RuntimeError("HTTP 500 Internal Server Error")
+
+    search.calls = 0
+    _run(tmp_path, search=search, pause=_noop_pause, max_retries=3)
+    assert search.calls == 1
+
+
+class _FakeResp:
+    """A minimal httpx-response stand-in for the status-translation helper."""
+
+    def __init__(self, status_code, headers=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def test_raise_for_status_translates_429_into_rate_limited():
+    # The adapter boundary turns a live 429 into the typed retry signal (US38).
+    from paper_degist.discover import _raise_for_status
+
+    with pytest.raises(RateLimited) as caught:
+        _raise_for_status(_FakeResp(429, {"Retry-After": "12"}))
+    assert caught.value.retry_after == 12.0
+
+
+def test_raise_for_status_leaves_non_429_errors_to_raise_for_status():
+    # A 5xx keeps its normal HTTPStatusError path (→ api-error, not retried).
+    from paper_degist.discover import _raise_for_status
+
+    with pytest.raises(RuntimeError):
+        _raise_for_status(_FakeResp(500))
 
 
 # --- US27 AC4: a missing SerpAPI key quarantines offline with a DISTINCT reason ---
