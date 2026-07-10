@@ -399,3 +399,24 @@ def test_consecutive_s2_calls_are_spaced_by_its_interval(tmp_path: Path):
         pause=waits.append,
     )
     assert waits == [S2_MIN_INTERVAL]
+
+
+def test_interleaved_sources_still_pace_each_sources_own_repeat(tmp_path: Path):
+    # Codex review: with arxiv+openalex over two queries the call order is
+    # arxiv, openalex, arxiv, openalex. Pacing is per source and conservative —
+    # each source's *second* hit waits its own full interval even though a
+    # different source ran in between (it never under-waits a real rate limit).
+    from paper_degist.discover import ARXIV_MIN_INTERVAL, OPENALEX_MIN_INTERVAL
+
+    waits: list[float] = []
+    _run(
+        tmp_path,
+        ["speculative decoding drafts", "medusa parallel heads"],
+        {
+            "arxiv": _recording_search([_candidate()]),
+            "openalex": _recording_search([_candidate(source="openalex")]),
+        },
+        sources=["arxiv", "openalex"],
+        pause=waits.append,
+    )
+    assert waits == [ARXIV_MIN_INTERVAL, OPENALEX_MIN_INTERVAL]

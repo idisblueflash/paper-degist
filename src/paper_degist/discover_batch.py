@@ -36,10 +36,13 @@ from paper_degist.discover import (
 # scholar/scholar-author) join via repeated --source.
 DEFAULT_SOURCES = ["arxiv", "openalex"]
 
-# Per-source politeness intervals the fan-out spaces *consecutive calls to the
-# same source* by (US38). The first call to any source never waits; only the
-# second-and-later hit on that source pays. Sources not listed (e.g. SerpAPI
-# scholar lanes) are not paced here.
+# Per-source politeness intervals the fan-out paces each source by (US38). The
+# first call to a source never waits; every later call to *that* source pays its
+# interval. The pacing is per source and deliberately conservative — it charges
+# the full interval on a source's repeat even if another source ran in between,
+# rather than crediting the elapsed time, so it never under-waits a real rate
+# limit (precise elapsed-time pacing is a deferred refinement — US38 spec). A
+# source with no configured interval (SerpAPI scholar lanes) never waits.
 SOURCE_MIN_INTERVAL = {
     "arxiv": ARXIV_MIN_INTERVAL,
     "openalex": OPENALEX_MIN_INTERVAL,
@@ -83,10 +86,10 @@ def discover_batch(
     called_sources: set[str] = set()
     for query in queries:
         for source in sources:
-            # Politeness pacing (US31 AC7 / US38 AC5): space *consecutive* calls
-            # to the same source by its interval. The first call to a source
-            # never waits; a paced source's second-and-later hit does. Sources
-            # with no configured interval (SerpAPI lanes) never wait.
+            # Politeness pacing (US31 AC7 / US38 AC5): the first call to a source
+            # never waits; every later call to that source pays its interval
+            # (conservatively — see SOURCE_MIN_INTERVAL). Sources with no
+            # configured interval (SerpAPI lanes) never wait.
             interval = SOURCE_MIN_INTERVAL.get(source)
             if interval and source in called_sources:
                 pause(interval)

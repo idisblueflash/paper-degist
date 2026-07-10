@@ -87,3 +87,8 @@ nothing crashes; an exhausted pair takes out only itself and the batch finishes.
   operators exist — moot while the loop is serial and single-operator.
 - **Per-source retry tuning.** One retry budget/schedule serves all sources;
   per-adapter tuning (arXiv vs. keyed S2) would slot in at the registry.
+- **Precise elapsed-time pacing.** The fan-out charges a source's full interval
+  on every later call to it, even when another source ran in between (safe but
+  conservative — it never under-waits). Crediting the time already elapsed since
+  that source's last call (per-source timestamps, sleeping only the remainder)
+  is a later refinement; it needs an injectable clock to stay deterministic.

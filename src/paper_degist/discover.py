@@ -41,12 +41,13 @@ import typer
 from paper_degist import _manifest, _openalex
 from paper_degist._cli import invoke
 
-# Per-source politeness intervals the batch driver (US31/US38) spaces consecutive
-# calls to *the same source* by. discover issues one query per run, so a single
-# call never waits; these are encoded here for discover-batch, which walks several
-# queries and must space its hits. arXiv's ~3 s is its published rate-limit
-# etiquette; OpenAlex and Semantic Scholar are keyless free tiers paced more
-# lightly so a wide fan-out does not trip their limits by cumulative volume (US38).
+# Per-source politeness intervals the batch driver (US31/US38) paces each source
+# by. discover issues one query per run, so a single call never waits; these are
+# encoded here for discover-batch, which walks several queries and paces every
+# later call to a source by its interval. arXiv's ~3 s is its published
+# rate-limit etiquette; OpenAlex and Semantic Scholar are keyless free tiers
+# paced more lightly so a wide fan-out does not trip their limits by cumulative
+# volume (US38).
 ARXIV_MIN_INTERVAL = 3.0
 OPENALEX_MIN_INTERVAL = 1.0
 S2_MIN_INTERVAL = 1.0
