@@ -115,14 +115,11 @@ def convert_pdf(
             sleep(page_gap)
         md_path = ocr_fn(page, model_id, out_dir=pdf_out_dir, manifest_path=manifest_path)
         if md_path is None:
-            # This page's OCR failed; ocr_page wrote its own quarantine record.
-            # Quarantine the whole PDF so no partial .md is saved.
-            _quarantine(
-                manifest_path,
-                pdf=str(pdf_path),
-                reason=f"OCR failed for page: {page.name}",
-            )
-            return None
+            # This page's OCR failed; ocr_page already wrote its quarantine record.
+            # Emit a visible placeholder so the document is not lost for one bad
+            # page (issue #67: a single transient 400 was killing whole PDFs).
+            page_markdowns.append(f"<!-- OCR FAILED: {page.name} -->")
+            continue
         try:
             page_markdowns.append(Path(md_path).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as exc:

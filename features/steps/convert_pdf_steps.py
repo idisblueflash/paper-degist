@@ -133,3 +133,13 @@ def step_quarantine_record(context, stage):
     assert any(r.get("stage") == stage for r in records), (
         f"no record with stage={stage!r} in {records}"
     )
+
+
+@then('"{name}" is saved with a placeholder for the failed page')
+def step_md_saved_with_placeholder(context, name):
+    root = _root(context)
+    md = root / name
+    assert md.exists(), f"{md} was not created"
+    assert context.result == md
+    text = md.read_text(encoding="utf-8")
+    assert "<!-- OCR FAILED:" in text, f"no OCR FAILED placeholder found in:\n{text}"

@@ -537,15 +537,36 @@ def test_client_error_returns_none(tmp_path: Path):
     assert result is None
 
 
-def test_client_error_quarantines_without_retrying(tmp_path: Path):
+def test_client_error_retries_up_to_the_attempt_budget(tmp_path: Path):
+    # A 400 from the OCR backend is transient (confirmed by issue #67: re-runs
+    # succeed). Retry like a 502, don't fail fast on the first rejected request.
     post = _client_error_post()
     _run(tmp_path, post=post, attempts=3)
-    assert len(post.calls) == 1  # deterministic — no retry burned on a rejected request
+    assert len(post.calls) == 3
 
 
-def test_client_error_reason_is_distinct_from_server_unreachable(tmp_path: Path):
-    _, _, manifest, _ = _run(tmp_path, post=_client_error_post(), attempts=3)
-    assert "server unreachable" not in _only_record(manifest)["reason"]
+def _transient_400_then_ok_post(content="# Recovered from 400"):
+    """A transport that 400s once then succeeds — simulates the transient-400 case."""
+
+    def post(model_id, prompt, image_path, endpoint):
+        post.calls.append((model_id, prompt, image_path, endpoint))
+        if len(post.calls) == 1:
+            raise ClientRequestError("request rejected: server returned 400")
+        return OcrResponse(content, "stop", 5)
+
+    post.calls = []
+    return post
+
+
+def test_transient_400_recovers_on_retry(tmp_path: Path):
+    result, _, _, _ = _run(tmp_path, post=_transient_400_then_ok_post(), attempts=3, page_name="p03.png")
+    assert result == tmp_path / "out" / "qwen_qwen3-vl-4b" / "p03.md"
+
+
+def test_transient_400_recovery_stops_retrying_once_it_succeeds(tmp_path: Path):
+    post = _transient_400_then_ok_post()
+    _run(tmp_path, post=post, attempts=3, page_name="p04.png")
+    assert len(post.calls) == 2
 
 
 def test_missing_page_is_quarantined_not_crashed(tmp_path: Path):
