@@ -1939,4 +1939,13 @@ location, the case not yet handled, and the trigger that should make us fix it.
   pace mirroring arXiv's etiquette constant. **Do not** drop the fan-out — it is
   US31's whole value (cross-query/source recall); the fix is robustness, not
   removal.
-- **Status:** OPEN. Promoted to US38 (`user-stories/us-38-rate-limit-backoff.md`).
+- **Status:** RESOLVED by US38. `discover` now classifies a typed `RateLimited`
+  (HTTP 429, translated at the adapter boundary via `_raise_for_status` /
+  `_rate_limited_for`) into a retry-with-backoff branch — bounded by
+  `--max-retries`, honoring `Retry-After` (capped at `RETRY_MAX_DELAY`), through
+  an injected `pause` — and quarantines as the distinct `rate-limited-exhausted`
+  only after the budget is spent; a non-429 error still quarantines immediately
+  as `api-error`. `discover-batch` now paces every keyless source
+  (`SOURCE_MIN_INTERVAL`: arXiv 3 s, OpenAlex/S2 1 s), not just arXiv. Follow-ups
+  (global token-bucket, jitter, per-source retry tuning) are deferred in the US38
+  spec's "Later stages".

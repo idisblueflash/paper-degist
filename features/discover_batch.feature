@@ -53,3 +53,11 @@ Feature: US31 — discover-batch fans queries across sources and merges the unio
     And a batch "arxiv" source returning one candidate
     When discover-batch runs
     Then the batch waited the arXiv etiquette interval between the arXiv calls
+
+  # --- US38: every keyless source is paced, not only arXiv ---
+
+  Scenario: Consecutive OpenAlex calls are paced too, not only arXiv (US38 AC5)
+    Given the batch queries "sparse autoencoder features" and "monosemantic neuron probes"
+    And a batch "openalex" source returning one candidate
+    When discover-batch runs
+    Then the batch waited the OpenAlex interval between the OpenAlex calls

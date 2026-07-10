@@ -31,11 +31,25 @@ Feature: US25 — discover finds candidate papers by topic from a scholarly API
     When discover searches the "arxiv" source
     Then the query is quarantined with a "empty-result" reason
 
-  Scenario: A rate-limited API is quarantined with a distinct api-error reason (AC4)
+  Scenario: A hard API error is quarantined with a distinct api-error reason (AC4)
     Given a topic query "protein language models for structure prediction"
-    And an "s2" source that rate-limits the search
+    And an "s2" source that errors
     When discover searches the "s2" source
     Then the query is quarantined with a "api-error" reason
+
+  # --- US38: a rate-limit (HTTP 429) is a distinct, retriable case ---
+
+  Scenario: A source that rate-limits once recovers on retry (US38 AC1)
+    Given a topic query "mixture of experts routing stability"
+    And an "arxiv" source that rate-limits once then returns 2 candidates
+    When discover searches the "arxiv" source with a retry budget of 3
+    Then 2 candidate records are emitted
+
+  Scenario: A source that stays rate-limited quarantines as rate-limited-exhausted (US38 AC2)
+    Given a topic query "retrieval augmented generation latency"
+    And an "s2" source that always rate-limits
+    When discover searches the "s2" source with a retry budget of 1
+    Then the query is quarantined with a "rate-limited-exhausted" reason
 
   Scenario: An unknown source is quarantined without touching the network (AC5)
     Given a topic query "single-cell RNA sequencing batch correction"
