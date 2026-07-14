@@ -31,6 +31,13 @@ from paper_degist.ocr_page import (
 )
 
 
+# --- default endpoint: the always-on mac mini LM Studio, not the laptop ---
+
+
+def test_default_endpoint_is_the_macmini_lm_studio():
+    assert DEFAULT_ENDPOINT == "http://SMTVs-Mac-mini-2.local:1234/v1/chat/completions"
+
+
 # --- qwen post-processor: strip the ```markdown fence it wraps output in ---
 
 

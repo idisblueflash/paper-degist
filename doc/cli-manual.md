@@ -170,7 +170,7 @@ uv run fetch-one <url> --files-dir out/ --manifest manifest.jsonl
     `reason: title-unverifiable: …` record — absence of a title is not a wrong
     name, so it is not a mismatch;
   - a basename whose slug tokens are a subset of the title's writes **nothing**.
-  Re-runs skip the already-saved file, so no duplicate note is written.
+    Re-runs skip the already-saved file, so no duplicate note is written.
 
 ### Examples
 
@@ -244,8 +244,10 @@ default model is `deepseek-ocr-2` — the bench winner from US19–23/28 (lowest
 text edit distance, highest table TEDS).
 
 The OCR server (LM Studio) must be running with the model loaded before this
-step is invoked (see `ocr-page`'s notes on LM Studio lifecycle). Ghostscript
-(`gs`) must be on `$PATH`.
+step is invoked (see `ocr-page`'s notes on LM Studio lifecycle). By default
+that is the always-on **mac mini's** LM Studio
+(`http://SMTVs-Mac-mini-2.local:1234`), so nothing needs to run on the laptop.
+Ghostscript (`gs`) must be on `$PATH`.
 
 ```
 uv run convert-pdf files/paper.pdf
@@ -642,9 +644,11 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
   a **registered** `model` id (see the registry below).
 - **Options**: `--out-dir` (root the Markdown lands under; default `out/`),
   `--endpoint` (the chat-completions URL of the vision server; default
-  `http://localhost:1234/v1/chat/completions` — LM Studio), `--attempts` (max
+  `http://SMTVs-Mac-mini-2.local:1234/v1/chat/completions` — the always-on mac
+  mini's LM Studio; point it at `http://localhost:1234/…` to use a
+  laptop-local server instead), `--attempts` (max
   POSTs before quarantine; default `3`), `--gap` (recovery seconds between
-  retries; default `7.0` — the report's ~6–8 s flap window), `--manifest`.
+  retries; default `7.0` — the report's \~6–8 s flap window), `--manifest`.
 - **Output**: the saved Markdown path on stdout —
   `out/<model-slug>/<page>.md` (`qwen/qwen3-vl-4b` → `out/qwen_qwen3-vl-4b/`) —
   plus an `ocr` provenance record in the manifest (`stage`, `page`, `model`,
@@ -653,7 +657,7 @@ uv run ocr-page <page.png> <model-id> [--out-dir out] [--endpoint URL]
   host is recorded to keep a mixed-machine bench attributable (see DEVLOG).
 - **Registered models** (the `(prompt, post-processor)` registry):
   - `qwen/qwen3-vl-4b` — a plain "Convert the document to markdown." instruction;
-    output is unwrapped from the ```` ```markdown ```` fence it comes in.
+    output is unwrapped from the ` ```markdown ` fence it comes in.
   - `deepseek-ocr` — the `<|grounding|>Convert the document to markdown.` prompt
     (the literal `<image>` token **omitted**, or LM Studio 400s on a double
     image); the grounding markup is decoded to plain Markdown.
@@ -1111,7 +1115,9 @@ uv run embed-text <model-id> [text-file] [--role query|document]
   recorded in every manifest row and folded into the cache key.
 - **Options**: `--out-dir` (root the vector lands under; default `out/`),
   `--endpoint` (the embeddings URL; default
-  `http://localhost:1234/v1/embeddings` — LM Studio), `--attempts` (max POSTs
+  `http://SMTVs-Mac-mini-2.local:1234/v1/embeddings` — the always-on mac mini's
+  LM Studio; point it at `http://localhost:1234/…` for a laptop-local
+  server), `--attempts` (max POSTs
   before quarantine; default `3`), `--gap` (recovery seconds between retries;
   default `7.0`), `--manifest`.
 - **Output**: the saved vector path on stdout —
@@ -1935,4 +1941,4 @@ uv run convert-html files/mnemonic-method/paper.html     # or convert-pdf
 uv run collect-papers mnemonic-method \
   --dest /Users/husongtao/Projects/research-room/raw
 ```
-```
+

@@ -48,7 +48,9 @@ from paper_degist._cli import invoke
 # The verified transport constants (report §3). The gap is the ~6–8 s recovery
 # window the flapping MLX runtime needs between hits; a different value is a
 # `--gap` option, not a new path. Total attempts include the first try.
-DEFAULT_ENDPOINT = "http://localhost:1234/v1/chat/completions"
+# The default server is the always-on mac mini's LM Studio (serve-on-network
+# enabled), not the laptop's own — a laptop-local server is `--endpoint`.
+DEFAULT_ENDPOINT = "http://SMTVs-Mac-mini-2.local:1234/v1/chat/completions"
 DEFAULT_GAP = 7.0
 DEFAULT_ATTEMPTS = 3
 

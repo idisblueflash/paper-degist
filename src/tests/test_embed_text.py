@@ -25,6 +25,13 @@ from paper_degist.embed_text import (
 )
 
 
+# --- default endpoint: the always-on mac mini LM Studio, not the laptop ---
+
+
+def test_default_endpoint_is_the_macmini_lm_studio():
+    assert DEFAULT_ENDPOINT == "http://SMTVs-Mac-mini-2.local:1234/v1/embeddings"
+
+
 # --- the registry maps a model id to its (query, document) prefix pair ---
 
 
