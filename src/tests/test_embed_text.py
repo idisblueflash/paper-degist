@@ -392,6 +392,23 @@ def test_parse_client_error_raises_client_request_error():
         _parse_response(_curl_stdout("", code="400"))
 
 
+def test_default_post_bypasses_proxy_for_endpoint_host(monkeypatch):
+    # A machine-wide http_proxy must not intercept the LAN endpoint — curl would
+    # route the mac mini through the proxy and 502 a reachable server (the same
+    # trap browser_fetch._no_proxy_for dodges for the CDP endpoint). urlsplit
+    # lowercases the hostname; DNS and curl's noproxy match are case-insensitive.
+    seen: list[str] = []
+
+    def capture_run(argv, **kwargs):
+        seen.extend(argv)
+        raise FileNotFoundError("curl")
+
+    monkeypatch.setattr("paper_degist.embed_text.subprocess.run", capture_run)
+    with pytest.raises(TransportError):
+        _default_post("nomic-embed-text-v1.5", "search_query: proxy?", DEFAULT_ENDPOINT)
+    assert seen[seen.index("--noproxy") + 1] == "smtvs-mac-mini-2.local"
+
+
 def test_default_post_curl_missing_raises_transport_error(monkeypatch):
     # curl absent from PATH → subprocess raises FileNotFoundError; the transport
     # must convert it to a retryable TransportError, never crash the batch.

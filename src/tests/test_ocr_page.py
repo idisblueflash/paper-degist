@@ -604,6 +604,25 @@ def test_missing_page_does_not_hit_the_network(tmp_path: Path):
     assert post.calls == []
 
 
+def test_default_post_bypasses_proxy_for_endpoint_host(tmp_path: Path, monkeypatch):
+    # A machine-wide http_proxy must not intercept the LAN endpoint — curl would
+    # route SMTVs-Mac-mini-2.local through the proxy and 502 a reachable server
+    # (the same trap browser_fetch._no_proxy_for dodges for the CDP endpoint).
+    page = _page(tmp_path)
+    seen: list[str] = []
+
+    def capture_run(argv, **kwargs):
+        seen.extend(argv)
+        raise FileNotFoundError("curl")
+
+    monkeypatch.setattr("paper_degist.ocr_page.subprocess.run", capture_run)
+    with pytest.raises(TransportError):
+        _default_post("qwen/qwen3-vl-4b", "prompt", page, DEFAULT_ENDPOINT)
+    # urlsplit lowercases the hostname; DNS and curl's noproxy match are
+    # case-insensitive, so the lowercased form is the same host.
+    assert seen[seen.index("--noproxy") + 1] == "smtvs-mac-mini-2.local"
+
+
 def test_default_post_curl_missing_raises_transport_error(tmp_path: Path, monkeypatch):
     # curl absent from PATH → subprocess raises FileNotFoundError; the transport
     # must convert it to a retryable TransportError, never crash the batch.

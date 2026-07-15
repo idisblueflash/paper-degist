@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Callable, Optional
+from urllib.parse import urlsplit
 
 import typer
 
@@ -231,6 +232,10 @@ def _default_post(model_id: str, prompt: str, image_path: Path, endpoint: str) -
             [
                 "curl",
                 "-sS",
+                # A machine-wide http(s)_proxy must not intercept the LAN
+                # endpoint (browser_fetch._no_proxy_for dodges the same trap).
+                "--noproxy",
+                urlsplit(endpoint).hostname or "*",
                 "--max-time",
                 "600",
                 "-w",
