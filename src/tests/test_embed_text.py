@@ -25,6 +25,13 @@ from paper_degist.embed_text import (
 )
 
 
+# --- default endpoint: the always-on mac mini LM Studio, not the laptop ---
+
+
+def test_default_endpoint_is_the_macmini_lm_studio():
+    assert DEFAULT_ENDPOINT == "http://SMTVs-Mac-mini-2.local:1234/v1/embeddings"
+
+
 # --- the registry maps a model id to its (query, document) prefix pair ---
 
 
@@ -383,6 +390,23 @@ def test_parse_client_error_raises_client_request_error():
     # ClientRequestError so the orchestrator can fail fast instead of retrying.
     with pytest.raises(ClientRequestError):
         _parse_response(_curl_stdout("", code="400"))
+
+
+def test_default_post_bypasses_proxy_for_endpoint_host(monkeypatch):
+    # A machine-wide http_proxy must not intercept the LAN endpoint — curl would
+    # route the mac mini through the proxy and 502 a reachable server (the same
+    # trap browser_fetch._no_proxy_for dodges for the CDP endpoint). urlsplit
+    # lowercases the hostname; DNS and curl's noproxy match are case-insensitive.
+    seen: list[str] = []
+
+    def capture_run(argv, **kwargs):
+        seen.extend(argv)
+        raise FileNotFoundError("curl")
+
+    monkeypatch.setattr("paper_degist.embed_text.subprocess.run", capture_run)
+    with pytest.raises(TransportError):
+        _default_post("nomic-embed-text-v1.5", "search_query: proxy?", DEFAULT_ENDPOINT)
+    assert seen[seen.index("--noproxy") + 1] == "smtvs-mac-mini-2.local"
 
 
 def test_default_post_curl_missing_raises_transport_error(monkeypatch):

@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Callable, Optional
+from urllib.parse import urlsplit
 
 import typer
 
@@ -48,7 +49,9 @@ from paper_degist._cli import invoke
 # The verified transport constants (report §3). The gap is the ~6–8 s recovery
 # window the flapping MLX runtime needs between hits; a different value is a
 # `--gap` option, not a new path. Total attempts include the first try.
-DEFAULT_ENDPOINT = "http://localhost:1234/v1/chat/completions"
+# The default server is the always-on mac mini's LM Studio (serve-on-network
+# enabled), not the laptop's own — a laptop-local server is `--endpoint`.
+DEFAULT_ENDPOINT = "http://SMTVs-Mac-mini-2.local:1234/v1/chat/completions"
 DEFAULT_GAP = 7.0
 DEFAULT_ATTEMPTS = 3
 
@@ -229,6 +232,10 @@ def _default_post(model_id: str, prompt: str, image_path: Path, endpoint: str) -
             [
                 "curl",
                 "-sS",
+                # A machine-wide http(s)_proxy must not intercept the LAN
+                # endpoint (browser_fetch._no_proxy_for dodges the same trap).
+                "--noproxy",
+                urlsplit(endpoint).hostname or "*",
                 "--max-time",
                 "600",
                 "-w",
