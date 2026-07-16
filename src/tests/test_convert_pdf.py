@@ -131,6 +131,46 @@ def test_pages_are_stitched_in_order(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# US39 — page-number markers: every page's content is preceded by its
+# <!-- page: N --> marker (1-based physical index, render order)
+# ---------------------------------------------------------------------------
+
+
+def test_first_page_content_is_preceded_by_page_1_marker(tmp_path):
+    content_map = {"p0001.png": "# Intro section", "p0002.png": "# Method section"}
+    result, _, _ = _run(tmp_path, name="Attention_Is_All_You_Need.pdf", content_map=content_map)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("<!-- page: 1 -->") < text.index("# Intro section")
+
+
+def test_second_page_content_is_preceded_by_page_2_marker(tmp_path):
+    content_map = {"p0001.png": "# Intro section", "p0002.png": "# Method section"}
+    result, _, _ = _run(tmp_path, name="Attention_Is_All_You_Need.pdf", content_map=content_map)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("# Intro section") < text.index("<!-- page: 2 -->") < text.index("# Method section")
+
+
+def test_horizontal_rule_still_separates_consecutive_pages(tmp_path):
+    content_map = {"p0001.png": "# Results table", "p0002.png": "# Discussion"}
+    result, _, _ = _run(tmp_path, name="Deep_Residual_Learning.pdf", content_map=content_map)
+    assert "\n\n---\n\n" in result.read_text(encoding="utf-8")
+
+
+def test_frontmatter_precedes_the_page_1_marker(tmp_path):
+    result, _, _ = _run(tmp_path, name="SMART_Vocabulary.pdf", meta=_META)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("pdf_url:") < text.index("<!-- page: 1 -->")
+
+
+def test_failed_ocr_page_still_gets_its_marker(tmp_path):
+    result, _, _ = _run(
+        tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0002.png"}
+    )
+    text = result.read_text(encoding="utf-8")
+    assert text.index("<!-- page: 2 -->") < text.index("<!-- OCR FAILED: p0002.png -->")
+
+
+# ---------------------------------------------------------------------------
 # US37 — provenance frontmatter stamped from the sidecar
 # ---------------------------------------------------------------------------
 

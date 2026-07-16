@@ -35,6 +35,12 @@ DEFAULT_MODEL = "deepseek-ocr-2"
 # boundary so a reader sees where one scanned page ends and the next begins.
 _PAGE_SEP = "\n\n---\n\n"
 
+# US39: the page marker stamped ahead of each page's content. Public on
+# purpose — a downstream consumer that cites or chunks by PDF page should
+# import this template (PAGE_MARKER.format(n=3)) rather than re-derive the
+# format from memory.
+PAGE_MARKER = "<!-- page: {n} -->"
+
 RenderFn = Callable[..., Optional[list[Path]]]
 OcrFn = Callable[..., Optional[Path]]
 
@@ -130,7 +136,14 @@ def convert_pdf(
             )
             return None
 
-    stitched = _frontmatter.apply(_PAGE_SEP.join(page_markdowns), meta)
+    # US39: stamp each page's 1-based physical index ahead of its content, so a
+    # downstream AI module can cite by PDF page. The index comes from the render
+    # order, never from parsing the OCR output.
+    numbered = [
+        f"{PAGE_MARKER.format(n=n)}\n\n{md}"
+        for n, md in enumerate(page_markdowns, start=1)
+    ]
+    stitched = _frontmatter.apply(_PAGE_SEP.join(numbered), meta)
     # Atomic write: stage under a sibling so a killed write never leaves a
     # partial file the idempotency skip would accept as a complete convert.
     staging = target.with_name(target.name + ".writing")
