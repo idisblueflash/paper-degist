@@ -6,6 +6,7 @@ Distinct example PDF names label what each case exercises (rule 08).
 """
 
 import json
+import re
 from pathlib import Path
 
 from paper_degist import _frontmatter
@@ -128,6 +129,71 @@ def test_pages_are_stitched_in_order(tmp_path):
     result, _, _ = _run(tmp_path, content_map=content_map)
     text = result.read_text(encoding="utf-8")
     assert text.index("FIRST") < text.index("SECOND")
+
+
+# ---------------------------------------------------------------------------
+# US39 — page-number markers: every page's content is preceded by its
+# <!-- page: N --> marker (1-based physical index, render order)
+# ---------------------------------------------------------------------------
+
+
+def test_first_page_content_is_preceded_by_page_1_marker(tmp_path):
+    content_map = {"p0001.png": "# Intro section", "p0002.png": "# Method section"}
+    result, _, _ = _run(tmp_path, name="Attention_Is_All_You_Need.pdf", content_map=content_map)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("<!-- page: 1 -->") < text.index("# Intro section")
+
+
+def test_second_page_content_is_preceded_by_page_2_marker(tmp_path):
+    content_map = {"p0001.png": "# Intro section", "p0002.png": "# Method section"}
+    result, _, _ = _run(tmp_path, name="Attention_Is_All_You_Need.pdf", content_map=content_map)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("# Intro section") < text.index("<!-- page: 2 -->") < text.index("# Method section")
+
+
+def test_horizontal_rule_still_separates_consecutive_pages(tmp_path):
+    content_map = {"p0001.png": "# Results table", "p0002.png": "# Discussion"}
+    result, _, _ = _run(tmp_path, name="Deep_Residual_Learning.pdf", content_map=content_map)
+    assert "\n\n---\n\n" in result.read_text(encoding="utf-8")
+
+
+def test_frontmatter_precedes_the_page_1_marker(tmp_path):
+    result, _, _ = _run(tmp_path, name="SMART_Vocabulary.pdf", meta=_META)
+    text = result.read_text(encoding="utf-8")
+    assert text.index("pdf_url:") < text.index("<!-- page: 1 -->")
+
+
+def test_marker_sequence_is_exactly_one_to_n(tmp_path):
+    result, _, _ = _run(
+        tmp_path,
+        name="BERT_Pretraining.pdf",
+        pages=("p0001.png", "p0002.png", "p0003.png"),
+    )
+    text = result.read_text(encoding="utf-8")
+    assert re.findall(r"<!-- page: (\d+) -->", text) == ["1", "2", "3"]
+
+
+def test_non_contiguous_page_set_returns_none(tmp_path):
+    result, _, _ = _run(
+        tmp_path, name="Gapped_Page_Dir.pdf", pages=("p0001.png", "p0003.png")
+    )
+    assert result is None
+
+
+def test_non_contiguous_page_set_quarantines_with_reason(tmp_path):
+    _, _, manifest = _run(
+        tmp_path, name="Gapped_Page_Dir.pdf", pages=("p0001.png", "p0003.png")
+    )
+    records = _records(manifest)
+    assert any("non-contiguous" in r.get("reason", "") for r in records)
+
+
+def test_failed_ocr_page_still_gets_its_marker(tmp_path):
+    result, _, _ = _run(
+        tmp_path, name="GPT4_Technical_Report.pdf", none_for={"p0002.png"}
+    )
+    text = result.read_text(encoding="utf-8")
+    assert text.index("<!-- page: 2 -->") < text.index("<!-- OCR FAILED: p0002.png -->")
 
 
 # ---------------------------------------------------------------------------

@@ -264,10 +264,20 @@ uv run convert-pdf files/paper.pdf --model deepseek-ocr-2
   - Ghostscript cannot render the PDF (corrupt/unrenderable).
   - Any page OCR call fails or the server is unreachable — no partial
     Markdown is saved.
+  - The rendered page set is not the contiguous `p0001..p000N` (e.g. a
+    hand-pruned `pages/<stem>/` dir) — page markers would misnumber, so the
+    PDF is quarantined; delete `pages/<stem>/` and re-run to re-render.
 - **Provenance frontmatter** (US37): like `convert-html`, a `<stem>.meta.json`
   sidecar (from `fetch-batch`) is stamped as YAML frontmatter on the stitched
   `.md`; no sidecar leaves the output unchanged, and an existing `.md` is
   backfilled or left untouched (idempotent).
+- **Page-number markers** (US39): every page's content is preceded by
+  `<!-- page: N -->` (1-based physical PDF index, page 1 included, after any
+  frontmatter), so a downstream consumer can cite by page — the template is
+  importable as `paper_degist.convert_pdf.PAGE_MARKER`. A failed-OCR page
+  keeps its marker, so later numbers stay aligned with the PDF. Markers land
+  only on fresh converts: a pre-US39 `.md` is never backfilled (delete it and
+  re-convert to get markers).
 
 ### Examples
 

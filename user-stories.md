@@ -51,6 +51,7 @@ timeless spec and carry no status marker.
 | [US 36](user-stories/us-36-collect-papers.md)                | Collect converted papers to a target folder                            | `collect-papers`  | ✅ Done                            |
 | [US 37](user-stories/us-37-provenance-frontmatter.md)        | Provenance frontmatter (doi/url/pdf_url/venue) on each collected paper  | `fetch-batch`     | ✅ Done                            |
 | [US 38](user-stories/us-38-rate-limit-backoff.md)            | Survive rate limits with bounded backoff; pace every discover source   | `discover`        | ✅ Done                            |
+| [US 39](user-stories/us-39-page-number-markers.md)           | Page-number markers on each page of the stitched PDF Markdown          | `convert-pdf`     | ✅ Done                            |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).

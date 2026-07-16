@@ -35,6 +35,12 @@ DEFAULT_MODEL = "deepseek-ocr-2"
 # boundary so a reader sees where one scanned page ends and the next begins.
 _PAGE_SEP = "\n\n---\n\n"
 
+# US39: the page marker stamped ahead of each page's content. Public on
+# purpose — a downstream consumer that cites or chunks by PDF page should
+# import this template (PAGE_MARKER.format(n=3)) rather than re-derive the
+# format from memory.
+PAGE_MARKER = "<!-- page: {n} -->"
+
 RenderFn = Callable[..., Optional[list[Path]]]
 OcrFn = Callable[..., Optional[Path]]
 
@@ -106,6 +112,21 @@ def convert_pdf(
         )
         return None
 
+    # US39: the marker below numbers pages by list position, which only equals
+    # the physical page while the rendered set is the canonical contiguous
+    # p0001..p000N (render_pdf's idempotent skip returns whatever p*.png exist,
+    # so a hand-pruned pages/<stem>/ dir could otherwise mislabel every page
+    # after the gap). A non-canonical set is quarantined, never misnumbered.
+    page_names = [Path(p).name for p in pages]
+    expected_names = [f"p{i:04d}.png" for i in range(1, len(pages) + 1)]
+    if page_names != expected_names:
+        _quarantine(
+            manifest_path,
+            pdf=str(pdf_path),
+            reason=f"non-contiguous rendered page set: {page_names}",
+        )
+        return None
+
     # Scope the OCR output dir to the PDF stem so pages from different PDFs
     # never collide on p0001.md / p0002.md in the flat out/<model>/ directory.
     pdf_out_dir = out_dir / pdf_path.stem
@@ -130,7 +151,14 @@ def convert_pdf(
             )
             return None
 
-    stitched = _frontmatter.apply(_PAGE_SEP.join(page_markdowns), meta)
+    # US39: stamp each page's 1-based physical index ahead of its content, so a
+    # downstream AI module can cite by PDF page. The index comes from the render
+    # order, never from parsing the OCR output.
+    numbered = [
+        f"{PAGE_MARKER.format(n=n)}\n\n{md}"
+        for n, md in enumerate(page_markdowns, start=1)
+    ]
+    stitched = _frontmatter.apply(_PAGE_SEP.join(numbered), meta)
     # Atomic write: stage under a sibling so a killed write never leaves a
     # partial file the idempotency skip would accept as a complete convert.
     staging = target.with_name(target.name + ".writing")

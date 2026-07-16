@@ -15,6 +15,24 @@ location, the case not yet handled, and the trigger that should make us fix it.
   `convert_pdf` emits `<!-- OCR FAILED: <page> -->` and continues, so the document
   is never lost for one bad page.
 
+## convert_pdf — page markers only on fresh converts (US39)
+
+- **Location:** `convert_pdf.convert_pdf` stitch step (the `numbered` list).
+- **Case not handled:** a `.md` converted before US39 has no `<!-- page: N -->`
+  markers, and they cannot be backfilled from the output alone (a bare `---`
+  separator is ambiguous with genuine horizontal rules inside OCR text). The
+  marker carries the physical 1-based index, not the paper's printed pagination.
+- **Trigger:** when the wiki skills need page cites for a pre-US39 paper, delete
+  its `.md` and re-convert; if printed page numbers are ever required, that is
+  the separate mapping story named in US39 "Later stages".
+- **Handled (Codex + self-review finding):** the marker number is the position
+  in the rendered page list, which equals the physical page only while
+  `pages/<stem>/` is the canonical contiguous `p0001..p000N` — `render_pdf`'s
+  idempotent skip returns whatever `p*.png` exist, so a hand-pruned dir would
+  have mislabeled every page after the gap. `convert_pdf` now quarantines a
+  non-contiguous set instead of misnumbering it; the remedy is deleting
+  `pages/<stem>/` and re-rendering.
+
 ## fetch_batch — sidecar only on the direct fetch lane (US37)
 
 - **Location:** `fetch_batch.fetch_batch` drives `fetch_one` only.
