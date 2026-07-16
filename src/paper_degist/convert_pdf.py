@@ -112,6 +112,21 @@ def convert_pdf(
         )
         return None
 
+    # US39: the marker below numbers pages by list position, which only equals
+    # the physical page while the rendered set is the canonical contiguous
+    # p0001..p000N (render_pdf's idempotent skip returns whatever p*.png exist,
+    # so a hand-pruned pages/<stem>/ dir could otherwise mislabel every page
+    # after the gap). A non-canonical set is quarantined, never misnumbered.
+    page_names = [Path(p).name for p in pages]
+    expected_names = [f"p{i:04d}.png" for i in range(1, len(pages) + 1)]
+    if page_names != expected_names:
+        _quarantine(
+            manifest_path,
+            pdf=str(pdf_path),
+            reason=f"non-contiguous rendered page set: {page_names}",
+        )
+        return None
+
     # Scope the OCR output dir to the PDF stem so pages from different PDFs
     # never collide on p0001.md / p0002.md in the flat out/<model>/ directory.
     pdf_out_dir = out_dir / pdf_path.stem

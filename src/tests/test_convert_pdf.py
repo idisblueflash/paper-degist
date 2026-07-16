@@ -6,6 +6,7 @@ Distinct example PDF names label what each case exercises (rule 08).
 """
 
 import json
+import re
 from pathlib import Path
 
 from paper_degist import _frontmatter
@@ -160,6 +161,31 @@ def test_frontmatter_precedes_the_page_1_marker(tmp_path):
     result, _, _ = _run(tmp_path, name="SMART_Vocabulary.pdf", meta=_META)
     text = result.read_text(encoding="utf-8")
     assert text.index("pdf_url:") < text.index("<!-- page: 1 -->")
+
+
+def test_marker_sequence_is_exactly_one_to_n(tmp_path):
+    result, _, _ = _run(
+        tmp_path,
+        name="BERT_Pretraining.pdf",
+        pages=("p0001.png", "p0002.png", "p0003.png"),
+    )
+    text = result.read_text(encoding="utf-8")
+    assert re.findall(r"<!-- page: (\d+) -->", text) == ["1", "2", "3"]
+
+
+def test_non_contiguous_page_set_returns_none(tmp_path):
+    result, _, _ = _run(
+        tmp_path, name="Gapped_Page_Dir.pdf", pages=("p0001.png", "p0003.png")
+    )
+    assert result is None
+
+
+def test_non_contiguous_page_set_quarantines_with_reason(tmp_path):
+    _, _, manifest = _run(
+        tmp_path, name="Gapped_Page_Dir.pdf", pages=("p0001.png", "p0003.png")
+    )
+    records = _records(manifest)
+    assert any("non-contiguous" in r.get("reason", "") for r in records)
 
 
 def test_failed_ocr_page_still_gets_its_marker(tmp_path):

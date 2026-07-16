@@ -73,6 +73,10 @@ marker** at the top of every page's content:
 
 - `.pdf` branch → markers stamped as above; the page index comes from the
   render order, never from parsing OCR output.
+- Non-contiguous rendered page set (e.g. a hand-pruned `pages/<stem>/` dir that
+  the render step's idempotent skip returns as `p0001.png, p0003.png`) →
+  quarantine to `manifest.jsonl` and skip, because numbering by position would
+  silently mislabel every page after the gap — never misnumber, never crash.
 - `.html` branch (`convert-html`, US5) → out of scope: an HTML source has no
   page geometry, so no markers are emitted and its output is unchanged.
 - Already-converted papers → **no backfill.** The markers cannot be recovered

@@ -25,13 +25,13 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger:** when the wiki skills need page cites for a pre-US39 paper, delete
   its `.md` and re-convert; if printed page numbers are ever required, that is
   the separate mapping story named in US39 "Later stages".
-- **Also not handled:** the marker number is the position in the rendered page
-  list, which equals the physical page only while `pages/<stem>/` is pristine.
-  `render_pdf`'s idempotent skip returns whatever `p*.png` exist, so a manually
-  pruned dir (`p0002.png` deleted) would stamp `p0003.png` as `page: 2`. The
-  pipeline itself cannot produce a gap (renders stage atomically); if hand-edited
-  page dirs ever become a real case, derive `n` from the `pNNNN` filename or
-  quarantine a non-contiguous set.
+- **Handled (Codex + self-review finding):** the marker number is the position
+  in the rendered page list, which equals the physical page only while
+  `pages/<stem>/` is the canonical contiguous `p0001..p000N` — `render_pdf`'s
+  idempotent skip returns whatever `p*.png` exist, so a hand-pruned dir would
+  have mislabeled every page after the gap. `convert_pdf` now quarantines a
+  non-contiguous set instead of misnumbering it; the remedy is deleting
+  `pages/<stem>/` and re-rendering.
 
 ## fetch_batch — sidecar only on the direct fetch lane (US37)
 
