@@ -425,16 +425,18 @@ location, the case not yet handled, and the trigger that should make us fix it.
   + the US15/16/35 regression pass) from the shell; when they all pass, mark this
   flag RESOLVED with the run details. Retune `_UNATTENDED_MAX_WAIT_S` (30 s) if a
   real lazy body takes longer than that to fill unattended.
-- **Status: PARTIALLY exercised live (2026-07-21).** A real `browser-up` Chrome ran
-  the lifted code: Case 1 (AC1 — saved, exit 0, no `networkidle` timeout), Case 2
-  (AC2 — **caught the empty-shell bug**, fixed publisher-aware), and Case 3 (AC4 —
-  unattended quarantines and returns promptly, exit 0) all pass `[auto]`. Case 4's
-  **interactive mechanism** ran correctly — notified on stderr, polled the full
-  240 s, and on no-clear quarantined cleanly (distinct wall reason, no sticky file)
-  — but the **happy-path capture of the full body** could not complete because the
-  Cloudflare challenge looped unsolvably (see the next flag). Still open: one
-  successful `--interactive` capture through a *clearable* wall, then `convert-html`
-  all-sections on the live body.
+- **Status: RESOLVED — all five cases pass live (2026-07-21).** A real `browser-up`
+  Chrome ran the lifted code end to end: Case 1 (AC1 — saved, no `networkidle`
+  timeout), Case 2 (AC2 — **caught the empty-shell bug**, fixed publisher-aware),
+  Case 3 (AC4 — unattended quarantines and returns promptly, exit 0), and finally
+  **Case 4 (AC3) — a full `--interactive` capture through a clearable wall**: the
+  tool notified once, the operator cleared the Cloudflare challenge by hand, and the
+  loop auto-resumed, saved `files/j.jbi.2018.12.005.html` (1.6 MB), exit 0.
+  `convert-html` on it yielded **13 707 words with all sections** (Abstract →
+  References). Idempotent re-run added no manifest row; a follow-up **unattended**
+  run saved with **no wall** (the `cf_clearance` cookie persisted). This live run
+  surfaced and fixed the `challenge-platform` false-positive (next flag) — the bug
+  that had made Case 4 poll forever after the clear.
 
 ## browser_fetch — a looping Cloudflare managed challenge blocks even a manual clear (US40 interactive)
 
@@ -447,8 +449,12 @@ location, the case not yet handled, and the trigger that should make us fix it.
   automation-launched browser and refuses to present the challenge. The poll
   behaved correctly: it never re-navigated/refreshed (the reload the operator saw
   was Cloudflare's own challenge retry, not our code), notified once, polled 240 s,
-  then quarantined `looks like a wall, not the paper: bot-wall marker
-  'challenge-platform'` (exit 0, no sticky file).
+  then quarantined the wall cleanly (exit 0, no sticky file). **A later run the same
+  day did present a solvable challenge** — the operator cleared it and the loop
+  resumed to a full capture (see the RESOLVED flag above) — so the loop is a
+  *sometimes*-present environmental block on a rate-flagged profile, not a permanent
+  wall. (The quarantine reason on a genuine interstitial is now `bot-wall marker
+  'cf_chl_opt'`, not `'challenge-platform'` — see the false-positive fix below.)
 - **Not a code fix — a launch/profile matter.** Making the challenge presentable is
   about the *browser*, not `browser_fetch`: seed a valid `cf_clearance` by solving
   the challenge in a **non-automation** Chrome and point `browser-up --user-data-dir`
@@ -459,6 +465,26 @@ location, the case not yet handled, and the trigger that should make us fix it.
 - **Trigger to revisit:** a real OA recovery is blocked often enough that the
   seed-profile workflow is worth documenting as a first-class step in the QA guide /
   CLI manual.
+
+## browser_fetch — the `challenge-platform` wall marker false-positived on cleared pages — RESOLVED (US40 live QA)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_WALL_BODY_MARKERS` / `_wall_reason`.
+- **Bug (live QA, 2026-07-21):** `challenge-platform` matched the `/cdn-cgi/
+  challenge-platform/scripts/jsd/main.js` **JS-Detections telemetry** script that
+  Cloudflare injects into *ordinary cleared pages*, not only interstitials. On
+  ScienceDirect that script is on **every** article, so `_wall_reason` flagged a
+  fully-loaded, cleared article as a wall — the `--interactive` loop polled forever
+  after the operator cleared the challenge, and the unattended path would have
+  quarantined the real article too. It blocked the entire US40 happy path on the
+  target host.
+- **Fix (test-first):** dropped `challenge-platform` from `_WALL_BODY_MARKERS`,
+  keeping the challenge-widget-specific `cf-chl-` / `cf_chl_opt` (the
+  `window._cf_chl_opt` blob, absent once cleared) plus the interstitial title
+  markers. A genuine interstitial is still caught (proven live: quarantine reason is
+  now `bot-wall marker 'cf_chl_opt'`); a cleared telemetry-only page passes. Driven
+  by `test_wall_reason_passes_a_cleared_page_carrying_the_jsd_telemetry_script`.
+- **Status: RESOLVED.** Verified live end to end — see the RESOLVED interactive-loop
+  flag above.
 
 ## browser_fetch — per-publisher readiness selectors + markers are ScienceDirect-only (US40)
 

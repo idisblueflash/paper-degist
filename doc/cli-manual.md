@@ -441,8 +441,11 @@ check its HTML would be saved as if it were the content — and, because re-runs
 skip an existing file, that bad capture would be *permanently* treated as a
 success. `browser-fetch` quarantines a wall **before** writing the file (so it
 never becomes the sticky artifact), recognizing it by a known bot-wall marker (the
-Cloudflare `challenge-platform` script, a `Just a moment…` interstitial, …) or a
-rendered `<title>` that reflects **none** of the requested URL's paper slug. When
+Cloudflare challenge blob `cf_chl_opt` / `cf-chl-` widget id, a `Just a moment…`
+interstitial title, …) or a rendered `<title>` that reflects **none** of the
+requested URL's paper slug. (It deliberately does *not* match the generic
+`challenge-platform` telemetry script — Cloudflare injects that into ordinary
+cleared pages too, so matching it would quarantine real captures.) When
 you have logged the profile into the host, re-running recaptures the real paper.
 
 It reads a **list** of URLs and reuses **one** warm connection across the whole
@@ -537,7 +540,7 @@ uv run browser-fetch urls.txt
 echo "https://www.researchgate.net/publication/221609650_Retrieval_Practice_Produces_More_Learning" \
   | uv run browser-fetch --cdp "$endpoint"
 #   -> stdout: (empty — nothing saved)
-#   -> manifest: {"stage":"browser-fetch","reason":"looks like a wall, not the paper: bot-wall marker 'challenge-platform'"}
+#   -> manifest: {"stage":"browser-fetch","reason":"looks like a wall, not the paper: bot-wall marker 'cf_chl_opt'"}
 
 # Lazy-loaded full-text behind an interactive wall (US40): an open-access
 # ScienceDirect paper. --interactive notifies + polls so you clear the Cloudflare

@@ -92,10 +92,16 @@ def _target_path(url: str, files_dir: Path) -> Path:
 # so they are matched anywhere in the HTML; the interstitial *phrases* ("just a
 # moment…") are ordinary English that could appear in a paper's body prose, so
 # they are matched only against the rendered ``<title>``.
+# NB: NOT "challenge-platform". That /cdn-cgi/challenge-platform/ path also serves
+# Cloudflare's generic JS-Detections telemetry script (.../scripts/jsd/main.js),
+# which Cloudflare injects into *ordinary cleared pages*, not only interstitials.
+# A live US40 QA run proved it false-positives on a fully-loaded ScienceDirect
+# article — keeping the --interactive loop polling forever after the human cleared
+# the wall. The markers below are challenge-widget-specific (absent once cleared);
+# the genuine interstitial is still caught by them plus the title markers.
 _WALL_BODY_MARKERS = (
-    "challenge-platform",  # the /cdn-cgi/challenge-platform/ JS challenge script
     "cf-chl-",  # Cloudflare challenge widget id prefix
-    "cf_chl_opt",  # Cloudflare challenge options blob
+    "cf_chl_opt",  # Cloudflare challenge options blob (window._cf_chl_opt)
 )
 _WALL_TITLE_MARKERS = (
     "just a moment",  # the classic CF interstitial title

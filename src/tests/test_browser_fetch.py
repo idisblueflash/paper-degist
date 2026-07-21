@@ -870,7 +870,15 @@ GENUINE_PAPER = (
 
 
 def test_wall_reason_flags_a_cloudflare_challenge_marker():
-    assert _wall_reason(WALL_URL, CLOUDFLARE_WALL) is not None
+    # A challenge page whose <title> happens to echo the requested paper (so both
+    # title checks abstain) is still caught by the challenge-widget blob in its body
+    # — the marker path, isolated from the title path so it fails alone if a
+    # challenge-specific marker is dropped.
+    marker_only = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><script>window._cf_chl_opt={cvId:'3'};</script></body></html>"
+    )
+    assert _wall_reason(WALL_URL, marker_only) is not None
 
 
 # --- AC2: a rendered title that reflects no content word of the URL slug → wall ---
@@ -1094,6 +1102,24 @@ def test_wall_reason_still_flags_a_cloudflare_marker_on_a_doi_url():
     # Cloudflare challenge — the body/title markers still fire (AC3 relies on this).
     doi = "https://doi.org/10.1016/j.jbi.2018.12.005"
     assert _wall_reason(doi, CLOUDFLARE_WALL) is not None
+
+
+def test_wall_reason_passes_a_cleared_page_carrying_the_jsd_telemetry_script():
+    # LIVE QA (US40): a *cleared* ScienceDirect article still carries Cloudflare's
+    # generic JS-Detections telemetry script (/cdn-cgi/challenge-platform/scripts/jsd/)
+    # — Cloudflare injects it into ordinary pages, not only interstitials. It must
+    # NOT read as a wall: its <title> echoes the paper and it carries no challenge
+    # blob. Otherwise the --interactive loop polls forever after the human clears the
+    # wall (the article had loaded, yet _wall_reason kept flagging the page).
+    doi = "https://doi.org/10.1016/j.jbi.2018.12.005"
+    cleared = (
+        "<html><head><title>A systematic approach for developing a corpus of "
+        "patient reported adverse drug events - ScienceDirect</title>"
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'
+        '</head><body><section class="Body">full rendered article text</section>'
+        "</body></html>"
+    )
+    assert _wall_reason(doi, cleared) is None
 
 
 # --- AC2: a "Loading…" stub is quarantined before the save, not saved header-only ---

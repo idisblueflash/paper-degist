@@ -133,14 +133,18 @@ past \~4 min with no resume after you cleared the wall (the bound is 240 s —
 `_INTERACTIVE_MAX_WAIT_S`); or it quarantines as `navigation failed` while you were
 mid-clear (the transient-redirect resilience regressed).
 
-**External block (not a tool fail):** if the Cloudflare **managed challenge loops in
-an animation and never shows a checkbox**, you cannot clear it by hand — Cloudflare
-flags the automation-launched `browser-up` Chrome and refuses to present the
-challenge. The tool is behaving correctly (it polls, then quarantines the wall with
-no sticky file); this is the permanently-out-of-scope evasion boundary, not a bug.
-Work around it at the **browser** level: solve the challenge once in a *non-automation*
-Chrome profile and point `browser-up --user-data-dir` at it so the `cf_clearance`
-cookie is seeded, then re-run. (Observed 2026-07-21 on `doi.org/10.1016/j.jbi.2018.12.005`.)
+**External block (not a tool fail):** the Cloudflare **managed challenge sometimes
+loops in an animation and never shows a checkbox** on a rate-flagged profile — then
+you cannot clear it by hand, because Cloudflare flags the automation-launched
+`browser-up` Chrome and refuses to present a solvable challenge. The tool is behaving
+correctly (it polls, then quarantines the wall with no sticky file); actively
+defeating the loop is the permanently-out-of-scope evasion boundary, not a bug. It is
+**intermittent** — retry, or work around it at the **browser** level: solve the
+challenge once in a *non-automation* Chrome profile and point `browser-up
+--user-data-dir` at it so the `cf_clearance` cookie is seeded, then re-run.
+(First observed looping 2026-07-21 on `doi.org/10.1016/j.jbi.2018.12.005`; a later
+run the same day presented a solvable challenge and the resume completed — see
+sign-off.)
 
 ## Case 5 — regression: US15/US16/US35 still hold  `[auto]`
 
@@ -171,3 +175,10 @@ second run of a saved URL prints the existing path and appends **no** manifest r
 Record the run (date, Chrome version, whether a wall appeared) in the DEVLOG flag
 *"the live domcontentloaded + readiness/interactive loop not unit-run against a real
 Chrome (US40)"* to mark it RESOLVED once all five cases pass.
+
+**Run of record (2026-07-21):** all five cases passed on a real `browser-up` Chrome.
+Case 4 cleared a live Cloudflare wall by hand and the loop auto-resumed to a 1.6 MB
+capture; `convert-html` gave 13 707 words with every section (Abstract → References).
+This run also surfaced and fixed the `challenge-platform` false-positive that had
+made the cleared page poll forever (DEVLOG: *"the `challenge-platform` wall marker
+false-positived on cleared pages"*). DEVLOG flag marked **RESOLVED**.
