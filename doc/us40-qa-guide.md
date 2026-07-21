@@ -11,9 +11,11 @@ recovery **against a real headed Chrome** — the one path the unit/BDD suites c
 exercise (they inject fakes; this env has no display). Run this on a machine with a
 desktop where `browser-up` can launch a headed Chrome.
 
-This guide is **AI-free and reproducible**: a human drives every step from the
-shell. It complements the automated gates (`uv run pytest -q`, `uv run behave`) —
-those prove the classify/dispatch logic; this proves the live capture.
+Each case is tagged **`[auto]`** (Claude drives it end to end per rule 06 phase 12)
+or **`[human]`** (needs a person — here, solving the captcha in Case 4). Every step
+is plain shell, so it stays **AI-free and reproducible** by a human too. It
+complements the automated gates (`uv run pytest -q`, `uv run behave`) — those prove
+the classify/dispatch logic; this proves the live capture.
 
 ## Preconditions
 
@@ -25,7 +27,7 @@ those prove the classify/dispatch logic; this proves the live capture.
 - Clean the sample DOI from a prior run so idempotency does not mask a capture:
   `rm -f files/j.jbi.2018.12.005.html`.
 
-## Step 0 — bring the dev-mode Chrome up
+## Step 0 — bring the dev-mode Chrome up  `[auto]`
 
 ```bash
 endpoint=$(uv run browser-up)   # launches headed Chrome on a persistent profile
@@ -37,7 +39,7 @@ below — `browser-fetch` **attaches**, it never launches or kills this Chrome.
 
 ---
 
-## Case 1 — AC1: `networkidle` is retired (a heavy SPA is not falsely quarantined)
+## Case 1 — AC1: `networkidle` is retired (a heavy SPA is not falsely quarantined)  `[auto]`
 
 The paper is `https://doi.org/10.1016/j.jbi.2018.12.005` (open-archive on
 ScienceDirect). Under the old `networkidle` wait this timed out at 30 s and
@@ -59,7 +61,7 @@ If a Cloudflare "Are you a robot?" wall shows on this fresh/expired profile, the
 unattended run correctly quarantines (`looks like a wall, not the paper: …`) — that
 is Case 3's default branch. Go clear it in Case 4.
 
-## Case 2 — AC2: the lazy-loaded body must be full, never a `"Loading…"` stub
+## Case 2 — AC2: the lazy-loaded body must be full, never a `"Loading…"` stub  `[auto]`
 
 Read the saved capture and convert it — the body must have **every section**, not
 just the header/abstract.
@@ -86,7 +88,7 @@ To see the gate *reject* a stub directly: if a run ever saved nothing and the
 manifest reason is `body not loaded: lazy-load container holds N word(s) …`, that is
 the gate working — the body never filled within the bound.
 
-## Case 3 — AC4: unattended default never blocks on a human
+## Case 3 — AC4: unattended default never blocks on a human  `[auto]`
 
 With a wall present and **no** `--interactive`, the batch must quarantine and move
 on (never hang waiting for a person). Verify the batch does not block: give it two
@@ -103,7 +105,7 @@ printf '%s\n%s\n' \
 quarantined with a distinct reason on the manifest; stderr notes the quarantine
 count. A URL that loaded is saved. The run exits `0`.
 
-## Case 4 — AC3: `--interactive` clears the wall by hand once, then auto-resumes
+## Case 4 — AC3: `--interactive` clears the wall by hand once, then auto-resumes  `[human]` (you solve the captcha)
 
 Force a wall if you do not have one: quit Chrome, delete the clearance cookie by
 removing the profile (`rm -rf .browser-profile`), and `browser-up` again — the fresh
@@ -131,7 +133,7 @@ past \~4 min with no resume after you cleared the wall (the bound is 240 s —
 `_INTERACTIVE_MAX_WAIT_S`); or it quarantines as `navigation failed` while you were
 mid-clear (the transient-redirect resilience regressed).
 
-## Case 5 — regression: US15/US16/US35 still hold
+## Case 5 — regression: US15/US16/US35 still hold  `[auto]`
 
 The lazy-load lane is additive; the existing lane must be unchanged.
 

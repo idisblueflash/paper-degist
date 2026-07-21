@@ -3,8 +3,8 @@
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
 end-to-end run → self-review → chunked commits → second-opinion review → CLI
-manual → QA guide (if a live path escapes the gates) → flip status to Done → PR →
-merge → clean up.**
+manual → QA guide **written and run** (if a live path escapes the gates) → flip
+status to Done → PR → merge → clean up.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -104,7 +104,7 @@ is untracked — clean up or keep the generated artifacts deliberately.
   sessions drives the pipeline from this manual alone. If the story added or
   renamed a flag on an existing step, fix that step's section too.
 
-### 12. Write a QA test guide — when a live/manual path escapes the automated gates
+### 12. Write **and run** a QA test guide — when a live/manual path escapes the automated gates
 - **Only when the story has a path the unit/BDD suites cannot exercise** — a headed
   browser (US15/16/18/35/40), a real external login or paid service, a machine with
   a display, or any side effect the injected fakes stub out. A pure offline story (a
@@ -115,7 +115,18 @@ is untracked — clean up or keep the generated artifacts deliberately.
   **not** prove, plus a short regression pass over the sibling stories the change
   touches. Each case names the **exact command**, the **expected observable
   result**, and the **fail signal** — never "it should work". End with a sign-off
-  checklist.
+  checklist. Mark each case **[auto]** (Claude can drive it end to end) or
+  **[human]** (needs a person — a captcha solve, a physical device, a paid action).
+- **Then run it — automatically, without asking the operator.** Execute every
+  `[auto]` case yourself against the real thing (this *is* phase 7 for the live
+  path), on this machine when it can host the path or on the mac mini (rule 09) when
+  it needs a display/headed Chrome. Do **not** pause to ask "should I run QA?" — the
+  guide existing means run it. A live case that fails is a real finding: fix it
+  **test-first** (a live QA run routinely catches what the fakes missed — e.g. US40's
+  empty-shell save), then re-run the case. Only stop at a `[human]` case: run
+  everything up to it, then hand off with the one concrete action the person must
+  take (and resume the moment they've done it). Record the run + outcome, and mark
+  the paired DEVLOG "trigger to fix" flag RESOLVED once the `[auto]` cases pass.
 - This is the documented handoff of phase 7 for the part Claude could not run live:
   it turns the DEVLOG "trigger to fix" flag for the un-runnable path into a concrete
   script a human (or Claude, on a capable machine) follows to mark that flag
