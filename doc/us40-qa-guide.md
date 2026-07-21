@@ -1,3 +1,8 @@
+---
+vmark:
+  id: 019f83d9-ba8c-7b52-b508-8d54e7d9a17e
+---
+
 # US 40 — manual QA guide (live browser lane, real Chrome)
 
 **For:** [US 40](../user-stories/us-40-browser-fetch-lazyload-interactive-wall.md)
@@ -44,6 +49,7 @@ echo "https://doi.org/10.1016/j.jbi.2018.12.005" \
 ```
 
 **Expect** (no wall showing — e.g. `cf_clearance` still valid from a prior clear):
+
 - ✅ stdout prints `files/j.jbi.2018.12.005.html`.
 - ✅ the manifest has a `{"result":"saved", …}` row for the DOI — **not**
   `reason: "navigation failed … networkidle"`.
@@ -70,7 +76,11 @@ done
 **Expect:** all eight sections `YES`, word count in the thousands.
 **Fail signal:** a few-hundred-word Markdown with only Abstract → the readiness gate
 did not wait for the scroll-triggered body (or the selectors missed this host — file
-a DEVLOG note and add the container to `_BODY_SELECTORS`).
+a DEVLOG note and add the container to `_BODY_SELECTORS`). A **`convert-html`
+quarantine "HTML too thin"** means an *unrendered shell* was saved — the readiness
+gate should have polled/quarantined it (publisher-aware, `_is_lazyload_publisher`);
+if a new host slips through, add its shell marker to `_LAZYLOAD_PUBLISHER_MARKERS`.
+This exact case was caught by the first live QA run and fixed.
 
 To see the gate *reject* a stub directly: if a run ever saved nothing and the
 manifest reason is `body not loaded: lazy-load container holds N word(s) …`, that is
@@ -106,6 +116,7 @@ echo "https://doi.org/10.1016/j.jbi.2018.12.005" \
 ```
 
 **Expect the interactive loop:**
+
 1. ✅ stderr prints `>>> ACTION NEEDED: a bot-wall is showing … Clear it by hand …`.
 2. 👉 **You** solve the captcha in the Chrome window. Do **not** touch the terminal —
    the tool never solves it for you and never asks you to type anything.
@@ -116,7 +127,7 @@ echo "https://doi.org/10.1016/j.jbi.2018.12.005" \
    restart-persistence finding.
 
 **Fail signals:** the tool solves/clicks the captcha itself (it must not); it hangs
-past ~4 min with no resume after you cleared the wall (the bound is 240 s —
+past \~4 min with no resume after you cleared the wall (the bound is 240 s —
 `_INTERACTIVE_MAX_WAIT_S`); or it quarantines as `navigation failed` while you were
 mid-clear (the transient-redirect resilience regressed).
 
@@ -141,7 +152,7 @@ second run of a saved URL prints the existing path and appends **no** manifest r
 ## Sign-off checklist
 
 - [ ] Case 1 — DOI capture saved, not a `networkidle` nav-timeout.
-- [ ] Case 2 — converted Markdown has all 8 sections (~14k words), no `"Loading…"` stub.
+- [ ] Case 2 — converted Markdown has all 8 sections (\~14k words), no `"Loading…"` stub.
 - [ ] Case 3 — unattended batch returns promptly and never blocks on a human.
 - [ ] Case 4 — `--interactive` notifies, you clear by hand, it auto-resumes; re-run needs no clear.
 - [ ] Case 5 — US15 save / US35 wall-quarantine / idempotency all unchanged.

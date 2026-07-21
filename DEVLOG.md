@@ -426,21 +426,28 @@ location, the case not yet handled, and the trigger that should make us fix it.
   flag RESOLVED with the run details. Retune `_UNATTENDED_MAX_WAIT_S` (30 s) if a
   real lazy body takes longer than that to fill unattended.
 
-## browser_fetch — per-publisher readiness selectors are ScienceDirect-only (US40)
+## browser_fetch — per-publisher readiness selectors + markers are ScienceDirect-only (US40)
 
 - **Where:** `src/paper_degist/browser_fetch.py::_BODY_SELECTORS` (the lazy-load
-  body-container selector set) and `READY_WORDS` (the 800-word threshold).
-- **Case not handled:** the selector set (`#body, section.Body, .Body,
-  .article-text`) and the threshold are calibrated to ScienceDirect / Elsevier. A
-  different publisher behind the same wall (Wiley, Springer, IEEE) may name its body
-  container differently; `_body_word_count` then returns `-1` (no container) and the
-  readiness gate *abstains* — the capture saves whatever loaded, so a stub could slip
-  through for that host. The safe direction (no false quarantine), but not the full
-  gate.
+  body-container selector set), `_LAZYLOAD_PUBLISHER_MARKERS` (the host-recognition
+  markers), and `READY_WORDS` (the 800-word threshold).
+- **Case not handled:** the selectors (`#body, section.Body, .Body, .article-text`),
+  the publisher markers (`sciencedirectassets`, `tdmrep-policy`), and the threshold
+  are all calibrated to ScienceDirect / Elsevier. A different lazy-load publisher
+  (Wiley, Springer, IEEE) carries neither marker, so `_is_lazyload_publisher` is
+  false and the gate *abstains* on its unrendered shell — the capture saves whatever
+  loaded, so a shell could slip through for that host (then convert-html rejects it
+  as "HTML too thin"). The safe direction for US15 (no false quarantine of an
+  ordinary page), but not the full gate for a new publisher.
 - **Trigger to fix:** a real capture from a new lazy-load publisher recurs in the
-  manifest as a header-only stub. Add that host's body selector to `_BODY_SELECTORS`
-  (a one-line addition — rule 02: the manifest of stubbed captures is the queue) and,
-  if its full body is much shorter/longer, re-measure the threshold against a sample.
+  manifest as "HTML too thin" (a saved shell) or a header-only stub. Add that host's
+  body selector to `_BODY_SELECTORS` **and** its shell marker to
+  `_LAZYLOAD_PUBLISHER_MARKERS` (both one-line additions — rule 02: the manifest is
+  the queue), and re-measure the threshold if its full body is much shorter/longer.
+- **NB (live QA finding, 2026-07-21):** the *empty-shell* case — a recognized
+  publisher page captured before its SPA rendered (0 body words, no container) — was
+  the original miss: the gate abstained on "no container" and saved the shell. Now
+  publisher-aware (`_is_lazyload_publisher`), it keeps polling / quarantines instead.
 
 ## browser_fetch — "View PDF" binary + cookie-TTL re-clear cadence deferred (US40 Could-Haves)
 
