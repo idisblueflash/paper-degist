@@ -138,6 +138,28 @@ _BODY_SELECTORS = ("#body", "section.Body", ".Body", ".article-text")
 # ``src/tests/samples/``.
 READY_WORDS = 800
 
+# Stable markers of a known lazy-load publisher (ScienceDirect / Elsevier). Present
+# even in the *unrendered* SPA shell — before any article container exists — so a
+# capture that carries one but has no filled body is "still loading", not "an
+# ordinary page with nothing to wait for". Surfaced by the US40 live QA run, which
+# saved an empty ScienceDirect shell (title "ScienceDirect", 0 body words) because
+# the gate abstained on "no container". A new host is one entry here (rule 02).
+_LAZYLOAD_PUBLISHER_MARKERS = (
+    "sciencedirectassets",  # the els-cdn static-asset host, in every SD page's <head>
+    "tdmrep-policy",  # the Elsevier TDM-policy <meta>, present in the bare shell
+)
+
+
+def _is_lazyload_publisher(html: str) -> bool:
+    """Does ``html`` carry a known lazy-load publisher marker (ScienceDirect)?
+
+    Used to disambiguate "no lazy-load container" (US40): on a recognized publisher
+    an absent/empty body means *still loading* (keep polling / quarantine), whereas
+    on any other host it means *an ordinary page* the gate abstains on (US15 saves).
+    """
+    lowered = html.lower()
+    return any(marker in lowered for marker in _LAZYLOAD_PUBLISHER_MARKERS)
+
 
 def _body_word_count(html: str) -> int:
     """Real word count of the lazy-load body container, or ``-1`` if there is none.
@@ -169,20 +191,31 @@ def _readiness_reason(html: str) -> Optional[str]:
     The content-readiness gate (rule 02): between "the DOM settled" and "save",
     classify whether the publisher's lazy-loaded body actually loaded.
 
-    - **no container** — abstain (``None``): an ordinary page (US15/US35) has no
-      known lazy-load body, so it saves exactly as before.
     - **filled** (``≥ READY_WORDS``) — pass (``None``).
     - **stub / below threshold** — a **distinct** reason so the caller quarantines
       the ``"Loading…"`` header-only stub instead of saving it (never a partial
       capture that convert-html would turn into a header-only fragment).
+    - **no container** — depends on the host: on a recognized lazy-load publisher
+      (``_is_lazyload_publisher``) an absent body is an *unrendered shell*, so it is
+      **not ready** (the live QA run saved an empty ScienceDirect shell this way);
+      on any other host the gate **abstains** (``None``), so an ordinary page
+      (US15/US35) with no lazy-load body still saves exactly as before.
     """
     words = _body_word_count(html)
-    if words == -1 or words >= READY_WORDS:
+    if words >= READY_WORDS:
         return None
-    return (
-        f"body not loaded: lazy-load container holds {words} word(s), below the "
-        f"{READY_WORDS}-word readiness threshold (a 'Loading…' stub, not the full body)"
-    )
+    if words >= 0:
+        return (
+            f"body not loaded: lazy-load container holds {words} word(s), below the "
+            f"{READY_WORDS}-word readiness threshold (a 'Loading…' stub, not the full body)"
+        )
+    # words == -1: no recognized lazy-load container.
+    if _is_lazyload_publisher(html):
+        return (
+            "body not loaded: recognized lazy-load publisher page rendered no article "
+            "body yet (an unrendered SPA shell, not the full text)"
+        )
+    return None  # ordinary page (US15/US35) — abstain and save
 
 
 def _rendered_title(html: str) -> Optional[str]:
@@ -367,14 +400,13 @@ def _await_ready_body(
     sleep: Callable[[float], None],
     poll_s: float,
     max_wait_s: float,
-    ready_words: int = READY_WORDS,
 ) -> str:
     """Drive an already-navigated ``page`` to a ready capture; return its HTML (US40).
 
     Each poll reads ``page.content()`` and classifies on cheap deterministic signals
     (rule 02): a **wall** (``_wall_reason``) and whether the **body loaded**
-    (``_body_word_count`` ≥ ``ready_words``, or ``-1`` — no lazy-load container, so
-    the gate abstains and an ordinary page is ready at once). Dispatch:
+    (``_readiness_reason`` — the *same* gate the caller applies before the save, so
+    the loop and the dispatch never disagree on what "ready" means). Dispatch:
 
     - **ready** (no wall, body loaded/absent) → return the HTML to save.
     - **wall**, *interactive* → notify the operator **once** on the first sighting
@@ -410,9 +442,8 @@ def _await_ready_body(
             waited += poll_s
             continue
         wall = _wall_reason(url, html)
-        words = _body_word_count(html)
-        if wall is None and (words == -1 or words >= ready_words):
-            return html  # ready: no wall and the body loaded (or no lazy container)
+        if wall is None and _readiness_reason(html) is None:
+            return html  # ready: no wall and the body loaded (or an ordinary page)
         if wall is not None:
             if not interactive:
                 return html  # unattended: never wait on a human — quarantine now

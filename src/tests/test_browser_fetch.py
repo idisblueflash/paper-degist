@@ -773,6 +773,20 @@ def test_await_returns_the_stub_when_the_body_never_fills_within_the_bound():
     assert _await(page, _LAZYLOAD_URL, poll_s=3, max_wait_s=9) == _LOADING_STUB
 
 
+def test_await_polls_a_publisher_shell_until_the_body_renders():
+    # The live QA case: the first probe is an unrendered ScienceDirect shell (no
+    # container) — the loop must keep polling, not return the empty shell, and
+    # resume once the body renders.
+    page = _ScriptedPage([_SD_SHELL, _SD_SHELL, _FILLED])
+    assert _await(page, _LAZYLOAD_URL) == _FILLED
+
+
+def test_await_does_not_return_the_unrendered_shell_immediately():
+    page = _ScriptedPage([_SD_SHELL, _FILLED])
+    _await(page, _LAZYLOAD_URL)
+    assert page.scrolls >= 1  # it scroll-nudged instead of accepting the shell
+
+
 class _FlakyPage:
     """A page whose content() raises a transient once, then walks a sequence.
 
@@ -1025,6 +1039,38 @@ def test_readiness_reason_abstains_on_an_ordinary_page_without_a_container():
     from paper_degist.browser_fetch import _readiness_reason
 
     assert _readiness_reason(RENDERED) is None
+
+
+# An unrendered ScienceDirect/Elsevier SPA shell (caught by the live QA run): a
+# publisher marker is present, the <title> is the bare host, and the body has NOT
+# rendered — no article container, empty <body>. Distinct from an ordinary page:
+# here "no container" means "still loading", not "nothing to wait for".
+_SD_SHELL = (
+    "<html><head><title>ScienceDirect</title>"
+    '<meta name="tdm-policy" content="https://www.elsevier.com/tdm/tdmrep-policy.json">'
+    '<script src="https://sdfestaticassets-us-east-1.sciencedirectassets.com/app.js"></script>'
+    '</head><body><div id="app"></div></body></html>'
+)
+
+
+def test_readiness_reason_flags_an_unrendered_publisher_shell():
+    # A ScienceDirect shell with no article body yet must NOT be saved — the gate
+    # must not abstain the way it does for an ordinary container-less page.
+    from paper_degist.browser_fetch import _readiness_reason
+
+    assert _readiness_reason(_SD_SHELL) is not None
+
+
+def test_is_lazyload_publisher_detects_a_sciencedirect_shell():
+    from paper_degist.browser_fetch import _is_lazyload_publisher
+
+    assert _is_lazyload_publisher(_SD_SHELL) is True
+
+
+def test_is_lazyload_publisher_is_false_for_an_ordinary_page():
+    from paper_degist.browser_fetch import _is_lazyload_publisher
+
+    assert _is_lazyload_publisher(RENDERED) is False
 
 
 # --- DOI-slug abstain: a DOI carries no judgeable title token (so it never
