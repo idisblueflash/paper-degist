@@ -396,6 +396,66 @@ location, the case not yet handled, and the trigger that should make us fix it.
   NB: a second Chrome cannot launch on a `--user-data-dir` a first Chrome already
   holds (profile lock) — matches the `browser_up` locked-profile deferred flag;
   reuse the running endpoint instead.
+- **`networkidle` retune — RESOLVED by US40 (2026-07-21).** The residual named
+  above ("a page that never idles … retune the wait then") is retired:
+  `_fetch_on_new_tab` now waits on `domcontentloaded` and hands the live page to
+  `_await_ready_body`, which scroll-nudges the lazy-loaded body and polls a bounded
+  interval instead of relying on `networkidle`. Proven end-to-end against
+  ScienceDirect (`doi.org/10.1016/j.jbi.2018.12.005`) in the US40 PoC
+  ([`doc/us40-sciencedirect-poc.md`](doc/us40-sciencedirect-poc.md)): `networkidle`
+  timed out at 30 s and falsely quarantined; `domcontentloaded` + settle reached the
+  page in ~2 s and, after the scroll+readiness gate, `convert-html` produced the full
+  14 242-word Markdown.
+
+## browser_fetch — the live domcontentloaded + readiness/interactive loop not unit-run against a real Chrome (US40)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_fetch_on_new_tab` /
+  `_await_ready_body` / `_scroll_nudge` (the real `page.goto(wait_until=
+  "domcontentloaded")` → scroll-nudge → poll `page.content()` path).
+- **Case not handled here:** the readiness gate, the scroll nudge, and the
+  interactive notify/resume loop are covered by unit tests with a scripted fake
+  page and by BDD, and by the US40 PoC's throwaway scripts against a *real* Chrome
+  — but the **lifted-into-`browser_fetch` code** has not itself been run against a
+  live dev-mode Chrome (this environment has no headed Chrome + display). The PoC
+  proved the *mechanism*; the production lift is faithful to it but unexercised live.
+- **Trigger to fix:** the first `browser-fetch --interactive
+  https://doi.org/10.1016/j.jbi.2018.12.005` run on a machine with `browser-up`'s
+  headed Chrome. Confirm: the wall notifies on stderr and auto-resumes after a manual
+  clear; the saved HTML has the full body (not a `"Loading…"` stub); `convert-html`
+  yields all sections; a re-run is idempotent. Retune `_UNATTENDED_MAX_WAIT_S` (30 s)
+  if a real lazy body takes longer than that to fill unattended.
+
+## browser_fetch — per-publisher readiness selectors are ScienceDirect-only (US40)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_BODY_SELECTORS` (the lazy-load
+  body-container selector set) and `READY_WORDS` (the 800-word threshold).
+- **Case not handled:** the selector set (`#body, section.Body, .Body,
+  .article-text`) and the threshold are calibrated to ScienceDirect / Elsevier. A
+  different publisher behind the same wall (Wiley, Springer, IEEE) may name its body
+  container differently; `_body_word_count` then returns `-1` (no container) and the
+  readiness gate *abstains* — the capture saves whatever loaded, so a stub could slip
+  through for that host. The safe direction (no false quarantine), but not the full
+  gate.
+- **Trigger to fix:** a real capture from a new lazy-load publisher recurs in the
+  manifest as a header-only stub. Add that host's body selector to `_BODY_SELECTORS`
+  (a one-line addition — rule 02: the manifest of stubbed captures is the queue) and,
+  if its full body is much shorter/longer, re-measure the threshold against a sample.
+
+## browser_fetch — "View PDF" binary + cookie-TTL re-clear cadence deferred (US40 Could-Haves)
+
+- **Where:** `src/paper_degist/browser_fetch.py` (the browser lane) — not built.
+- **Case not handled:** (1) ScienceDirect OA articles render full-text HTML, which
+  US40 captures via `convert-html`; resolving the `pdfft` "View PDF" link and
+  downloading the authenticated PDF binary through the warm session (to feed
+  `render-pdf` → `ocr-page` → `convert-pdf` for PDF-only articles) is a separate
+  deferred story. The PoC's abandoned in-page `fetch()` → base64 route
+  (`poc_html.py`) is the sketch for it. (2) The `cf_clearance` cookie survives a
+  browser restart but has a Cloudflare TTL; when it lapses interactive mode notifies
+  for one more manual clear. A scheduled re-warm, or a notification channel beyond
+  stderr (desktop / push), is deferred.
+- **Trigger to fix:** (1) a PDF-only article behind the wall that has no HTML
+  full-text; (2) the manual re-clear cadence becomes a friction point in real batch
+  use. Automatic wall solving stays permanently out of scope (bot-detection evasion).
 
 ## resolve_oa — single OA source (Unpaywall); OpenAlex/CORE not cross-checked
 
