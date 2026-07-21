@@ -773,6 +773,48 @@ def test_await_returns_the_stub_when_the_body_never_fills_within_the_bound():
     assert _await(page, _LAZYLOAD_URL, poll_s=3, max_wait_s=9) == _LOADING_STUB
 
 
+class _FlakyPage:
+    """A page whose content() raises a transient once, then walks a sequence.
+
+    Models Playwright's "execution context was destroyed" while a redirect is in
+    flight (or the operator navigates to clear the wall) — the loop must treat it as
+    still-loading and keep polling, not abort the capture.
+    """
+
+    def __init__(self, contents, *, raises=1):
+        self._contents = list(contents)
+        self._i = 0
+        self._raises = raises
+
+    def content(self):
+        if self._raises > 0:
+            self._raises -= 1
+            raise RuntimeError("Execution context was destroyed, most likely because of a navigation")
+        html = self._contents[min(self._i, len(self._contents) - 1)]
+        self._i += 1
+        return html
+
+    def evaluate(self, script):
+        return None
+
+
+def test_await_survives_a_transient_content_error_and_resumes():
+    # content() raises once (redirect in flight), then the body is ready — the loop
+    # keeps polling instead of propagating the error (navigation-resilient, AC3).
+    page = _FlakyPage([_FILLED], raises=1)
+    assert _await(page, _LAZYLOAD_URL, interactive=True) == _FILLED
+
+
+def test_await_reraises_a_persistent_content_error_at_the_bound():
+    # If the page never yields content within the bound, the error propagates so the
+    # caller quarantines it as a navigation failure — never returns empty/None.
+    import pytest
+
+    page = _FlakyPage([_FILLED], raises=100)
+    with pytest.raises(RuntimeError):
+        _await(page, _LAZYLOAD_URL, poll_s=3, max_wait_s=9)
+
+
 # ======================================================================== #
 # US35 — detect a wall page captured instead of the paper (_wall_reason)
 # ======================================================================== #

@@ -385,14 +385,30 @@ def _await_ready_body(
 
     On exceeding ``max_wait_s`` it returns the last HTML it has (a stub or an
     uncleared wall); the caller's ``_wall_reason`` / ``_readiness_reason`` then
-    quarantines it with the right distinct reason. ``sleep``/``notify`` are injected
-    so the loop is exercised instantly and silently in tests. Never raises for a
-    slow page, never calls an LLM.
+    quarantines it with the right distinct reason. A **transient** ``page.content()``
+    error (Playwright's "execution context was destroyed" while a redirect is in
+    flight, or while the operator navigates to clear the wall) is treated as
+    still-loading and polled through — only a *persistent* one that outlasts the
+    bound propagates, so the caller quarantines it as a navigation failure rather
+    than the loop returning an empty capture. ``sleep``/``notify`` are injected so
+    the loop is exercised instantly and silently in tests. Never calls an LLM.
     """
     waited = 0.0
     notified = False
     while True:
-        html = page.content()
+        try:
+            html = page.content()
+        except Exception:
+            # A redirect in flight (or the operator navigating to clear the wall)
+            # momentarily destroys the execution context; treat it as still-loading
+            # and keep polling. Only re-raise once the bound is exhausted, so a page
+            # that never yields content is quarantined as a nav failure, never saved
+            # as an empty capture (PoC's navigation-resilient pattern).
+            if waited >= max_wait_s:
+                raise
+            sleep(poll_s)
+            waited += poll_s
+            continue
         wall = _wall_reason(url, html)
         words = _body_word_count(html)
         if wall is None and (words == -1 or words >= ready_words):
