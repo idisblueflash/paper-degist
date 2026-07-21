@@ -418,13 +418,22 @@ warm session survives for later runs).
 `fetch-one` (US12) can *recognize* a bot-walled 403 but not get past it;
 `browser-fetch` is the recovery *mechanism*. It **attaches** to the
 already-running dev-mode Chrome that `browser-up` brought up (over CDP), and for
-each URL navigates and waits for the DOM to settle (`networkidle`, so a
-client-rendered page is captured — not the initial shell), then saves the
-rendered HTML under `files/` with the researcher's real logged-in cookies. It
+each URL navigates and waits for the DOM to settle (`domcontentloaded` + a bounded
+settle — the signal a heavy publisher SPA actually reaches, since `networkidle`
+never fires on a page that keeps analytics / long-poll alive, US40), then saves
+the rendered HTML under `files/` with the researcher's real logged-in cookies. It
 mirrors `fetch-one`'s save + manifest contract, so `convert-html` consumes the
 result. It **never** launches or kills Chrome (that is `browser-up`) and never
 logs in or solves a captcha for you (deciding *which* URLs need the browser is
 US17).
+
+For a JavaScript-heavy publisher whose article body **lazy-loads on scroll**
+(ScienceDirect / Elsevier), the DOM settling is not enough — the body container
+first holds a `"Loading…"` placeholder. Before it saves, `browser-fetch`
+scroll-nudges to trigger the lazy-load and waits until the body holds real content
+above a measured word threshold (US40); a page still showing the stub is
+quarantined (`body not loaded: …`) rather than saved as a header-only fragment
+that `convert-html` would turn into an abstract-only capture.
 
 Before it saves, it checks the rendered page is the **paper**, not a **wall**
 (US35): a login / consent / Cloudflare page renders successfully, so without this
@@ -432,8 +441,11 @@ check its HTML would be saved as if it were the content — and, because re-runs
 skip an existing file, that bad capture would be *permanently* treated as a
 success. `browser-fetch` quarantines a wall **before** writing the file (so it
 never becomes the sticky artifact), recognizing it by a known bot-wall marker (the
-Cloudflare `challenge-platform` script, a `Just a moment…` interstitial, …) or a
-rendered `<title>` that reflects **none** of the requested URL's paper slug. When
+Cloudflare challenge blob `cf_chl_opt` / `cf-chl-` widget id, a `Just a moment…`
+interstitial title, …) or a rendered `<title>` that reflects **none** of the
+requested URL's paper slug. (It deliberately does *not* match the generic
+`challenge-platform` telemetry script — Cloudflare injects that into ordinary
+cleared pages too, so matching it would quarantine real captures.) When
 you have logged the profile into the host, re-running recaptures the real paper.
 
 It reads a **list** of URLs and reuses **one** warm connection across the whole
@@ -443,7 +455,7 @@ Chrome instead of paying a cold connection per URL, and (via the persistent
 profile) the next run reuses it too. A single URL is just a one-line list.
 
 ```
-uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir files] [--manifest manifest.jsonl]
+uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir files] [--manifest manifest.jsonl] [--interactive]
 ```
 
 - **Argument**: `urls_file` — a file of bot-walled URLs, **one per line** (blank
@@ -452,7 +464,18 @@ uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir file
 - **Options**: `--cdp` (CDP endpoint of the running dev-mode Chrome; default
   `http://localhost:9222` — a different port or a remote debugger is just this
   flag, not a new command), `--files-dir` (where the rendered HTML is saved;
-  default `files/`), `--manifest` (default `manifest.jsonl`).
+  default `files/`), `--manifest` (default `manifest.jsonl`), `--interactive`
+  (human-in-the-loop-once wall recovery — see below; off by default).
+- **`--interactive` (US40).** For an open-access paper behind a Cloudflare "Are you
+  a robot?" wall you are entitled to, `--interactive` turns the drop-into-quarantine
+  into a **clear-and-resume**: on a detected wall it prints `>>> ACTION NEEDED …` on
+  stderr, polls the page on a bounded interval, and **auto-resumes** the capture the
+  instant you clear the wall by hand in the Chrome window — it never solves or clicks
+  the captcha itself. Off by default the run is fully **unattended**: a wall (or a
+  body that never loads) quarantines and the batch moves on, so a headless batch
+  never blocks waiting on a human. The clearance (`cf_clearance`) lives in the
+  persistent profile and survives a Chrome restart, but has a TTL — when it lapses
+  the wall returns and one more manual clear is needed.
 - **Output**: each saved (or already-present) path on stdout, **one per line, in
   first-seen order** — a drop-in to pipe into `convert-html` — plus a `saved`
   record per URL in the manifest. If any URL quarantined, a one-line count is
@@ -467,7 +490,14 @@ uv run browser-fetch [urls_file] [--cdp http://localhost:9222] [--files-dir file
   - `looks like a wall, not the paper: …` — the page rendered, but it is a
     login / consent / Cloudflare wall (a known marker, or a `<title>` that does
     not reflect the URL), so it is quarantined **before** the save (US35); log the
-    profile into the host and re-run to capture the real paper.
+    profile into the host and re-run to capture the real paper. (A DOI URL is never
+    judged a wall on the `<title>` mismatch — its slug is a journal abbreviation,
+    not title words, so that heuristic abstains, US40.)
+  - `body not loaded: lazy-load container holds N word(s) …` — a JavaScript-heavy
+    publisher's body never filled past the readiness threshold within the bound
+    (still a `"Loading…"` stub), so it is quarantined **before** the save rather
+    than captured header-only (US40); if it is a wall, re-run with `--interactive`
+    and clear it by hand.
   - `browser session failed to open: …` — the endpoint answered the probe but
     the session could not be opened (e.g. a non-Chrome debug server, or Chrome
     lost between probe and connect); the remaining URLs quarantine, never crash.
@@ -510,7 +540,17 @@ uv run browser-fetch urls.txt
 echo "https://www.researchgate.net/publication/221609650_Retrieval_Practice_Produces_More_Learning" \
   | uv run browser-fetch --cdp "$endpoint"
 #   -> stdout: (empty — nothing saved)
-#   -> manifest: {"stage":"browser-fetch","reason":"looks like a wall, not the paper: bot-wall marker 'challenge-platform'"}
+#   -> manifest: {"stage":"browser-fetch","reason":"looks like a wall, not the paper: bot-wall marker 'cf_chl_opt'"}
+
+# Lazy-loaded full-text behind an interactive wall (US40): an open-access
+# ScienceDirect paper. --interactive notifies + polls so you clear the Cloudflare
+# wall by hand once, then it scroll-nudges and saves only the fully-loaded body.
+echo "https://doi.org/10.1016/j.jbi.2018.12.005" \
+  | uv run browser-fetch --cdp "$endpoint" --interactive
+#   -> stderr: >>> ACTION NEEDED: a bot-wall is showing … Clear it by hand …
+#   (solve the captcha in the Chrome window; the poll auto-resumes)
+#   -> files/j.jbi.2018.12.005.html   (full body — every section, not a "Loading…" stub)
+#   -> pipe into convert-html for the ~14k-word Markdown
 ```
 
 ---

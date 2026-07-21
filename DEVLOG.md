@@ -396,6 +396,134 @@ location, the case not yet handled, and the trigger that should make us fix it.
   NB: a second Chrome cannot launch on a `--user-data-dir` a first Chrome already
   holds (profile lock) — matches the `browser_up` locked-profile deferred flag;
   reuse the running endpoint instead.
+- **`networkidle` retune — RESOLVED by US40 (2026-07-21).** The residual named
+  above ("a page that never idles … retune the wait then") is retired:
+  `_fetch_on_new_tab` now waits on `domcontentloaded` and hands the live page to
+  `_await_ready_body`, which scroll-nudges the lazy-loaded body and polls a bounded
+  interval instead of relying on `networkidle`. Proven end-to-end against
+  ScienceDirect (`doi.org/10.1016/j.jbi.2018.12.005`) in the US40 PoC
+  ([`doc/us40-sciencedirect-poc.md`](doc/us40-sciencedirect-poc.md)): `networkidle`
+  timed out at 30 s and falsely quarantined; `domcontentloaded` + settle reached the
+  page in ~2 s and, after the scroll+readiness gate, `convert-html` produced the full
+  14 242-word Markdown.
+
+## browser_fetch — the live domcontentloaded + readiness/interactive loop not unit-run against a real Chrome (US40)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_fetch_on_new_tab` /
+  `_await_ready_body` / `_scroll_nudge` (the real `page.goto(wait_until=
+  "domcontentloaded")` → scroll-nudge → poll `page.content()` path).
+- **Case not handled here:** the readiness gate, the scroll nudge, and the
+  interactive notify/resume loop are covered by unit tests with a scripted fake
+  page and by BDD, and by the US40 PoC's throwaway scripts against a *real* Chrome
+  — but the **lifted-into-`browser_fetch` code** has not itself been run against a
+  live dev-mode Chrome (this environment has no headed Chrome + display). The PoC
+  proved the *mechanism*; the production lift is faithful to it but unexercised live.
+- **Trigger to fix:** the first `browser-fetch --interactive
+  https://doi.org/10.1016/j.jbi.2018.12.005` run on a machine with `browser-up`'s
+  headed Chrome. Follow the manual QA guide
+  [`doc/us40-qa-guide.md`](doc/us40-qa-guide.md) — it drives all five cases (AC1–AC4
+  + the US15/16/35 regression pass) from the shell; when they all pass, mark this
+  flag RESOLVED with the run details. Retune `_UNATTENDED_MAX_WAIT_S` (30 s) if a
+  real lazy body takes longer than that to fill unattended.
+- **Status: RESOLVED — all five cases pass live (2026-07-21).** A real `browser-up`
+  Chrome ran the lifted code end to end: Case 1 (AC1 — saved, no `networkidle`
+  timeout), Case 2 (AC2 — **caught the empty-shell bug**, fixed publisher-aware),
+  Case 3 (AC4 — unattended quarantines and returns promptly, exit 0), and finally
+  **Case 4 (AC3) — a full `--interactive` capture through a clearable wall**: the
+  tool notified once, the operator cleared the Cloudflare challenge by hand, and the
+  loop auto-resumed, saved `files/j.jbi.2018.12.005.html` (1.6 MB), exit 0.
+  `convert-html` on it yielded **13 707 words with all sections** (Abstract →
+  References). Idempotent re-run added no manifest row; a follow-up **unattended**
+  run saved with **no wall** (the `cf_clearance` cookie persisted). This live run
+  surfaced and fixed the `challenge-platform` false-positive (next flag) — the bug
+  that had made Case 4 poll forever after the clear.
+
+## browser_fetch — a looping Cloudflare managed challenge blocks even a manual clear (US40 interactive)
+
+- **Where:** the `--interactive` path — `browser_fetch._await_ready_body` on a
+  `browser-up`-launched Chrome (remote-debugging flags → automation-flagged).
+- **Case:** against `doi.org/10.1016/j.jbi.2018.12.005` the Cloudflare **managed
+  challenge** looped in an animation and never presented a solvable checkbox, so the
+  operator could not clear it by hand — the loop's core assumption (US40: "the
+  operator clears the wall by hand once") does not hold when Cloudflare flags the
+  automation-launched browser and refuses to present the challenge. The poll
+  behaved correctly: it never re-navigated/refreshed (the reload the operator saw
+  was Cloudflare's own challenge retry, not our code), notified once, polled 240 s,
+  then quarantined the wall cleanly (exit 0, no sticky file). **A later run the same
+  day did present a solvable challenge** — the operator cleared it and the loop
+  resumed to a full capture (see the RESOLVED flag above) — so the loop is a
+  *sometimes*-present environmental block on a rate-flagged profile, not a permanent
+  wall. (The quarantine reason on a genuine interstitial is now `bot-wall marker
+  'cf_chl_opt'`, not `'challenge-platform'` — see the false-positive fix below.)
+- **Not a code fix — a launch/profile matter.** Making the challenge presentable is
+  about the *browser*, not `browser_fetch`: seed a valid `cf_clearance` by solving
+  the challenge in a **non-automation** Chrome and point `browser-up --user-data-dir`
+  at that profile; or launch a less automation-flagged Chrome. Actively defeating a
+  looping managed challenge (patching the fingerprint, auto-clicking) is bot
+  evasion — **permanently out of scope** (US40 "Later stages"). Deferred/known
+  limitation, not a bug.
+- **Trigger to revisit:** a real OA recovery is blocked often enough that the
+  seed-profile workflow is worth documenting as a first-class step in the QA guide /
+  CLI manual.
+
+## browser_fetch — the `challenge-platform` wall marker false-positived on cleared pages — RESOLVED (US40 live QA)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_WALL_BODY_MARKERS` / `_wall_reason`.
+- **Bug (live QA, 2026-07-21):** `challenge-platform` matched the `/cdn-cgi/
+  challenge-platform/scripts/jsd/main.js` **JS-Detections telemetry** script that
+  Cloudflare injects into *ordinary cleared pages*, not only interstitials. On
+  ScienceDirect that script is on **every** article, so `_wall_reason` flagged a
+  fully-loaded, cleared article as a wall — the `--interactive` loop polled forever
+  after the operator cleared the challenge, and the unattended path would have
+  quarantined the real article too. It blocked the entire US40 happy path on the
+  target host.
+- **Fix (test-first):** dropped `challenge-platform` from `_WALL_BODY_MARKERS`,
+  keeping the challenge-widget-specific `cf-chl-` / `cf_chl_opt` (the
+  `window._cf_chl_opt` blob, absent once cleared) plus the interstitial title
+  markers. A genuine interstitial is still caught (proven live: quarantine reason is
+  now `bot-wall marker 'cf_chl_opt'`); a cleared telemetry-only page passes. Driven
+  by `test_wall_reason_passes_a_cleared_page_carrying_the_jsd_telemetry_script`.
+- **Status: RESOLVED.** Verified live end to end — see the RESOLVED interactive-loop
+  flag above.
+
+## browser_fetch — per-publisher readiness selectors + markers are ScienceDirect-only (US40)
+
+- **Where:** `src/paper_degist/browser_fetch.py::_BODY_SELECTORS` (the lazy-load
+  body-container selector set), `_LAZYLOAD_PUBLISHER_MARKERS` (the host-recognition
+  markers), and `READY_WORDS` (the 800-word threshold).
+- **Case not handled:** the selectors (`#body, section.Body, .Body, .article-text`),
+  the publisher markers (`sciencedirectassets`, `tdmrep-policy`), and the threshold
+  are all calibrated to ScienceDirect / Elsevier. A different lazy-load publisher
+  (Wiley, Springer, IEEE) carries neither marker, so `_is_lazyload_publisher` is
+  false and the gate *abstains* on its unrendered shell — the capture saves whatever
+  loaded, so a shell could slip through for that host (then convert-html rejects it
+  as "HTML too thin"). The safe direction for US15 (no false quarantine of an
+  ordinary page), but not the full gate for a new publisher.
+- **Trigger to fix:** a real capture from a new lazy-load publisher recurs in the
+  manifest as "HTML too thin" (a saved shell) or a header-only stub. Add that host's
+  body selector to `_BODY_SELECTORS` **and** its shell marker to
+  `_LAZYLOAD_PUBLISHER_MARKERS` (both one-line additions — rule 02: the manifest is
+  the queue), and re-measure the threshold if its full body is much shorter/longer.
+- **NB (live QA finding, 2026-07-21):** the *empty-shell* case — a recognized
+  publisher page captured before its SPA rendered (0 body words, no container) — was
+  the original miss: the gate abstained on "no container" and saved the shell. Now
+  publisher-aware (`_is_lazyload_publisher`), it keeps polling / quarantines instead.
+
+## browser_fetch — "View PDF" binary + cookie-TTL re-clear cadence deferred (US40 Could-Haves)
+
+- **Where:** `src/paper_degist/browser_fetch.py` (the browser lane) — not built.
+- **Case not handled:** (1) ScienceDirect OA articles render full-text HTML, which
+  US40 captures via `convert-html`; resolving the `pdfft` "View PDF" link and
+  downloading the authenticated PDF binary through the warm session (to feed
+  `render-pdf` → `ocr-page` → `convert-pdf` for PDF-only articles) is a separate
+  deferred story. The PoC's abandoned in-page `fetch()` → base64 route
+  (`poc_html.py`) is the sketch for it. (2) The `cf_clearance` cookie survives a
+  browser restart but has a Cloudflare TTL; when it lapses interactive mode notifies
+  for one more manual clear. A scheduled re-warm, or a notification channel beyond
+  stderr (desktop / push), is deferred.
+- **Trigger to fix:** (1) a PDF-only article behind the wall that has no HTML
+  full-text; (2) the manual re-clear cadence becomes a friction point in real batch
+  use. Automatic wall solving stays permanently out of scope (bot-detection evasion).
 
 ## resolve_oa — single OA source (Unpaywall); OpenAlex/CORE not cross-checked
 

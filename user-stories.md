@@ -7,7 +7,7 @@ pipeline step, and its status. Navigate from here — don't read the others.
 
 **Status** is tracked here (the single scannable source). Flip a US to
 `✅ Done` as the last commit on its feature branch, so it merges with the story
-(rule 06 phase 12) — never a dedicated PR, never a direct commit to master.
+(rule 06 phase 13) — never a dedicated PR, never a direct commit to master.
 master never claims Done before the PR merges. The per-US files hold the
 timeless spec and carry no status marker.
 
@@ -52,6 +52,7 @@ timeless spec and carry no status marker.
 | [US 37](user-stories/us-37-provenance-frontmatter.md)        | Provenance frontmatter (doi/url/pdf_url/venue) on each collected paper  | `fetch-batch`     | ✅ Done                            |
 | [US 38](user-stories/us-38-rate-limit-backoff.md)            | Survive rate limits with bounded backoff; pace every discover source   | `discover`        | ✅ Done                            |
 | [US 39](user-stories/us-39-page-number-markers.md)           | Page-number markers on each page of the stitched PDF Markdown          | `convert-pdf`     | ✅ Done                            |
+| [US 40](user-stories/us-40-browser-fetch-lazyload-interactive-wall.md) | Capture lazy-loaded full-text through an interactive wall (ScienceDirect) | `browser-fetch`   | ✅ Done                            |
 
 Adding a story: create `user-stories/us-NN-<slug>.md` and add its row here
 (see [rule 07](.claude/rules/07-one-file-per-user-story.md)).

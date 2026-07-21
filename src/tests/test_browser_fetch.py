@@ -44,6 +44,18 @@ RERUN_URL = "https://www.researchgate.net/publication/200000001_Interleaving_Imp
 
 RENDERED = "<html><body><h1>Spaced Repetition and Long-Term Retention</h1></body></html>"
 
+# US40 shared fixtures: the synthetic full-text sample pins the readiness threshold
+# (a filled ScienceDirect body), and the stub is a body container still holding the
+# "Loading…" placeholder (blocker #3).
+_LAZYLOAD_SAMPLE = Path(__file__).parent / "samples" / "sd-fulltext-lazyload.html"
+_LOADING_STUB = (
+    "<html><head><title>A systematic approach for developing a corpus of "
+    "patient reported adverse drug events</title></head><body>"
+    '<header><h1>A systematic approach for developing a corpus of patient '
+    "reported adverse drug events</h1></header>"
+    '<section class="Body">Loading...</section></body></html>'
+)
+
 
 def _reached(cdp_url):
     return True
@@ -602,22 +614,219 @@ class _FakeContext:
         self.closed = True
 
 
+_NO_SLEEP = lambda _s: None  # keep the bounded settle free in unit tests
+
+
 def test_fetch_on_new_tab_returns_the_rendered_content():
     page = _FakePage(BODY[OK_URL])
-    assert _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000) == BODY[OK_URL]
+    assert (
+        _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000, sleep=_NO_SLEEP)
+        == BODY[OK_URL]
+    )
 
 
 def test_fetch_on_new_tab_closes_the_finished_tab():
     page = _FakePage(BODY[OK_URL])
-    _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000)
+    _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000, sleep=_NO_SLEEP)
     assert page.closed is True
 
 
 def test_fetch_on_new_tab_leaves_the_context_open_for_the_next_url():
     page = _FakePage(BODY[OK_URL])
     ctx = _FakeContext(page)
-    _fetch_on_new_tab(ctx, OK_URL, timeout_ms=30000)
+    _fetch_on_new_tab(ctx, OK_URL, timeout_ms=30000, sleep=_NO_SLEEP)
     assert ctx.closed is False
+
+
+# --- US40 AC1: the settle wait is domcontentloaded, never networkidle ---
+
+
+def test_fetch_on_new_tab_waits_on_domcontentloaded_not_networkidle():
+    # A heavy publisher SPA never reaches network idle (blocker #1); the settle
+    # signal it *does* reach is domcontentloaded.
+    page = _FakePage(BODY[OK_URL])
+    _fetch_on_new_tab(_FakeContext(page), OK_URL, timeout_ms=30000, sleep=_NO_SLEEP)
+    assert page.goto_args[1] == "domcontentloaded"
+
+
+def test_fetch_on_new_tab_settles_before_probing():
+    # AC1's "domcontentloaded + a bounded settle": an ordinary page (no lazy-load
+    # container) must still get one settle sleep before it is accepted as ready, so
+    # early client-side JS runs (US15 pages are not captured as an under-rendered
+    # shell now that networkidle is gone).
+    from paper_degist.browser_fetch import _SETTLE_S
+
+    slept = []
+    _fetch_on_new_tab(
+        _FakeContext(_FakePage(BODY[OK_URL])), OK_URL, timeout_ms=30000, sleep=slept.append
+    )
+    assert _SETTLE_S in slept
+
+
+# ======================================================================== #
+# US40 — the live readiness/interactive capture loop (_await_ready_body)
+# ======================================================================== #
+#
+# The loop drives an already-navigated page: read content, classify (wall? body
+# loaded?), and — while not ready — scroll-nudge the lazy-loader and poll. In
+# interactive mode a detected wall notifies once and the loop keeps polling until
+# the human clears it; in unattended mode a wall (or a body that never fills within
+# the bound) returns immediately so the caller quarantines and the batch never
+# blocks. sleep/notify are injected so the loop runs instantly and silently.
+
+
+class _ScriptedPage:
+    """A page whose content() walks a scripted sequence; records scroll nudges."""
+
+    def __init__(self, contents):
+        self._contents = list(contents)
+        self._i = 0
+        self.scrolls = 0
+        self.goto_args = None
+
+    def goto(self, url, *, wait_until, timeout):
+        self.goto_args = (url, wait_until, timeout)
+
+    def content(self):
+        html = self._contents[min(self._i, len(self._contents) - 1)]
+        self._i += 1
+        return html
+
+    def evaluate(self, script):
+        if "scroll" in script.lower():
+            self.scrolls += 1
+        return None
+
+
+def _await(page, url, **kw):
+    from paper_degist.browser_fetch import _await_ready_body
+
+    kw.setdefault("sleep", lambda _s: None)  # no real waiting in tests
+    kw.setdefault("notify", lambda _m: None)
+    kw.setdefault("poll_s", 3)
+    kw.setdefault("max_wait_s", 30)
+    kw.setdefault("interactive", False)
+    return _await_ready_body(page, url, **kw)
+
+
+_FILLED = _LAZYLOAD_SAMPLE.read_text(encoding="utf-8") if _LAZYLOAD_SAMPLE.exists() else ""
+
+
+def test_await_returns_immediately_when_the_body_is_already_ready():
+    # An ordinary page (no lazy-load container) is ready on the first probe — the
+    # loop returns it without a single scroll nudge.
+    page = _ScriptedPage([RENDERED])
+    assert _await(page, OK_URL) == RENDERED
+
+
+def test_await_does_not_scroll_a_page_that_is_already_ready():
+    page = _ScriptedPage([RENDERED])
+    _await(page, OK_URL)
+    assert page.scrolls == 0
+
+
+def test_await_scroll_nudges_a_stub_until_the_body_fills():
+    # The body container shows "Loading…" then fills after a scroll — the loop
+    # returns the *filled* HTML, not the stub (AC2).
+    page = _ScriptedPage([_LOADING_STUB, _FILLED])
+    assert _await(page, _LAZYLOAD_URL) == _FILLED
+
+
+def test_await_scroll_nudges_at_least_once_before_the_body_fills():
+    page = _ScriptedPage([_LOADING_STUB, _FILLED])
+    _await(page, _LAZYLOAD_URL)
+    assert page.scrolls >= 1
+
+
+def test_await_unattended_returns_a_wall_immediately_for_quarantine():
+    # Default (batch) mode never waits on a human: a wall is handed straight back
+    # so the caller quarantines it and the batch moves on (AC4).
+    page = _ScriptedPage([CLOUDFLARE_WALL])
+    assert _await(page, WALL_URL, interactive=False) == CLOUDFLARE_WALL
+
+
+def test_await_unattended_does_not_notify_on_a_wall():
+    notes = []
+    page = _ScriptedPage([CLOUDFLARE_WALL])
+    _await(page, WALL_URL, interactive=False, notify=notes.append)
+    assert notes == []
+
+
+def test_await_interactive_resumes_once_the_wall_is_cleared():
+    # The operator clears the wall by hand between polls; the loop auto-resumes and
+    # returns the now-loaded body (AC3).
+    page = _ScriptedPage([CLOUDFLARE_WALL, CLOUDFLARE_WALL, _FILLED])
+    assert _await(page, _LAZYLOAD_URL, interactive=True) == _FILLED
+
+
+def test_await_interactive_notifies_once_on_a_wall():
+    notes = []
+    page = _ScriptedPage([CLOUDFLARE_WALL, _FILLED])
+    _await(page, _LAZYLOAD_URL, interactive=True, notify=notes.append)
+    assert len(notes) == 1
+
+
+def test_await_returns_the_stub_when_the_body_never_fills_within_the_bound():
+    # The body never reaches the threshold before max_wait_s — the loop hands the
+    # last stub back so the caller quarantines it (never hangs, AC4).
+    page = _ScriptedPage([_LOADING_STUB])
+    assert _await(page, _LAZYLOAD_URL, poll_s=3, max_wait_s=9) == _LOADING_STUB
+
+
+def test_await_polls_a_publisher_shell_until_the_body_renders():
+    # The live QA case: the first probe is an unrendered ScienceDirect shell (no
+    # container) — the loop must keep polling, not return the empty shell, and
+    # resume once the body renders.
+    page = _ScriptedPage([_SD_SHELL, _SD_SHELL, _FILLED])
+    assert _await(page, _LAZYLOAD_URL) == _FILLED
+
+
+def test_await_does_not_return_the_unrendered_shell_immediately():
+    page = _ScriptedPage([_SD_SHELL, _FILLED])
+    _await(page, _LAZYLOAD_URL)
+    assert page.scrolls >= 1  # it scroll-nudged instead of accepting the shell
+
+
+class _FlakyPage:
+    """A page whose content() raises a transient once, then walks a sequence.
+
+    Models Playwright's "execution context was destroyed" while a redirect is in
+    flight (or the operator navigates to clear the wall) — the loop must treat it as
+    still-loading and keep polling, not abort the capture.
+    """
+
+    def __init__(self, contents, *, raises=1):
+        self._contents = list(contents)
+        self._i = 0
+        self._raises = raises
+
+    def content(self):
+        if self._raises > 0:
+            self._raises -= 1
+            raise RuntimeError("Execution context was destroyed, most likely because of a navigation")
+        html = self._contents[min(self._i, len(self._contents) - 1)]
+        self._i += 1
+        return html
+
+    def evaluate(self, script):
+        return None
+
+
+def test_await_survives_a_transient_content_error_and_resumes():
+    # content() raises once (redirect in flight), then the body is ready — the loop
+    # keeps polling instead of propagating the error (navigation-resilient, AC3).
+    page = _FlakyPage([_FILLED], raises=1)
+    assert _await(page, _LAZYLOAD_URL, interactive=True) == _FILLED
+
+
+def test_await_reraises_a_persistent_content_error_at_the_bound():
+    # If the page never yields content within the bound, the error propagates so the
+    # caller quarantines it as a navigation failure — never returns empty/None.
+    import pytest
+
+    page = _FlakyPage([_FILLED], raises=100)
+    with pytest.raises(RuntimeError):
+        _await(page, _LAZYLOAD_URL, poll_s=3, max_wait_s=9)
 
 
 # ======================================================================== #
@@ -661,7 +870,15 @@ GENUINE_PAPER = (
 
 
 def test_wall_reason_flags_a_cloudflare_challenge_marker():
-    assert _wall_reason(WALL_URL, CLOUDFLARE_WALL) is not None
+    # A challenge page whose <title> happens to echo the requested paper (so both
+    # title checks abstain) is still caught by the challenge-widget blob in its body
+    # — the marker path, isolated from the title path so it fails alone if a
+    # challenge-specific marker is dropped.
+    marker_only = (
+        "<html><head><title>Retrieval Practice Produces More Learning</title></head>"
+        "<body><script>window._cf_chl_opt={cvId:'3'};</script></body></html>"
+    )
+    assert _wall_reason(WALL_URL, marker_only) is not None
 
 
 # --- AC2: a rendered title that reflects no content word of the URL slug → wall ---
@@ -774,3 +991,162 @@ def test_wall_reason_abstains_on_a_generic_repository_basename():
     cgi_url = "https://rdw.rowan.edu/cgi/viewcontent.cgi?article=1080&context=etd"
     other = "<html><head><title>Rowan University Digital Works Home</title></head><body>x</body></html>"
     assert _wall_reason(cgi_url, other) is None
+
+
+# ======================================================================== #
+# US40 — capture lazy-loaded full-text through an interactive wall
+# ======================================================================== #
+#
+# Between "the DOM settled" and "save", browser-fetch now also gates on whether
+# the lazy-loaded body has actually filled: _body_word_count reads the real word
+# count of the publisher's body container (ScienceDirect / Elsevier), and
+# _readiness_reason turns a "Loading…" stub into a quarantine — while *abstaining*
+# on an ordinary page that has no such container (so every US15/US35 page still
+# saves as before). The threshold is pinned against a synthetic full-text fixture.
+
+# --- pure readiness signal: real word count of the lazy-load body container ---
+
+
+def test_body_word_count_of_a_filled_body_exceeds_the_threshold():
+    from paper_degist.browser_fetch import _body_word_count, READY_WORDS
+
+    assert _body_word_count(_LAZYLOAD_SAMPLE.read_text(encoding="utf-8")) > READY_WORDS
+
+
+def test_body_word_count_of_a_loading_placeholder_is_zero():
+    from paper_degist.browser_fetch import _body_word_count
+
+    assert _body_word_count(_LOADING_STUB) == 0
+
+
+def test_body_word_count_is_minus_one_when_no_lazy_load_container():
+    # An ordinary paper page (US15) has none of the publisher body selectors, so
+    # the readiness gate must abstain — signalled by -1.
+    from paper_degist.browser_fetch import _body_word_count
+
+    assert _body_word_count(RENDERED) == -1
+
+
+# --- readiness gate: a stub quarantines, a filled body / ordinary page passes ---
+
+
+def test_readiness_reason_passes_a_filled_body():
+    from paper_degist.browser_fetch import _readiness_reason
+
+    assert _readiness_reason(_LAZYLOAD_SAMPLE.read_text(encoding="utf-8")) is None
+
+
+def test_readiness_reason_flags_a_loading_stub():
+    from paper_degist.browser_fetch import _readiness_reason
+
+    assert _readiness_reason(_LOADING_STUB) is not None
+
+
+def test_readiness_reason_abstains_on_an_ordinary_page_without_a_container():
+    # No lazy-load container ⇒ abstain, so every US15/US35 page still saves.
+    from paper_degist.browser_fetch import _readiness_reason
+
+    assert _readiness_reason(RENDERED) is None
+
+
+# An unrendered ScienceDirect/Elsevier SPA shell (caught by the live QA run): a
+# publisher marker is present, the <title> is the bare host, and the body has NOT
+# rendered — no article container, empty <body>. Distinct from an ordinary page:
+# here "no container" means "still loading", not "nothing to wait for".
+_SD_SHELL = (
+    "<html><head><title>ScienceDirect</title>"
+    '<meta name="tdm-policy" content="https://www.elsevier.com/tdm/tdmrep-policy.json">'
+    '<script src="https://sdfestaticassets-us-east-1.sciencedirectassets.com/app.js"></script>'
+    '</head><body><div id="app"></div></body></html>'
+)
+
+
+def test_readiness_reason_flags_an_unrendered_publisher_shell():
+    # A ScienceDirect shell with no article body yet must NOT be saved — the gate
+    # must not abstain the way it does for an ordinary container-less page.
+    from paper_degist.browser_fetch import _readiness_reason
+
+    assert _readiness_reason(_SD_SHELL) is not None
+
+
+def test_is_lazyload_publisher_detects_a_sciencedirect_shell():
+    from paper_degist.browser_fetch import _is_lazyload_publisher
+
+    assert _is_lazyload_publisher(_SD_SHELL) is True
+
+
+def test_is_lazyload_publisher_is_false_for_an_ordinary_page():
+    from paper_degist.browser_fetch import _is_lazyload_publisher
+
+    assert _is_lazyload_publisher(RENDERED) is False
+
+
+# --- DOI-slug abstain: a DOI carries no judgeable title token (so it never
+#     false-quarantines a real ScienceDirect capture before the readiness gate) ---
+
+
+def test_wall_reason_abstains_on_a_doi_url_slug():
+    # doi.org/10.1016/j.jbi.2018.12.005 → slug tokens {jbi, j} are a journal
+    # abbreviation, not title words; a real article title shares none of them, so
+    # the title-mismatch heuristic must abstain (the safe direction), not quarantine.
+    doi = "https://doi.org/10.1016/j.jbi.2018.12.005"
+    real = (
+        "<html><head><title>A systematic approach for developing a corpus of "
+        "patient reported adverse drug events</title></head><body>x</body></html>"
+    )
+    assert _wall_reason(doi, real) is None
+
+
+def test_wall_reason_still_flags_a_cloudflare_marker_on_a_doi_url():
+    # Abstaining on the DOI *slug* must not blind the wall check to a genuine
+    # Cloudflare challenge — the body/title markers still fire (AC3 relies on this).
+    doi = "https://doi.org/10.1016/j.jbi.2018.12.005"
+    assert _wall_reason(doi, CLOUDFLARE_WALL) is not None
+
+
+def test_wall_reason_passes_a_cleared_page_carrying_the_jsd_telemetry_script():
+    # LIVE QA (US40): a *cleared* ScienceDirect article still carries Cloudflare's
+    # generic JS-Detections telemetry script (/cdn-cgi/challenge-platform/scripts/jsd/)
+    # — Cloudflare injects it into ordinary pages, not only interstitials. It must
+    # NOT read as a wall: its <title> echoes the paper and it carries no challenge
+    # blob. Otherwise the --interactive loop polls forever after the human clears the
+    # wall (the article had loaded, yet _wall_reason kept flagging the page).
+    doi = "https://doi.org/10.1016/j.jbi.2018.12.005"
+    cleared = (
+        "<html><head><title>A systematic approach for developing a corpus of "
+        "patient reported adverse drug events - ScienceDirect</title>"
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'
+        '</head><body><section class="Body">full rendered article text</section>'
+        "</body></html>"
+    )
+    assert _wall_reason(doi, cleared) is None
+
+
+# --- AC2: a "Loading…" stub is quarantined before the save, not saved header-only ---
+
+_LAZYLOAD_URL = "https://doi.org/10.1016/j.artmed.2021.102083"
+
+
+def test_stub_capture_returns_none(tmp_path: Path):
+    result, _, _ = _run(tmp_path, url=_LAZYLOAD_URL, fetch_rendered=_render(_LOADING_STUB))
+    assert result is None
+
+
+def test_stub_capture_saves_no_file(tmp_path: Path):
+    # The gate runs before write_text, so the stub never becomes the sticky
+    # idempotent artifact — a later scroll-nudged run can capture the full body.
+    _, files, _ = _run(tmp_path, url=_LAZYLOAD_URL, fetch_rendered=_render(_LOADING_STUB))
+    assert not files.exists()
+
+
+def test_stub_capture_reason_names_the_unloaded_body(tmp_path: Path):
+    _, _, manifest = _run(tmp_path, url=_LAZYLOAD_URL, fetch_rendered=_render(_LOADING_STUB))
+    assert "not loaded" in _only_record(manifest)["reason"]
+
+
+def test_filled_lazyload_body_is_saved(tmp_path: Path):
+    # A fully-loaded ScienceDirect body (container above the threshold) passes the
+    # readiness gate and saves, exactly as an ordinary page does.
+    html = _LAZYLOAD_SAMPLE.read_text(encoding="utf-8")
+    result, _, _ = _run(tmp_path, url=_LAZYLOAD_URL, fetch_rendered=_render(html))
+    assert result is not None

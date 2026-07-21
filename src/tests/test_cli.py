@@ -453,6 +453,33 @@ def test_browser_fetch_cli_missing_file_exits_two_without_traceback(tmp_path):
     assert "Traceback" not in result.output
 
 
+# --- US40: --interactive threads the human-in-the-loop-once wall recovery ---
+
+
+def _capture_batch_interactive(monkeypatch):
+    """Patch browser_fetch_batch to record the ``interactive`` it was called with."""
+    seen = {}
+
+    def _fake_batch(urls, **kwargs):
+        seen["interactive"] = kwargs.get("interactive")
+        return []
+
+    monkeypatch.setattr(browser_fetch_mod, "browser_fetch_batch", _fake_batch)
+    return seen
+
+
+def test_browser_fetch_cli_defaults_to_unattended(tmp_path, monkeypatch):
+    seen = _capture_batch_interactive(monkeypatch)
+    runner.invoke(browser_fetch_app, [], input=f"{B1}\n")
+    assert seen["interactive"] is False
+
+
+def test_browser_fetch_cli_interactive_flag_enables_recovery(tmp_path, monkeypatch):
+    seen = _capture_batch_interactive(monkeypatch)
+    runner.invoke(browser_fetch_app, ["--interactive"], input=f"{B1}\n")
+    assert seen["interactive"] is True
+
+
 # --- recover-blocked CLI: route the manifest's blocked_by URLs into browser-fetch (US17) ---
 
 
