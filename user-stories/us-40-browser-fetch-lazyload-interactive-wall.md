@@ -37,6 +37,10 @@ failures on the same capture path:
    full **14 242-word** Markdown with every section (Abstract, Introduction,
    Methods, Results, Discussion, Conclusion, References, Acknowledgements).
 
+The full reproducible PoC — every script and every measured run behind these
+findings — is compiled in the tech note
+[`doc/us40-sciencedirect-poc.md`](../doc/us40-sciencedirect-poc.md).
+
 The PoC also verified the clearance is **durable**: after the operator solved the
 captcha once, killing Chrome and relaunching `browser-up` on the same persistent
 `.browser-profile` loaded the body with **no wall** — the `cf_clearance` cookie
