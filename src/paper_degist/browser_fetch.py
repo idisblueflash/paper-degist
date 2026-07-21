@@ -37,6 +37,7 @@ Runnable from the command line (rule 03):
 """
 
 import os
+import re
 import sys
 from contextlib import AbstractContextManager, contextmanager, suppress
 from pathlib import Path
@@ -124,6 +125,66 @@ _GENERIC_SLUG_TOKENS = frozenset(
 )
 
 
+# US40: the lazy-loaded body container of a JavaScript-heavy publisher (a
+# ScienceDirect / Elsevier SPA). The body renders *after* a scroll nudge, so the
+# container first holds a ``"Loading…"`` placeholder and only later fills. A new
+# host's body selector is a one-line addition here (rule 02: the manifest of
+# stubbed captures is the queue of cases), never a new code path.
+_BODY_SELECTORS = ("#body", "section.Body", ".Body", ".article-text")
+
+# Sample-measured readiness threshold (US40 PoC): the unloaded body reads **1**
+# word (``"Loading…"``) and the fully-loaded body **10 312**, so 800 cleanly
+# separates a stub from a real body. Pinned by ``sd-fulltext-lazyload.html`` in
+# ``src/tests/samples/``.
+READY_WORDS = 800
+
+
+def _body_word_count(html: str) -> int:
+    """Real word count of the lazy-load body container, or ``-1`` if there is none.
+
+    Reads the first element matching ``_BODY_SELECTORS`` and counts the words of
+    its rendered text. Three outcomes drive the readiness gate (US40):
+
+    - **no container** (``-1``) — the page has no known lazy-load body, so the gate
+      *abstains*: an ordinary paper page (US15/US35) is saved exactly as before.
+    - **placeholder** (``0``) — the container is present but still shows the
+      ``"Loading…"`` stub (or is empty), so the body has not loaded yet.
+    - **real count** (``N``) — the body has filled; compare against ``READY_WORDS``.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    el = soup.select_one(", ".join(_BODY_SELECTORS))
+    if el is None:
+        return -1
+    text = el.get_text(separator=" ", strip=True)
+    if not text or text.lower().startswith("loading"):
+        return 0  # the lazy-load placeholder is still showing
+    return len(text.split())
+
+
+def _readiness_reason(html: str) -> Optional[str]:
+    """A quarantine reason if the lazy-load body has not filled, else ``None`` (US40).
+
+    The content-readiness gate (rule 02): between "the DOM settled" and "save",
+    classify whether the publisher's lazy-loaded body actually loaded.
+
+    - **no container** — abstain (``None``): an ordinary page (US15/US35) has no
+      known lazy-load body, so it saves exactly as before.
+    - **filled** (``≥ READY_WORDS``) — pass (``None``).
+    - **stub / below threshold** — a **distinct** reason so the caller quarantines
+      the ``"Loading…"`` header-only stub instead of saving it (never a partial
+      capture that convert-html would turn into a header-only fragment).
+    """
+    words = _body_word_count(html)
+    if words == -1 or words >= READY_WORDS:
+        return None
+    return (
+        f"body not loaded: lazy-load container holds {words} word(s), below the "
+        f"{READY_WORDS}-word readiness threshold (a 'Loading…' stub, not the full body)"
+    )
+
+
 def _rendered_title(html: str) -> Optional[str]:
     """The text of the rendered HTML's ``<title>``, or ``None`` if it has none.
 
@@ -140,6 +201,19 @@ def _rendered_title(html: str) -> Optional[str]:
     return title or None
 
 
+def _is_doi_url(url: str) -> bool:
+    """Is ``url`` a DOI (its path carries a ``10.NNNN`` registrant prefix)?
+
+    A DOI URL (``doi.org/10.1016/j.jbi.2018.12.005``, or a publisher ``/doi/…``
+    permalink) has a path *segment* matching ``10.<digits>`` — the DOI registrant
+    prefix — and its remaining segment is a journal-abbreviation + numeric id
+    (``j.jbi.2018.12.005``), **not** the paper's title words. So a DOI slug is
+    unjudgeable for the title-mismatch heuristic, exactly like an id-only slug.
+    """
+    segments = urlsplit(url).path.split("/")
+    return any(re.fullmatch(r"10\.\d{4,}", seg) for seg in segments)
+
+
 def _url_content_tokens(url: str) -> frozenset[str]:
     """Content tokens of the URL's paper slug — digits and stop-words removed.
 
@@ -148,8 +222,12 @@ def _url_content_tokens(url: str) -> frozenset[str]:
     publication id and stop-words are noise, so the remaining tokens
     (``spaced``, ``repetition``, ``long``, ``term``, ``retention``) are what a
     genuine rendered ``<title>`` should echo. Empty ⇒ the slug carries no
-    judgeable content (an id-only slug), so the title check abstains.
+    judgeable content (an id-only slug, or a DOI whose slug is a journal
+    abbreviation — US40), so the title check abstains — the safe direction is a
+    missed wall, never a false quarantine of a real capture.
     """
+    if _is_doi_url(url):
+        return frozenset()  # a DOI slug is a journal-abbrev + id, not title words
     basename = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
     tokens = _slug_tokens(basename)
     return frozenset(
@@ -250,23 +328,133 @@ def _teardown(page: object, context: object, *, created_context: bool) -> None:
             context.close()  # and a context only if we created it
 
 
-def _fetch_on_new_tab(context: object, url: str, *, timeout_ms: int) -> str:
-    """Open a fresh tab on ``context``, navigate ``url``, return its rendered HTML.
+# US40 pacing constants. The settle signal a heavy publisher SPA actually reaches
+# is ``domcontentloaded`` (``networkidle`` never fires — blocker #1). After it, the
+# lazy-loaded body still needs a scroll nudge and a bounded poll to fill:
+#  - **unattended** waits only long enough for the lazy body to fill once the DOM
+#    settled (it never waits on a *human* — a wall quarantines at once, so the
+#    batch never blocks, US16 AC5);
+#  - **interactive** waits long enough for the operator to clear the wall by hand,
+#    then auto-resumes (US40 AC3).
+# A bounded settle after ``domcontentloaded`` before the first readiness probe:
+# it lets the DOI→publisher redirect chain land and early client-side JS run, so a
+# page with no lazy-load container (US15) is not captured as an under-rendered shell
+# the way ``networkidle`` used to guard against — AC1's "domcontentloaded + a
+# bounded settle" (the PoC measured ~2 s). Injected ``sleep`` makes it free in tests.
+_SETTLE_S = 2.0
+_POLL_S = 3.0
+_UNATTENDED_MAX_WAIT_S = 30
+_INTERACTIVE_MAX_WAIT_S = 240
 
-    Waits for ``networkidle`` so a client-rendered page is captured (not the
-    initial shell), then reads the DOM. Closes **only the tab it opened** on the
-    way out (US16 AC2 — a finished URL's tab is closed but the browser stays
-    running), via ``_teardown(page, context, created_context=False)``; the
-    ``context`` is left to the caller (``_cdp_context``), so a warm session can
-    open the next URL on the same connection. Any navigation failure (nav
-    timeout, load error) propagates so the caller quarantines that one URL — so
-    one URL's failure never aborts a batch.
+
+def _scroll_nudge(page: object) -> None:
+    """Scroll to the bottom and back to trigger a lazy-loaded body (US40 blocker #3).
+
+    Best-effort: a failed ``evaluate`` (the page navigated mid-scroll, the context
+    is momentarily destroyed) never aborts the poll — the next probe simply retries.
     """
+    with suppress(Exception):
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.evaluate("window.scrollTo(0, 0)")
+
+
+def _await_ready_body(
+    page: object,
+    url: str,
+    *,
+    interactive: bool,
+    notify: Callable[[str], None],
+    sleep: Callable[[float], None],
+    poll_s: float,
+    max_wait_s: float,
+    ready_words: int = READY_WORDS,
+) -> str:
+    """Drive an already-navigated ``page`` to a ready capture; return its HTML (US40).
+
+    Each poll reads ``page.content()`` and classifies on cheap deterministic signals
+    (rule 02): a **wall** (``_wall_reason``) and whether the **body loaded**
+    (``_body_word_count`` ≥ ``ready_words``, or ``-1`` — no lazy-load container, so
+    the gate abstains and an ordinary page is ready at once). Dispatch:
+
+    - **ready** (no wall, body loaded/absent) → return the HTML to save.
+    - **wall**, *interactive* → notify the operator **once** on the first sighting
+      and keep polling until they clear it by hand (never solve it in-script).
+    - **wall**, *unattended* → return the wall HTML immediately so the caller
+      quarantines it — never wait on a human, so the batch never blocks (AC4).
+    - **body not yet loaded** → scroll-nudge the lazy-loader and poll again.
+
+    On exceeding ``max_wait_s`` it returns the last HTML it has (a stub or an
+    uncleared wall); the caller's ``_wall_reason`` / ``_readiness_reason`` then
+    quarantines it with the right distinct reason. ``sleep``/``notify`` are injected
+    so the loop is exercised instantly and silently in tests. Never raises for a
+    slow page, never calls an LLM.
+    """
+    waited = 0.0
+    notified = False
+    while True:
+        html = page.content()
+        wall = _wall_reason(url, html)
+        words = _body_word_count(html)
+        if wall is None and (words == -1 or words >= ready_words):
+            return html  # ready: no wall and the body loaded (or no lazy container)
+        if wall is not None:
+            if not interactive:
+                return html  # unattended: never wait on a human — quarantine now
+            if not notified:
+                notify(
+                    f">>> ACTION NEEDED: a bot-wall is showing for {url}\n"
+                    f">>> Clear it by hand in the Chrome window; polling every "
+                    f"{poll_s:g}s and will auto-resume."
+                )
+                notified = True
+        else:
+            _scroll_nudge(page)  # no wall — nudge the lazy-loaded body to fill
+        if waited >= max_wait_s:
+            return html  # bound exceeded — hand the stub/wall back for quarantine
+        sleep(poll_s)
+        waited += poll_s
+
+
+def _fetch_on_new_tab(
+    context: object,
+    url: str,
+    *,
+    timeout_ms: int,
+    interactive: bool = False,
+    notify: Optional[Callable[[str], None]] = None,
+    sleep: Optional[Callable[[float], None]] = None,
+) -> str:
+    """Open a fresh tab on ``context``, navigate ``url``, return its ready HTML.
+
+    Waits on ``domcontentloaded`` — the settle signal a heavy publisher SPA
+    actually reaches (``networkidle`` never fires — US40 blocker #1) — then hands
+    the live page to ``_await_ready_body`` to scroll-nudge the lazy-loaded body and
+    poll until it fills (and, in ``interactive`` mode, until the operator clears a
+    wall). Closes **only the tab it opened** on the way out (US16 AC2), via
+    ``_teardown(page, context, created_context=False)``; the ``context`` is left to
+    the caller (``_cdp_context``), so a warm session can open the next URL on the
+    same connection. Any navigation failure (nav timeout, load error) propagates so
+    the caller quarantines that one URL — so one URL's failure never aborts a batch.
+    """
+    import time
+
+    notify = notify or (lambda msg: print(msg, file=sys.stderr, flush=True))
+    sleep = sleep or time.sleep
+    max_wait_s = _INTERACTIVE_MAX_WAIT_S if interactive else _UNATTENDED_MAX_WAIT_S
     page = None
     try:
         page = context.new_page()
-        page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-        return page.content()
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        sleep(_SETTLE_S)  # bounded settle before the first probe (AC1) — see _SETTLE_S
+        return _await_ready_body(
+            page,
+            url,
+            interactive=interactive,
+            notify=notify,
+            sleep=sleep,
+            poll_s=_POLL_S,
+            max_wait_s=max_wait_s,
+        )
     finally:
         _teardown(page, context, created_context=False)  # close the tab, keep the context
 
@@ -301,32 +489,41 @@ def _cdp_context(cdp_url: str) -> Iterator[object]:
             _teardown(None, context, created_context=not reuse_context)
 
 
-def _default_fetch_rendered(cdp_url: str, url: str, *, timeout_ms: int = 30000) -> str:
-    """Attach over CDP, navigate ``url`` on a fresh tab, return its rendered HTML.
+def _default_fetch_rendered(
+    cdp_url: str, url: str, *, timeout_ms: int = 30000, interactive: bool = False
+) -> str:
+    """Attach over CDP, navigate ``url`` on a fresh tab, return its ready HTML.
 
     The single-URL path (US15). Built on the same primitives the batch session
     reuses — ``_cdp_context`` (connect-once + detach-not-close) and
-    ``_fetch_on_new_tab`` (tab-per-URL) — so the connect and teardown invariants
-    live in one place for both. Any failure (connect refused, nav timeout, load
-    error) propagates so the caller quarantines with the distinct nav-failed
-    reason; this step never crashes the batch itself.
+    ``_fetch_on_new_tab`` (tab-per-URL, domcontentloaded + readiness poll). When
+    ``interactive`` it lets the operator clear a wall by hand and auto-resumes
+    (US40 AC3); otherwise a wall or an unfilled body is handed back for quarantine.
+    Any failure (connect refused, nav timeout, load error) propagates so the caller
+    quarantines with the distinct nav-failed reason; this step never crashes.
     """
     with _cdp_context(cdp_url) as context:
-        return _fetch_on_new_tab(context, url, timeout_ms=timeout_ms)
+        return _fetch_on_new_tab(context, url, timeout_ms=timeout_ms, interactive=interactive)
 
 
 @contextmanager
-def _default_open_session(cdp_url: str, *, timeout_ms: int = 30000) -> Iterator[TabFetcher]:
+def _default_open_session(
+    cdp_url: str, *, timeout_ms: int = 30000, interactive: bool = False
+) -> Iterator[TabFetcher]:
     """Open **one** warm CDP connection and yield a per-URL tab fetcher (US16).
 
     The batch primitive: connect once (``_cdp_context``) and hand back a
     ``fetch_tab(url) -> html`` that opens and closes a *tab* per URL against that
     single connection (``_fetch_on_new_tab``) — so every URL in the batch rides
-    the same warm, authenticated session. On block exit ``_cdp_context`` detaches
-    without closing Chrome, leaving the warm browser for the next run.
+    the same warm, authenticated session, each captured through US40's
+    domcontentloaded + readiness poll (``interactive`` threaded through). On block
+    exit ``_cdp_context`` detaches without closing Chrome, leaving the warm browser
+    for the next run.
     """
     with _cdp_context(cdp_url) as context:
-        yield lambda url: _fetch_on_new_tab(context, url, timeout_ms=timeout_ms)
+        yield lambda url: _fetch_on_new_tab(
+            context, url, timeout_ms=timeout_ms, interactive=interactive
+        )
 
 
 def _quarantine_no_endpoint(manifest_path: Path, url: str, cdp_url: str) -> None:
@@ -399,6 +596,25 @@ def _dispatch_url(
         )
         return None
 
+    unready = _readiness_reason(html)
+    if unready is not None:
+        # The render succeeded and is not a wall, but the publisher's lazy-loaded
+        # body never filled — the container still holds a ``"Loading…"`` stub (US40
+        # blocker #3). Quarantine with a **distinct** reason **before** the save, so
+        # a header-only fragment never becomes the sticky idempotent artifact (AC4)
+        # nor reaches convert-html; a later scroll-nudged run can capture the full
+        # body. The live capture loop scroll-nudges and polls to *avoid* this; this
+        # gate is the final guard when even that did not fill the body in time (AC4,
+        # unattended). Never crash, never call an LLM.
+        _manifest.append(
+            manifest_path,
+            stage="browser-fetch",
+            url=url,
+            cdp_url=cdp_url,
+            reason=unready,
+        )
+        return None
+
     try:
         files_dir.mkdir(parents=True, exist_ok=True)
         target.write_text(html, encoding="utf-8")
@@ -434,6 +650,7 @@ def browser_fetch(
     cdp_url: str = DEFAULT_CDP,
     files_dir: Path = Path("files"),
     manifest_path: Path = Path("manifest.jsonl"),
+    interactive: bool = False,
     probe_cdp: Optional[CDPProbe] = None,
     fetch_rendered: Optional[RenderedFetcher] = None,
 ) -> Optional[Path]:
@@ -451,7 +668,12 @@ def browser_fetch(
     resolved here so a test (or the CLI) can monkeypatch the module attribute.
     """
     probe_cdp = probe_cdp or _default_probe_cdp
-    fetch_rendered = fetch_rendered or _default_fetch_rendered
+    # Bind ``interactive`` into the *default* fetcher only; an injected
+    # ``fetch_rendered`` keeps its ``(cdp_url, url) -> html`` shape (US40).
+    if fetch_rendered is None:
+        fetch_rendered = lambda cdp, one_url: _default_fetch_rendered(
+            cdp, one_url, interactive=interactive
+        )
     files_dir = Path(files_dir)
     manifest_path = Path(manifest_path)
 
@@ -479,6 +701,7 @@ def browser_fetch_batch(
     cdp_url: str = DEFAULT_CDP,
     files_dir: Path = Path("files"),
     manifest_path: Path = Path("manifest.jsonl"),
+    interactive: bool = False,
     probe_cdp: Optional[CDPProbe] = None,
     open_session: Optional[SessionOpener] = None,
 ) -> list[Path]:
@@ -500,7 +723,10 @@ def browser_fetch_batch(
     CLI) can monkeypatch it.
     """
     probe_cdp = probe_cdp or _default_probe_cdp
-    open_session = open_session or _default_open_session
+    # Bind ``interactive`` into the *default* session opener only; an injected
+    # ``open_session`` keeps its ``(cdp_url) -> ctx-mgr[TabFetcher]`` shape (US40).
+    if open_session is None:
+        open_session = lambda cdp: _default_open_session(cdp, interactive=interactive)
     files_dir = Path(files_dir)
     manifest_path = Path(manifest_path)
     urls = list(urls)  # materialize once: iterate twice below, and slice on failure
@@ -588,6 +814,17 @@ def run(
         Path,
         typer.Option(help="manifest of saved and quarantined records"),
     ] = Path("manifest.jsonl"),
+    interactive: Annotated[
+        bool,
+        typer.Option(
+            "--interactive",
+            help=(
+                "human-in-the-loop-once: on a detected wall, notify on stderr and "
+                "poll until you clear it by hand, then auto-resume (US40). Off by "
+                "default — a wall quarantines and the batch never blocks."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Fetch a list of URLs over one warm browser; print each saved path, one per line.
 
@@ -601,7 +838,11 @@ def run(
     text = urls_file.read_text(encoding="utf-8") if urls_file else sys.stdin.read()
     urls = [line.strip() for line in text.splitlines() if line.strip()]
     paths = browser_fetch_batch(
-        urls, cdp_url=cdp, files_dir=files_dir, manifest_path=manifest
+        urls,
+        cdp_url=cdp,
+        files_dir=files_dir,
+        manifest_path=manifest,
+        interactive=interactive,
     )
     for path in paths:
         typer.echo(str(path))
