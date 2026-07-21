@@ -425,6 +425,40 @@ location, the case not yet handled, and the trigger that should make us fix it.
   + the US15/16/35 regression pass) from the shell; when they all pass, mark this
   flag RESOLVED with the run details. Retune `_UNATTENDED_MAX_WAIT_S` (30 s) if a
   real lazy body takes longer than that to fill unattended.
+- **Status: PARTIALLY exercised live (2026-07-21).** A real `browser-up` Chrome ran
+  the lifted code: Case 1 (AC1 — saved, exit 0, no `networkidle` timeout), Case 2
+  (AC2 — **caught the empty-shell bug**, fixed publisher-aware), and Case 3 (AC4 —
+  unattended quarantines and returns promptly, exit 0) all pass `[auto]`. Case 4's
+  **interactive mechanism** ran correctly — notified on stderr, polled the full
+  240 s, and on no-clear quarantined cleanly (distinct wall reason, no sticky file)
+  — but the **happy-path capture of the full body** could not complete because the
+  Cloudflare challenge looped unsolvably (see the next flag). Still open: one
+  successful `--interactive` capture through a *clearable* wall, then `convert-html`
+  all-sections on the live body.
+
+## browser_fetch — a looping Cloudflare managed challenge blocks even a manual clear (US40 interactive)
+
+- **Where:** the `--interactive` path — `browser_fetch._await_ready_body` on a
+  `browser-up`-launched Chrome (remote-debugging flags → automation-flagged).
+- **Case:** against `doi.org/10.1016/j.jbi.2018.12.005` the Cloudflare **managed
+  challenge** looped in an animation and never presented a solvable checkbox, so the
+  operator could not clear it by hand — the loop's core assumption (US40: "the
+  operator clears the wall by hand once") does not hold when Cloudflare flags the
+  automation-launched browser and refuses to present the challenge. The poll
+  behaved correctly: it never re-navigated/refreshed (the reload the operator saw
+  was Cloudflare's own challenge retry, not our code), notified once, polled 240 s,
+  then quarantined `looks like a wall, not the paper: bot-wall marker
+  'challenge-platform'` (exit 0, no sticky file).
+- **Not a code fix — a launch/profile matter.** Making the challenge presentable is
+  about the *browser*, not `browser_fetch`: seed a valid `cf_clearance` by solving
+  the challenge in a **non-automation** Chrome and point `browser-up --user-data-dir`
+  at that profile; or launch a less automation-flagged Chrome. Actively defeating a
+  looping managed challenge (patching the fingerprint, auto-clicking) is bot
+  evasion — **permanently out of scope** (US40 "Later stages"). Deferred/known
+  limitation, not a bug.
+- **Trigger to revisit:** a real OA recovery is blocked often enough that the
+  seed-profile workflow is worth documenting as a first-class step in the QA guide /
+  CLI manual.
 
 ## browser_fetch — per-publisher readiness selectors + markers are ScienceDirect-only (US40)
 

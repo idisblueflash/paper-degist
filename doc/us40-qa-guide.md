@@ -133,6 +133,15 @@ past \~4 min with no resume after you cleared the wall (the bound is 240 s —
 `_INTERACTIVE_MAX_WAIT_S`); or it quarantines as `navigation failed` while you were
 mid-clear (the transient-redirect resilience regressed).
 
+**External block (not a tool fail):** if the Cloudflare **managed challenge loops in
+an animation and never shows a checkbox**, you cannot clear it by hand — Cloudflare
+flags the automation-launched `browser-up` Chrome and refuses to present the
+challenge. The tool is behaving correctly (it polls, then quarantines the wall with
+no sticky file); this is the permanently-out-of-scope evasion boundary, not a bug.
+Work around it at the **browser** level: solve the challenge once in a *non-automation*
+Chrome profile and point `browser-up --user-data-dir` at it so the `cf_clearance`
+cookie is seeded, then re-run. (Observed 2026-07-21 on `doi.org/10.1016/j.jbi.2018.12.005`.)
+
 ## Case 5 — regression: US15/US16/US35 still hold  `[auto]`
 
 The lazy-load lane is additive; the existing lane must be unchanged.
