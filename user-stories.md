@@ -7,7 +7,7 @@ pipeline step, and its status. Navigate from here — don't read the others.
 
 **Status** is tracked here (the single scannable source). Flip a US to
 `✅ Done` as the last commit on its feature branch, so it merges with the story
-(rule 06 phase 12) — never a dedicated PR, never a direct commit to master.
+(rule 06 phase 13) — never a dedicated PR, never a direct commit to master.
 master never claims Done before the PR merges. The per-US files hold the
 timeless spec and carry no status marker.
 

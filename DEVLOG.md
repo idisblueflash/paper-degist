@@ -420,10 +420,11 @@ location, the case not yet handled, and the trigger that should make us fix it.
   proved the *mechanism*; the production lift is faithful to it but unexercised live.
 - **Trigger to fix:** the first `browser-fetch --interactive
   https://doi.org/10.1016/j.jbi.2018.12.005` run on a machine with `browser-up`'s
-  headed Chrome. Confirm: the wall notifies on stderr and auto-resumes after a manual
-  clear; the saved HTML has the full body (not a `"Loading…"` stub); `convert-html`
-  yields all sections; a re-run is idempotent. Retune `_UNATTENDED_MAX_WAIT_S` (30 s)
-  if a real lazy body takes longer than that to fill unattended.
+  headed Chrome. Follow the manual QA guide
+  [`doc/us40-qa-guide.md`](doc/us40-qa-guide.md) — it drives all five cases (AC1–AC4
+  + the US15/16/35 regression pass) from the shell; when they all pass, mark this
+  flag RESOLVED with the run details. Retune `_UNATTENDED_MAX_WAIT_S` (30 s) if a
+  real lazy body takes longer than that to fill unattended.
 
 ## browser_fetch — per-publisher readiness selectors are ScienceDirect-only (US40)
 

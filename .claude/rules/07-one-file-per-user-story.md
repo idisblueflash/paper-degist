@@ -33,7 +33,7 @@ map; the files are the territory.
   and add its row to the index table. Do both in the same change.
 - **Status** → update only the index table's Status column. Flip a US to
   `✅ Done` as the **last commit on its own feature branch**, so the flip rides
-  that PR and merges atomically with the story (rule 06 phase 12) — never a
+  that PR and merges atomically with the story (rule 06 phase 13) — never a
   dedicated PR for the flip, and never a direct commit to `master`. `master`
   still never claims Done before the PR merges, because the flag lives on the
   branch until then.

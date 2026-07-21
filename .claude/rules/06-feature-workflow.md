@@ -3,7 +3,8 @@
 **Every user story is processed through the same phased loop: spec →
 sample-measured constants → strict red/green → CLI → BDD → DEVLOG → real
 end-to-end run → self-review → chunked commits → second-opinion review → CLI
-manual → flip status to Done → PR → merge → clean up.**
+manual → QA guide (if a live path escapes the gates) → flip status to Done → PR →
+merge → clean up.**
 Each phase ends at a natural checkpoint; do not skip ahead.
 
 This rule is the *process* that rules 01–05 are the *grain* of: it says in what
@@ -19,7 +20,7 @@ shape (rule 02), the CLI contract (rule 03), and the review-anchoring discipline
   the real remote tip, not a stale local `master` or (worse) another still-open
   feature branch. Never stack a new US on an unmerged sibling branch: US27 was
   branched off the still-open US25 branch instead of a freshly-pulled `master`,
-  which is exactly the stacked-PR trap phase 14 warns about. Only branch once
+  which is exactly the stacked-PR trap phase 15 warns about. Only branch once
   `git pull --ff-only` reports up to date.
 - Find the US in the index [`user-stories.md`](../../user-stories.md), then open
   **only** its own file under `user-stories/` (rule 07) — its acceptance
@@ -103,7 +104,24 @@ is untracked — clean up or keep the generated artifacts deliberately.
   sessions drives the pipeline from this manual alone. If the story added or
   renamed a flag on an existing step, fix that step's section too.
 
-### 12. Flip status to Done — in the PR branch, before merge
+### 12. Write a QA test guide — when a live/manual path escapes the automated gates
+- **Only when the story has a path the unit/BDD suites cannot exercise** — a headed
+  browser (US15/16/18/35/40), a real external login or paid service, a machine with
+  a display, or any side effect the injected fakes stub out. A pure offline story (a
+  scorer, a parser, a deterministic transform) needs **none** — its two gates *are*
+  the verification, and a QA guide would be busywork. Skip this phase for those.
+- Write `doc/us-NN-qa-guide.md`: a **human-runnable, AI-free** checklist that drives
+  the real thing from the shell. One case per acceptance criterion the fakes could
+  **not** prove, plus a short regression pass over the sibling stories the change
+  touches. Each case names the **exact command**, the **expected observable
+  result**, and the **fail signal** — never "it should work". End with a sign-off
+  checklist.
+- This is the documented handoff of phase 7 for the part Claude could not run live:
+  it turns the DEVLOG "trigger to fix" flag for the un-runnable path into a concrete
+  script a human (or Claude, on a capable machine) follows to mark that flag
+  RESOLVED. **Cross-link the guide from that DEVLOG flag** so the two stay paired.
+
+### 13. Flip status to Done — in the PR branch, before merge
 - Flip the US to `✅ Done` in the **Status column of the index**
   [`user-stories.md`](../../user-stories.md) (rule 07 — status lives only there)
   as the **last commit on the feature branch**, so the flip rides this PR and
@@ -117,12 +135,12 @@ is untracked — clean up or keep the generated artifacts deliberately.
 - Backfill any already-merged story that predates this rule with its own small
   change folded into the next branch that opens — not a dedicated PR.
 
-### 13. Ship
+### 14. Ship
 - Final DEVLOG touch-up, commit, push, open the PR with a body that states the
   **review trail** and the deferred follow-ups. Merging this PR lands both the
   story and its `✅ Done` flip on `master` in one merge.
 
-### 14. Clean up — after the merge
+### 15. Clean up — after the merge
 Once the PR merges on the remote, sync local and prune the branch in this
 **exact order** — the order is a safety interlock, not a preference:
 
